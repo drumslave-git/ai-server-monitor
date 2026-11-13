@@ -230,15 +230,20 @@ arr:
 - Telegram restricted to allowlisted chat IDs. No built-in web auth: the docs require a
   reverse proxy with auth if the UI is exposed beyond the LAN.
 
-## Project layout (proposed)
+## Project layout
 
 ```
 backend/
-  app/
-    main.py            # FastAPI app, lifespan, scheduler startup
-    config.py          # pydantic-settings models
-    db.py              # SQLite access + migrations
-    llm/               # client, tool-mode detection, JSON tool fallback
+  servermon/           # import package (dist name: ai-server-monitor)
+    __main__.py        # entry point: python -m servermon
+    main.py            # FastAPI app factory
+    context.py         # AppContext: owns db, scheduler, llm; registers jobs
+    config.py          # pydantic-settings models, YAML + ${VAR} + ASM__ env overrides
+    db.py              # SQLite access, migrations (PRAGMA user_version), retention, kv
+    migrations/        # NNNN_name.sql
+    scheduler.py       # asyncio interval scheduler (trigger, timeouts, status)
+    llm/               # httpx-based OpenAI-compatible client (not the OpenAI SDK, to
+                       # handle local-server quirks), tool-mode probe, JSON tool fallback
     collectors/        # system, docker, apt, gpu, systemd, journal, prometheus, image_updates
     digest/            # snapshot digester, anomaly rules, trends
     report/            # report engine, prompts, output parsing

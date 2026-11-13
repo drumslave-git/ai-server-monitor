@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import json
+from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+
+from servermon.config import LLMConfig, Settings
+from servermon.db import Database
+from servermon.llm import LLMClient
+
+LLM_URL = "http://llm.test/v1"
+
+
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    for key in list(os.environ):
+        if key.upper().startswith("ASM_"):
+            monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture
+def llm_cfg() -> LLMConfig:
+    return LLMConfig(base_url=LLM_URL, model="test-model", api_key="sk-test", max_retries=1)
+
+
+@pytest.fixture
+async def llm(llm_cfg: LLMConfig, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[LLMClient]:
+    client = LLMClient(llm_cfg)
+
+    async def no_sleep(attempt: int) -> None:
+        return None
+
+    monkeypatch.setattr(client, "_backoff", no_sleep)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def db(tmp_path: Path) -> AsyncIterator[Database]:
+    database = Database(tmp_path / "test.db")
+    await database.connect()
+    yield database
+    await database.close()
+
+
+@pytest.fixture
+def settings(tmp_path: Path) -> Settings:
+    return Settings(
+        storage={"path": tmp_path / "app.db"},
+        llm={"base_url": LLM_URL, "model": "test-model", "tool_mode": "none"},
+    )
+
+
+def sse(*events: dict[str, Any] | str) -> bytes:
+    """Build an SSE body from chunk dicts (or raw strings like '[DONE]')."""
+    lines = []
+    for event in events:
+        payload = event if isinstance(event, str) else json.dumps(event)
+        lines.append(f"data: {payload}\n\n")
+    return "".join(lines).encode()
+
+
+def chat_response(
+    content: str | None = "",
+    tool_calls: list[dict[str, Any]] | None = None,
+    usage: dict[str, int] | None = None,
+) -> httpx.Response:
+    message: dict[str, Any] = {"role": "assistant", "content": content}
+    if tool_calls is not None:
+        message["tool_calls"] = tool_calls
+    body: dict[str, Any] = {
+        "model": "test-model",
+        "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+    }
+    if usage is not None:
+        body["usage"] = usage
+    return httpx.Response(200, json=body)
