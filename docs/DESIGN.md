@@ -37,8 +37,9 @@ qBittorrent under per-action policy.
 | Report cadence | Full LLM report every N minutes (default 5, configurable) |
 | Outputs | Web UI (live via SSE), Telegram bot, Prometheus `/metrics` |
 | Chat | UI + Telegram, with tool-calling |
+| Configuration | Web UI only (stored in SQLite, applied live); compose sets only mounts, data dir, port, Docker proxy |
 | Auth | None built in; reverse proxy handles it |
-| Repo / CI | GitHub, GitHub Actions publishes the image |
+| Repo / CI | GitHub, GitHub Actions publishes `ghcr.io/drumslave-git/ai-server-monitor` (amd64) on version bumps |
 
 ## Architecture
 
@@ -148,63 +149,24 @@ the scheduler (rule-driven), the report engine (as suggestions), and chat.
 
 ## Configuration
 
-A single `config.yaml` (mounted at `/config/config.yaml`), every value overridable by
-environment variables (`ASM__SECTION__KEY`), and secrets can come from env or files.
-Sketch:
+Everything is configured in the web UI (Settings page), applied live without a restart.
+There are no config files.
 
-```yaml
-llm:
-  base_url: http://ollama:11434/v1
-  api_key: ${LLM_API_KEY}
-  model: qwen2.5:14b
-  tool_mode: auto          # auto | native | json | none
-  max_context_tokens: 8192
-  temperature: 0.2
-
-report:
-  interval: 5m
-  skip_if_unchanged: false
-  language: en
-
-storage:
-  path: /data/monitor.db
-  retention: 30d
-
-collectors:
-  system:        { enabled: true, interval: 15s }
-  docker:        { enabled: true, interval: 30s }
-  gpu:           { enabled: auto, interval: 30s }
-  systemd:       { enabled: true, interval: 1m }
-  journal:       { enabled: true, interval: 1m, priority: warning }
-  apt:           { enabled: true, interval: 6h }
-  image_updates: { enabled: true, interval: 12h }
-  prometheus:
-    enabled: false
-    url: http://prometheus:9090
-    queries: {}            # name: promql
-
-outputs:
-  telegram:
-    enabled: false
-    token: ${TELEGRAM_TOKEN}
-    allowed_chat_ids: []
-    report_every: 1        # send every Nth report
-  metrics: { enabled: true }
-
-arr:
-  dry_run: true
-  radarr:   [{ name: radarr, url: http://radarr:7878, api_key: ${RADARR_KEY} }]
-  sonarr:   [{ name: sonarr, url: http://sonarr:8989, api_key: ${SONARR_KEY} }]
-  whisparr: []
-  prowlarr: { url: http://prowlarr:9696, api_key: ${PROWLARR_KEY} }
-  qbittorrent: { url: http://qbittorrent:8080, username: admin, password: ${QBIT_PASS} }
-  actions:
-    stalled_cleanup: { policy: approve, stalled_after: 6h, max_per_hour: 10 }
-    missing_search:  { policy: suggest, interval: 6h, batch: 10 }
-    cutoff_search:   { policy: suggest, interval: 24h, batch: 5 }
-    add_media:       { policy: approve }
-    indexer_triage:  { policy: suggest }
-```
+- **Settings** (`config.Settings`, a pydantic model) are stored as one JSON document in the
+  SQLite `kv` table. `GET /api/settings` returns the values (secrets masked as `********`),
+  the JSON schema and section titles; the UI renders the form from the schema, so a new
+  backend setting appears in the UI automatically, with its docstring as help text.
+  `PUT /api/settings` validates (422 with per-field messages), saves, and rebuilds the
+  scheduler, LLM client and collectors in place. Sending a masked secret back keeps the
+  stored value. `POST /api/settings/test-llm` tries unsaved LLM settings.
+- **On upgrade**, stored settings are validated leniently: parts that no longer fit fall
+  back to defaults (with a logged warning and a backup copy in `kv`) instead of failing.
+- **Bootstrap** (`config.Bootstrap`): only what's needed before the app can start, from
+  `ASM_*` env vars with defaults matching the image — `ASM_DATA_DIR` (/data),
+  `ASM_PORT` (8080), `ASM_HOST_ROOT` (/host). Plus the standard `DOCKER_HOST` for the
+  socket proxy. The compose file sets nothing else.
+- Secrets are stored in clear text in the SQLite file under the data directory; protect
+  that directory like any other credentials store.
 
 ## Storage schema (SQLite)
 
@@ -240,11 +202,12 @@ arr:
 
 ```
 backend/
-  servermon/           # import package (dist name: ai-server-monitor)
-    __main__.py        # entry point: python -m servermon
-    main.py            # FastAPI app factory
-    context.py         # AppContext: owns db, scheduler, llm; registers jobs
-    config.py          # pydantic-settings models, YAML + ${VAR} + ASM__ env overrides
+  ai_server_monitor/   # import package (dist name: ai-server-monitor)
+    __main__.py        # entry point: python -m ai_server_monitor
+    main.py            # FastAPI app factory + API routes
+    context.py         # AppContext: owns db + settings-dependent services, live re-apply
+    config.py          # Bootstrap (env) + Settings (GUI) models, durations, secrets
+    settings_store.py  # settings persistence, secret merging, lenient upgrade validation
     db.py              # SQLite access, migrations (PRAGMA user_version), retention, kv
     migrations/        # NNNN_name.sql
     scheduler.py       # asyncio interval scheduler (trigger, timeouts, status)
@@ -259,7 +222,7 @@ backend/
     actions/           # policy, limits, approvals, audit
     outputs/           # sse, telegram, metrics
   tests/
-frontend/              # React + Vite SPA
+frontend/              # React + Vite SPA (schema-driven settings form, overview)
 docker/                # Dockerfile, compose example
 docs/
 ```

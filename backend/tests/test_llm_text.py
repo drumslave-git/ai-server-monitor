@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from servermon.llm.jsontools import json_tool_system_prompt, parse_tool_request
-from servermon.llm.probe import PROBE_TOOL
-from servermon.llm.text import extract_json_object, strip_reasoning
+from ai_server_monitor.llm.jsontools import json_tool_system_prompt, parse_tool_request
+from ai_server_monitor.llm.probe import PROBE_TOOL
+from ai_server_monitor.llm.text import extract_json_object, strip_reasoning
 
 
 def test_strip_reasoning() -> None:

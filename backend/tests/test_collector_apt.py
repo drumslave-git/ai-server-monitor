@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from servermon.collectors import apt as apt_mod
-from servermon.collectors.apt import AptCollector, parse_os_release, parse_upgradable
-from servermon.collectors.base import CollectorUnavailable, HostEnv
-from servermon.config import CollectorConfig
+from ai_server_monitor.collectors import apt as apt_mod
+from ai_server_monitor.collectors.apt import AptCollector, parse_os_release, parse_upgradable
+from ai_server_monitor.collectors.base import CollectorUnavailable, HostEnv
+from ai_server_monitor.config import CollectorSettings
 
 APT_OUTPUT = """\
 Listing...
@@ -64,7 +64,7 @@ async def test_collect(host: HostEnv, monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(apt_mod.shutil, "which", lambda name: "/usr/bin/apt")
     monkeypatch.setattr(apt_mod, "run_command", fake_run)
-    collector = AptCollector(CollectorConfig(), host)
+    collector = AptCollector(CollectorSettings(), host)
     await collector.check()
     data = await collector.collect()
 
@@ -84,6 +84,6 @@ async def test_unavailable_without_host_dpkg(
 ) -> None:
     monkeypatch.setattr(apt_mod.shutil, "which", lambda name: "/usr/bin/apt")
     (tmp_path / "host").mkdir()
-    collector = AptCollector(CollectorConfig(), HostEnv(root=tmp_path / "host"))
+    collector = AptCollector(CollectorSettings(), HostEnv(root=tmp_path / "host"))
     with pytest.raises(CollectorUnavailable, match="dpkg"):
         await collector.check()

@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from ..config import DockerCollectorConfig
+from ..config import DockerCollectorSettings
 from .base import Collector, CollectorUnavailable, HostEnv, RateTracker, round_or_none
 
 DEFAULT_SOCKET = "unix:///var/run/docker.sock"
@@ -105,11 +105,11 @@ class DockerAPI:
 class DockerCollector(Collector):
     name = "docker"
     timeout = timedelta(seconds=90)
-    cfg: DockerCollectorConfig
+    cfg: DockerCollectorSettings
 
     def __init__(
         self,
-        cfg: DockerCollectorConfig,
+        cfg: DockerCollectorSettings,
         env: HostEnv,
         *,
         transport: httpx.AsyncBaseTransport | None = None,

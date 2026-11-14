@@ -15,8 +15,7 @@ node_modules/
 frontend/dist/
 
 # Local runtime data / config
-/data/
-/config.yaml
+data/
 *.db
 *.db-shm
 *.db-wal

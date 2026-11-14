@@ -6,15 +6,15 @@ from typing import Any
 
 import pytest
 
-from servermon.collectors import system as system_mod
-from servermon.collectors.base import HostEnv, RateTracker
-from servermon.collectors.system import (
+from ai_server_monitor.collectors import system as system_mod
+from ai_server_monitor.collectors.base import HostEnv, RateTracker
+from ai_server_monitor.collectors.system import (
     SystemCollector,
     container_id_from_cgroup,
     parse_mounts,
     parse_net_dev,
 )
-from servermon.config import SystemCollectorConfig
+from ai_server_monitor.config import SystemCollectorSettings
 
 MOUNTS = """\
 /dev/nvme0n1p2 / ext4 rw,relatime 0 0
@@ -131,7 +131,7 @@ def test_host_view_uses_pid1_mounts_and_net(
         return {"total": 100, "used": 91, "avail": 9, "percent": 91.0, "inodes_percent": 3.0}
 
     monkeypatch.setattr(system_mod, "statvfs_usage", fake_statvfs)
-    collector = SystemCollector(SystemCollectorConfig(), fake_host)
+    collector = SystemCollector(SystemCollectorSettings(), fake_host)
 
     filesystems = collector._filesystems()
     assert filesystems[0]["mount"] == "/"
@@ -154,7 +154,7 @@ def test_host_view_uses_pid1_mounts_and_net(
 )
 async def test_collect_runs_on_this_machine() -> None:
     """Smoke test against the real OS (Windows/Linux/macOS dev machines)."""
-    collector = SystemCollector(SystemCollectorConfig(top_n=3), HostEnv())
+    collector = SystemCollector(SystemCollectorSettings(top_n=3), HostEnv())
     data = await collector.collect()
     assert 0 <= data["cpu"]["percent"] <= 100
     assert data["memory"]["total"] > 0

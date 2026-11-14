@@ -1,43 +1,38 @@
 import { useEffect, useState } from "react";
+import { OverviewPage } from "./pages/Overview";
+import { SettingsPage } from "./pages/Settings";
 
-type Info = {
-  version: string;
-  uptime_s: number;
-  llm: { model: string; tool_mode: { effective: string | null } };
-  jobs: { name: string; runs: number; last_error: string | null }[];
-};
+const PAGES = [
+  { key: "overview", title: "Overview" },
+  { key: "settings", title: "Settings" },
+] as const;
 
-// Placeholder until the real dashboard (milestone M6).
+function currentPage(): string {
+  return location.hash.replace(/^#\/?/, "").split("/")[0] || "overview";
+}
+
 export function App() {
-  const [info, setInfo] = useState<Info | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(currentPage);
 
   useEffect(() => {
-    fetch("/api/info")
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then(setInfo)
-      .catch((e: Error) => setError(e.message));
+    const onHash = () => setPage(currentPage());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
   return (
-    <main style={{ fontFamily: "system-ui, sans-serif", maxWidth: 640, margin: "2rem auto", padding: "0 16px" }}>
-      <h1>Server Monitor</h1>
-      {error && <p>Backend unreachable: {error}</p>}
-      {info && (
-        <>
-          <p>
-            v{info.version} · up {Math.round(info.uptime_s)}s · model {info.llm.model} · tools{" "}
-            {info.llm.tool_mode.effective ?? "probing…"}
-          </p>
-          <ul>
-            {info.jobs.map((j) => (
-              <li key={j.name}>
-                {j.name}: {j.runs} runs{j.last_error ? ` — ${j.last_error}` : ""}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </main>
+    <div className="app">
+      <header className="topbar">
+        <span className="brand">AI Server Monitor</span>
+        <nav>
+          {PAGES.map((p) => (
+            <a key={p.key} href={`#/${p.key}`} className={page === p.key ? "active" : undefined}>
+              {p.title}
+            </a>
+          ))}
+        </nav>
+      </header>
+      <main className="content">{page === "settings" ? <SettingsPage /> : <OverviewPage />}</main>
+    </div>
   );
 }

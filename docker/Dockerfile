@@ -18,8 +18,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    ASM__SERVER__STATIC_DIR=/app/static \
-    ASM__STORAGE__PATH=/data/monitor.db
+    ASM_STATIC_DIR=/app/static
 
 WORKDIR /app
 
@@ -31,22 +30,22 @@ RUN apt-get update \
 
 # Install dependencies first (cached layer), then the package itself.
 COPY backend/pyproject.toml backend/README.md /app/backend/
-RUN mkdir -p /app/backend/servermon \
-    && touch /app/backend/servermon/__init__.py \
+RUN mkdir -p /app/backend/ai_server_monitor \
+    && touch /app/backend/ai_server_monitor/__init__.py \
     && pip install /app/backend \
     && pip uninstall -y ai-server-monitor
-COPY backend/servermon /app/backend/servermon
+COPY backend/ai_server_monitor /app/backend/ai_server_monitor
 RUN pip install --no-deps /app/backend
 
 COPY --from=frontend /src/frontend/dist /app/static
-COPY config.example.yaml /app/config.example.yaml
 
-# Runs as root: reading other processes' /proc entries (pid: host), the Docker socket
-# and the host journal needs it. All host mounts are expected to be read-only.
+# Runs as root: reading other processes' /proc entries (pid: host) and the host journal
+# needs it. All host mounts are expected to be read-only. Settings and history live in
+# /data (SQLite); everything else is configured in the web UI.
 VOLUME ["/data"]
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('ASM__SERVER__PORT','8080'), timeout=4)"
+    CMD python -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('ASM_PORT','8080'), timeout=4)"
 
-CMD ["python", "-m", "servermon"]
+CMD ["python", "-m", "ai_server_monitor"]

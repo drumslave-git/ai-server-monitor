@@ -4,7 +4,7 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
-from servermon.db import Database, load_migrations
+from ai_server_monitor.db import Database, load_migrations
 
 
 async def test_migrations_apply_and_are_idempotent(tmp_path: Path) -> None:

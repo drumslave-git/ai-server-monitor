@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from servermon.collectors.base import CollectorUnavailable, HostEnv
-from servermon.collectors.gpu import GPUCollector
-from servermon.config import CollectorConfig
+from ai_server_monitor.collectors.base import CollectorUnavailable, HostEnv
+from ai_server_monitor.collectors.gpu import GPUCollector
+from ai_server_monitor.config import CollectorSettings
 
 
 class NVMLError(Exception):
@@ -52,7 +52,7 @@ def make_fake_nvml(count: int = 1, init_error: bool = False) -> types.ModuleType
 async def test_collect(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = make_fake_nvml()
     monkeypatch.setitem(sys.modules, "pynvml", fake)
-    collector = GPUCollector(CollectorConfig(enabled="auto"), HostEnv())
+    collector = GPUCollector(CollectorSettings(enabled="auto"), HostEnv())
     await collector.check()
     data = await collector.collect()
 
@@ -71,10 +71,10 @@ async def test_collect(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_unavailable_without_driver(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "pynvml", make_fake_nvml(init_error=True))
     with pytest.raises(CollectorUnavailable, match="NVML"):
-        await GPUCollector(CollectorConfig(), HostEnv()).check()
+        await GPUCollector(CollectorSettings(), HostEnv()).check()
 
 
 async def test_unavailable_without_gpus(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "pynvml", make_fake_nvml(count=0))
     with pytest.raises(CollectorUnavailable, match="no NVIDIA"):
-        await GPUCollector(CollectorConfig(), HostEnv()).check()
+        await GPUCollector(CollectorSettings(), HostEnv()).check()

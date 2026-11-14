@@ -13,7 +13,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from ..config import JournalCollectorConfig
+from ..config import JournalCollectorSettings
 from .base import Collector, CollectorUnavailable, HostEnv, run_command
 
 PRIORITY_NAMES = ["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"]
@@ -126,16 +126,16 @@ def summarize_journal(entries: list[dict[str, Any]], limit: int) -> dict[str, An
 class JournalCollector(Collector):
     name = "journal"
     timeout = timedelta(seconds=60)
-    cfg: JournalCollectorConfig
+    cfg: JournalCollectorSettings
 
-    def __init__(self, cfg: JournalCollectorConfig, env: HostEnv):
+    def __init__(self, cfg: JournalCollectorSettings, env: HostEnv):
         super().__init__(cfg, env)
         self._cursor: str | None = None
         self._last_run: float | None = None
 
     def _directory(self) -> Path | None:
         if self.cfg.directory:
-            return self.cfg.directory
+            return Path(self.cfg.directory)
         for candidate in ("/var/log/journal", "/run/log/journal"):
             path = self.env.path(candidate)
             if path.is_dir() and any(path.iterdir()):
@@ -161,6 +161,9 @@ class JournalCollector(Collector):
         return args
 
     async def collect(self) -> dict[str, Any]:
+        if self.env.in_container and self._directory() is None:
+            # Never fall back to the container's own (empty) journal.
+            raise CollectorUnavailable("host journal directory not found under host root")
         now = time.time()
         since = self._last_run or now - self.cfg.initial_lookback.total_seconds()
         output = await run_command(self._args(since), timeout=50)

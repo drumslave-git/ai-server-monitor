@@ -6,15 +6,15 @@ from typing import Any
 import httpx
 import pytest
 
-from servermon.collectors.base import CollectorUnavailable, HostEnv
-from servermon.collectors.docker import (
+from ai_server_monitor.collectors.base import CollectorUnavailable, HostEnv
+from ai_server_monitor.collectors.docker import (
     DockerCollector,
     blkio_bytes,
     demux_logs,
     is_error_line,
     memory_usage,
 )
-from servermon.config import DockerCollectorConfig
+from ai_server_monitor.config import DockerCollectorSettings
 
 WEB_ID = "a" * 64
 DB_ID = "b" * 64
@@ -205,7 +205,7 @@ def fake_docker() -> FakeDocker:
 @pytest.fixture
 async def collector(fake_docker: FakeDocker):  # type: ignore[no-untyped-def]
     c = DockerCollector(
-        DockerCollectorConfig(), HostEnv(), transport=httpx.MockTransport(fake_docker.handler)
+        DockerCollectorSettings(), HostEnv(), transport=httpx.MockTransport(fake_docker.handler)
     )
     yield c
     await c.close()
@@ -252,7 +252,7 @@ async def test_unreachable_socket_is_unavailable() -> None:
     def refuse(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("no such file")
 
-    c = DockerCollector(DockerCollectorConfig(), HostEnv(), transport=httpx.MockTransport(refuse))
+    c = DockerCollector(DockerCollectorSettings(), HostEnv(), transport=httpx.MockTransport(refuse))
     with pytest.raises(CollectorUnavailable):
         await c.check()
     await c.close()
@@ -260,8 +260,8 @@ async def test_unreachable_socket_is_unavailable() -> None:
 
 def test_url_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DOCKER_HOST", "tcp://proxy:2375")
-    c = DockerCollector(DockerCollectorConfig(), HostEnv())
+    c = DockerCollector(DockerCollectorSettings(), HostEnv())
     assert c.api.url == "tcp://proxy:2375"
     assert str(c.api._http.base_url).startswith("http://proxy:2375")
-    explicit = DockerCollector(DockerCollectorConfig(url="tcp://other:2375"), HostEnv())
+    explicit = DockerCollector(DockerCollectorSettings(url="tcp://other:2375"), HostEnv())
     assert explicit.api.url == "tcp://other:2375"

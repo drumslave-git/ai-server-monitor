@@ -5,11 +5,11 @@ import json
 from datetime import timedelta
 from typing import Any, ClassVar
 
-from servermon.collectors.base import Collector, CollectorUnavailable, HostEnv
-from servermon.collectors.manager import CollectorManager
-from servermon.config import Settings
-from servermon.db import Database
-from servermon.scheduler import Scheduler
+from ai_server_monitor.collectors.base import Collector, CollectorUnavailable, HostEnv
+from ai_server_monitor.collectors.manager import CollectorManager
+from ai_server_monitor.config import Settings
+from ai_server_monitor.db import Database
+from ai_server_monitor.scheduler import Scheduler
 
 
 class OkCollector(Collector):

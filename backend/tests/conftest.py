@@ -8,9 +8,9 @@ from typing import Any
 import httpx
 import pytest
 
-from servermon.config import LLMConfig, Settings
-from servermon.db import Database
-from servermon.llm import LLMClient
+from ai_server_monitor.config import Bootstrap, LLMSettings, Settings
+from ai_server_monitor.db import Database
+from ai_server_monitor.llm import LLMClient
 
 LLM_URL = "http://llm.test/v1"
 
@@ -25,12 +25,12 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def llm_cfg() -> LLMConfig:
-    return LLMConfig(base_url=LLM_URL, model="test-model", api_key="sk-test", max_retries=1)
+def llm_cfg() -> LLMSettings:
+    return LLMSettings(base_url=LLM_URL, model="test-model", api_key="sk-test", max_retries=1)
 
 
 @pytest.fixture
-async def llm(llm_cfg: LLMConfig, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[LLMClient]:
+async def llm(llm_cfg: LLMSettings, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[LLMClient]:
     client = LLMClient(llm_cfg)
 
     async def no_sleep(attempt: int) -> None:
@@ -50,11 +50,13 @@ async def db(tmp_path: Path) -> AsyncIterator[Database]:
 
 
 @pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    return Settings(
-        storage={"path": tmp_path / "app.db"},
-        llm={"base_url": LLM_URL, "model": "test-model", "tool_mode": "none"},
-    )
+def settings() -> Settings:
+    return Settings(llm={"base_url": LLM_URL, "model": "test-model", "tool_mode": "none"})
+
+
+@pytest.fixture
+def bootstrap(tmp_path: Path) -> Bootstrap:
+    return Bootstrap(data_dir=tmp_path / "data", host_root=tmp_path / "no-host")
 
 
 def sse(*events: dict[str, Any] | str) -> bytes:

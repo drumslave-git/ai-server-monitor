@@ -11,7 +11,7 @@ import os
 from datetime import timedelta
 from typing import Any, Protocol
 
-from ..config import SystemdCollectorConfig
+from ..config import SystemdCollectorSettings
 from .base import Collector, CollectorUnavailable, HostEnv
 
 SYSTEMD = "org.freedesktop.systemd1"
@@ -85,9 +85,11 @@ class DbusSystemdBus:
 class SystemdCollector(Collector):
     name = "systemd"
     timeout = timedelta(seconds=45)
-    cfg: SystemdCollectorConfig
+    cfg: SystemdCollectorSettings
 
-    def __init__(self, cfg: SystemdCollectorConfig, env: HostEnv, *, bus: SystemdBus | None = None):
+    def __init__(
+        self, cfg: SystemdCollectorSettings, env: HostEnv, *, bus: SystemdBus | None = None
+    ):
         super().__init__(cfg, env)
         self.bus: SystemdBus = bus or DbusSystemdBus(self._address())
         self._prev_restarts: dict[str, int] = {}

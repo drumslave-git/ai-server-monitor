@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import pytest
 
-from servermon.scheduler import Scheduler
+from ai_server_monitor.scheduler import Scheduler
 
 
 async def _until(predicate, timeout: float = 2.0) -> None:  # type: ignore[no-untyped-def]

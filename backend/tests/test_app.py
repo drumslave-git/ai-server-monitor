@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
+import httpx
+import respx
 from fastapi.testclient import TestClient
 
-from servermon.collectors.base import Collector
-from servermon.config import Settings
-from servermon.main import create_app
+from ai_server_monitor.collectors.base import Collector
+from ai_server_monitor.config import SECRET_MASK, Bootstrap, Settings
+from ai_server_monitor.main import create_app
+
+from .conftest import LLM_URL, chat_response
 
 
 class StubSystem(Collector):
@@ -17,18 +22,27 @@ class StubSystem(Collector):
         return {"cpu": {"percent": 12.5}}
 
 
-def test_healthz_and_info(settings: Settings) -> None:
-    with TestClient(create_app(settings, collector_registry={})) as client:
+def test_healthz_and_info(bootstrap: Bootstrap, settings: Settings) -> None:
+    app = create_app(bootstrap, collector_registry={}, seed_settings=settings)
+    with TestClient(app) as client:
         assert client.get("/healthz").json() == {"status": "ok"}
         info = client.get("/api/info").json()
     assert info["schema_version"] >= 1
-    assert info["llm"]["model"] == "test-model"
+    assert info["llm"]["model"] == "test-model" and info["llm"]["configured"] is True
     assert {job["name"] for job in info["jobs"]} == {"prune", "llm_probe"}
-    assert "api_key" not in str(info)
+    assert (bootstrap.data_dir / "monitor.db").exists()
 
 
-def test_collectors_endpoints(settings: Settings) -> None:
-    app = create_app(settings, collector_registry={"system": StubSystem})
+def test_first_start_uses_defaults_and_llm_unconfigured(bootstrap: Bootstrap) -> None:
+    with TestClient(create_app(bootstrap, collector_registry={})) as client:
+        info = client.get("/api/info").json()
+        values = client.get("/api/settings").json()["values"]
+    assert info["llm"]["configured"] is False
+    assert values["llm"]["base_url"] == "" and values["report"]["interval"] == "5m"
+
+
+def test_collectors_endpoints(bootstrap: Bootstrap) -> None:
+    app = create_app(bootstrap, collector_registry={"system": StubSystem})
     with TestClient(app) as client:
         ctx = app.state.ctx
         client.portal.call(ctx.collectors.run, "system")  # type: ignore[union-attr]
@@ -41,11 +55,87 @@ def test_collectors_endpoints(settings: Settings) -> None:
     assert missing.status_code == 404
 
 
-def test_serves_spa_when_static_dir_exists(settings: Settings, tmp_path: Path) -> None:
+def test_settings_roundtrip_masks_secrets_and_applies_live(bootstrap: Bootstrap) -> None:
+    app = create_app(bootstrap, collector_registry={"system": StubSystem})
+    with TestClient(app) as client:
+        doc = client.get("/api/settings").json()
+        assert doc["sections"]["llm"] == "LLM"
+        schema = doc["schema"]
+        assert "$defs" in schema and "llm" in schema["properties"]
+        values = doc["values"]
+
+        values["llm"].update(base_url="http://ollama:11434/v1", model="qwen3:8b", api_key="sk-1")
+        values["collectors"]["system"]["interval"] = "45s"
+        values["arr"]["radarr"] = [{"name": "radarr", "url": "http://radarr:7878", "api_key": "rk"}]
+        saved = client.put("/api/settings", json=values)
+        assert saved.status_code == 200, saved.text
+        out = saved.json()["values"]
+        assert out["llm"]["api_key"] == SECRET_MASK  # never returned
+        assert out["arr"]["radarr"][0]["api_key"] == SECRET_MASK
+        # Live: the collector job was rebuilt with the new interval.
+        assert app.state.ctx.scheduler.jobs["collect:system"].interval.total_seconds() == 45
+
+        # Sending the mask back keeps the stored secret; renaming nothing else changes.
+        out["llm"]["temperature"] = 0.5
+        assert client.put("/api/settings", json=out).status_code == 200
+        stored = app.state.ctx.settings
+        assert stored.llm.api_key.get_secret_value() == "sk-1"
+        assert stored.arr.radarr[0].api_key.get_secret_value() == "rk"
+        assert stored.llm.temperature == 0.5
+
+        bad = dict(out, report={**out["report"], "interval": "five minutes"})
+        resp = client.put("/api/settings", json=bad)
+        assert resp.status_code == 422
+        assert resp.json()["detail"][0]["loc"] == ["report", "interval"]
+        assert app.state.ctx.settings.report.interval.total_seconds() == 300  # unchanged
+
+    # Persisted across restarts.
+    with TestClient(create_app(bootstrap, collector_registry={})) as client:
+        again = client.get("/api/settings").json()["values"]
+    assert again["llm"]["model"] == "qwen3:8b" and again["llm"]["api_key"] == SECRET_MASK
+
+
+def test_settings_rejects_incomplete_instances_with_readable_errors(bootstrap: Bootstrap) -> None:
+    with TestClient(create_app(bootstrap, collector_registry={})) as client:
+        values = client.get("/api/settings").json()["values"]
+        values["arr"]["radarr"] = [{"name": "", "url": "", "api_key": ""}]
+        values["llm"]["base_url"] = "ollama:11434"
+        resp = client.put("/api/settings", json=values)
+    assert resp.status_code == 422
+    errors = {".".join(e["loc"]): e["msg"] for e in resp.json()["detail"]}
+    assert errors == {
+        "llm.base_url": "Must be a URL starting with http:// or https://",
+        "arr.radarr.0.name": "Required",
+        "arr.radarr.0.url": "Must be a URL starting with http:// or https://",
+        "arr.radarr.0.api_key": "API key is required",
+    }
+
+
+@respx.mock
+def test_test_llm_endpoint(bootstrap: Bootstrap) -> None:
+    respx.get(f"{LLM_URL}/models").mock(
+        return_value=httpx.Response(200, json={"data": [{"id": "test-model"}, {"id": "other"}]})
+    )
+    route = respx.post(f"{LLM_URL}/chat/completions").mock(
+        return_value=chat_response("<think>hmm</think>OK")
+    )
+    with TestClient(create_app(bootstrap, collector_registry={})) as client:
+        result = client.post(
+            "/api/settings/test-llm",
+            json={"base_url": LLM_URL, "model": "test-model", "api_key": "sk-x"},
+        ).json()
+        unconfigured = client.post("/api/settings/test-llm", json={"base_url": ""}).json()
+    assert result["ok"] is True and result["reply"] == "OK"
+    assert result["model_listed"] is True and result["models"] == ["test-model", "other"]
+    assert json.loads(route.calls.last.request.content)["model"] == "test-model"
+    assert unconfigured["ok"] is False
+
+
+def test_serves_spa_when_static_dir_exists(tmp_path: Path) -> None:
     static = tmp_path / "static"
     static.mkdir()
     (static / "index.html").write_text("<h1>spa</h1>")
-    settings.server.static_dir = static
-    with TestClient(create_app(settings, collector_registry={})) as client:
+    bootstrap = Bootstrap(data_dir=tmp_path / "d", host_root=tmp_path / "x", static_dir=static)
+    with TestClient(create_app(bootstrap, collector_registry={})) as client:
         assert "spa" in client.get("/").text
         assert client.get("/healthz").status_code == 200  # API routes win over the mount

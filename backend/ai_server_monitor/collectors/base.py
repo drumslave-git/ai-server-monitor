@@ -12,7 +12,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, ClassVar
 
-from ..config import CollectorConfig
+from ..config import CollectorSettings
 
 
 class CollectorUnavailable(Exception):
@@ -71,7 +71,7 @@ class Collector(ABC):
     name: ClassVar[str]
     timeout: ClassVar[timedelta] = timedelta(seconds=30)
 
-    def __init__(self, cfg: CollectorConfig, env: HostEnv):
+    def __init__(self, cfg: CollectorSettings, env: HostEnv):
         self.cfg = cfg
         self.env = env
 

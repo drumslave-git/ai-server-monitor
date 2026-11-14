@@ -11,34 +11,38 @@ Status: early development. See [docs/DESIGN.md](docs/DESIGN.md) for the design a
 ## Install (Debian/Ubuntu host with Docker)
 
 ```bash
-mkdir -p ~/servermon && cd ~/servermon
+mkdir -p ~/ai-server-monitor && cd ~/ai-server-monitor
 curl -fsSL https://raw.githubusercontent.com/drumslave-git/ai-server-monitor/main/docker/compose.example.yaml -o compose.yaml
-curl -fsSL https://raw.githubusercontent.com/drumslave-git/ai-server-monitor/main/config.example.yaml -o config.yaml
-# edit config.yaml: at least llm.base_url / llm.model (or set LLM_* in a .env file)
 docker compose up -d
 ```
 
-Then open `http://<server>:8080` (put a reverse proxy with authentication in front of it;
-there is no built-in login). `http://<server>:8080/api/collectors` shows the raw data.
+Open `http://<server>:8080` and configure everything under **Settings** (LLM endpoint,
+collectors, Telegram, *arr…). Changes apply immediately; there are no config files.
 
-- Image: `ghcr.io/drumslave-git/ai-server-monitor` — tags `X.Y.Z`, `X.Y`, `latest` (amd64).
-  Pin a version with `SERVERMON_VERSION=0.2.0` in `.env`.
-- Host access is read-only: `pid: host`, the host root mounted at `/host:ro`, and Docker
-  through a GET-only socket proxy.
-- If the GHCR package is private, `docker login ghcr.io` with a token that has `read:packages`.
+The compose file only sets what the container needs to run:
 
-Update: `docker compose pull && docker compose up -d`.
+- `./data` — settings and history (SQLite). Back this up; it contains your API keys.
+- `/:/host:ro,rslave` and `pid: host` — read-only view of the host.
+- `DOCKER_HOST` → a socket proxy that only allows read (GET) requests.
+- `# gpus: all` — uncomment for NVIDIA GPU monitoring.
+
+There is no built-in login: keep port 8080 on your LAN or put a reverse proxy with
+authentication in front of it.
+
+Update: `docker compose pull && docker compose up -d`. Pin a version by changing the image
+tag (`ghcr.io/drumslave-git/ai-server-monitor:0.3.0`; tags `X.Y.Z`, `X.Y`, `latest`, amd64).
+If the GHCR package is private, `docker login ghcr.io` with a token that has `read:packages`.
 
 ## Development
 
 ```bash
 cd backend && python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Windows: .venv\Scripts\pip
 .venv/bin/pytest && .venv/bin/ruff check . && .venv/bin/ruff format --check .
-ASM_CONFIG=../config.example.yaml .venv/bin/python -m servermon            # API on :8080
+ASM_DATA_DIR=./data .venv/bin/python -m ai_server_monitor                 # API on :8080
 cd ../frontend && npm install && npm run dev                                # UI on :5173, proxies /api
 ```
 
-Local image: `docker build -f docker/Dockerfile -t servermon:dev .`
+Local image: `docker build -f docker/Dockerfile -t ai-server-monitor:dev .`
 
 ## Releasing
 

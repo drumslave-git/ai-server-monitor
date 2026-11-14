@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, Literal
 
 from ..config import Settings
@@ -33,7 +34,7 @@ class CollectorManager:
         self.db = db
         self.scheduler = scheduler
         self.registry = registry if registry is not None else REGISTRY
-        self.env = env or HostEnv.detect(settings.collectors.host_root)
+        self.env = env or HostEnv.detect(Path("/host"))
         self.collectors: dict[str, Collector] = {}
         self.states: dict[str, CollectorState] = {}
         self.reasons: dict[str, str] = {}

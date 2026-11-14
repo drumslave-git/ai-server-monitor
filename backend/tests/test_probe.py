@@ -6,8 +6,8 @@ import httpx
 import pytest
 import respx
 
-from servermon.db import Database
-from servermon.llm import LLMClient, LLMConnectionError, ToolModeResolver, probe_tool_mode
+from ai_server_monitor.db import Database
+from ai_server_monitor.llm import LLMClient, LLMConnectionError, ToolModeResolver, probe_tool_mode
 
 from .conftest import LLM_URL, chat_response
 

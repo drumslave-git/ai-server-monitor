@@ -1,67 +1,31 @@
-# AI Server Monitor — compose file for a single Debian/Ubuntu host.
-#
-# On the server, in an empty directory:
-#   curl -fsSLO https://raw.githubusercontent.com/drumslave-git/ai-server-monitor/main/docker/compose.example.yaml
-#   curl -fsSL  https://raw.githubusercontent.com/drumslave-git/ai-server-monitor/main/config.example.yaml -o config.yaml
-#   mv compose.example.yaml compose.yaml      # then edit config.yaml (LLM endpoint etc.)
-#   docker compose up -d
-#
-# Everything the monitor reads from the host is mounted read-only. Docker access goes
-# through a socket proxy that only allows GET requests, because a read-only *mount* of
-# docker.sock does NOT make the Docker API read-only.
+# AI Server Monitor. Everything else is configured in the web UI (http://<server>:8080).
 
 services:
-  servermon:
-    image: ghcr.io/drumslave-git/ai-server-monitor:${SERVERMON_VERSION:-latest}
-    # To run a local build instead:  docker build -f docker/Dockerfile -t servermon:dev .
-    # and set SERVERMON_IMAGE / replace the image line with servermon:dev.
-    container_name: servermon
+  ai-server-monitor:
+    image: ghcr.io/drumslave-git/ai-server-monitor:latest
+    container_name: ai-server-monitor
     restart: unless-stopped
-    pid: host                      # see host processes (top consumers, per-process stats)
+    pid: host                            # see the host's processes
     ports:
-      - "${SERVERMON_PORT:-8080}:8080"   # put a reverse proxy with auth in front of this
+      - "8080:8080"
     environment:
-      ASM__COLLECTORS__DOCKER__URL: tcp://docker-proxy:2375
-      # Optional, referenced from config.yaml as ${...}; put them in a .env file:
-      LLM_BASE_URL: ${LLM_BASE_URL:-}
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_MODEL: ${LLM_MODEL:-}
-      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:-}
+      DOCKER_HOST: tcp://docker-proxy:2375
     volumes:
-      # Host root, read-only. rslave lets later host mounts (USB disks, NFS) show up.
-      # (Needs / to be a shared mount, the default on systemd hosts. If Docker refuses with
-      #  "not a shared or slave mount", use "/:/host:ro".)
-      - /:/host:ro,rslave
-      - ./config.yaml:/config/config.yaml:ro
-      - servermon-data:/data
+      - ./data:/data                     # settings + history
+      - /:/host:ro,rslave                # host filesystem, read-only
+    # gpus: all                          # NVIDIA GPU monitoring
     depends_on:
       - docker-proxy
-    # NVIDIA GPU monitoring (needs nvidia-container-toolkit on the host):
-    # environment:
-    #   NVIDIA_DRIVER_CAPABILITIES: compute,utility
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu, utility]
 
+  # Read-only Docker API (GET requests only).
   docker-proxy:
     image: tecnativa/docker-socket-proxy:v0.4.1
-    container_name: servermon-docker-proxy
+    container_name: ai-server-monitor-docker-proxy
     restart: unless-stopped
     environment:
-      POST: 0          # read-only: no POST/PUT/DELETE
-      CONTAINERS: 1    # list, inspect, stats, logs
+      CONTAINERS: 1
       IMAGES: 1
       INFO: 1
-      SYSTEM: 1        # /system/df (disk usage)
-      PING: 1
-      VERSION: 1
+      SYSTEM: 1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    # Not published: only reachable from servermon on the compose network.
-
-volumes:
-  servermon-data:

@@ -31,7 +31,7 @@ _PRUNABLE: dict[str, str] = {
 def load_migrations() -> list[tuple[int, str, str]]:
     """Return [(version, filename, sql)] sorted by version; versions must be 1..N contiguous."""
     found: list[tuple[int, str, str]] = []
-    for entry in resources.files("servermon.migrations").iterdir():
+    for entry in resources.files("ai_server_monitor.migrations").iterdir():
         match = _MIGRATION_NAME.match(entry.name)
         if match:
             found.append((int(match.group(1)), entry.name, entry.read_text(encoding="utf-8")))

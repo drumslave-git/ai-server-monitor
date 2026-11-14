@@ -18,7 +18,7 @@ from typing import Any
 
 import httpx
 
-from ..config import LLMConfig
+from ..config import LLMSettings
 from .text import estimate_tokens
 
 log = logging.getLogger(__name__)
@@ -152,7 +152,7 @@ def _parse_tool_calls(raw: Any) -> list[ToolCall]:
 
 
 class LLMClient:
-    def __init__(self, cfg: LLMConfig, *, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(self, cfg: LLMSettings, *, transport: httpx.AsyncBaseTransport | None = None):
         self.cfg = cfg
         self.stats = LLMStats()
         headers = {"Content-Type": "application/json"}

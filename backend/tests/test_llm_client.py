@@ -6,7 +6,7 @@ import httpx
 import pytest
 import respx
 
-from servermon.llm import LLMClient, LLMConnectionError, LLMStatusError
+from ai_server_monitor.llm import LLMClient, LLMConnectionError, LLMStatusError
 
 from .conftest import LLM_URL, chat_response, sse
 

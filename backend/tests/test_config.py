@@ -6,9 +6,21 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from servermon.config import interpolate, load_settings, parse_duration, redacted
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from ai_server_monitor.config import (
+    SECRET_MASK,
+    Bootstrap,
+    Settings,
+    format_duration,
+    parse_duration,
+    settings_json_schema,
+)
+from ai_server_monitor.db import Database
+from ai_server_monitor.settings_store import (
+    KV_KEY,
+    SettingsStore,
+    lenient_validate,
+    merge_secrets,
+)
 
 
 @pytest.mark.parametrize(
@@ -36,95 +48,95 @@ def test_parse_duration_invalid(value: object) -> None:
         parse_duration(value)
 
 
-def test_interpolate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("FOO", "bar")
-    monkeypatch.delenv("MISSING", raising=False)
-    secret = tmp_path / "secret"
-    secret.write_text("s3cret\n")
-    monkeypatch.delenv("FROMFILE", raising=False)
-    monkeypatch.setenv("FROMFILE_FILE", str(secret))
-    data = {
-        "a": "${FOO}",
-        "b": ["x-${FOO}-y", "${MISSING:-dflt}"],
-        "c": {"d": "${MISSING}", "e": 5},
-        "f": "${FROMFILE}",
-    }
-    assert interpolate(data) == {
-        "a": "bar",
-        "b": ["x-bar-y", "dflt"],
-        "c": {"d": "", "e": 5},
-        "f": "s3cret",
-    }
+@pytest.mark.parametrize(
+    ("seconds", "text"),
+    [(300, "5m"), (5400, "1h30m"), (0.5, "500ms"), (86400 * 30, "30d"), (0, "0s"), (61, "1m1s")],
+)
+def test_format_duration_roundtrip(seconds: float, text: str) -> None:
+    assert format_duration(timedelta(seconds=seconds)) == text
+    assert parse_duration(text) == timedelta(seconds=seconds)
 
 
-def test_interpolate_empty_value_uses_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("EMPTY", "")  # what docker compose passes for unset variables
-    assert interpolate("${EMPTY:-fallback}") == "fallback"
-    assert interpolate("${EMPTY}") == ""
+def test_bootstrap_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ASM_DATA_DIR", "/srv/asm")
+    monkeypatch.setenv("ASM_PORT", "9000")
+    b = Bootstrap()
+    assert b.db_path == Path("/srv/asm/monitor.db") and b.port == 9000
+    assert b.host_root == Path("/host")
 
 
-def test_defaults_without_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    # No ASM_CONFIG and default path missing: pure defaults, no error.
-    monkeypatch.setattr("servermon.config.DEFAULT_CONFIG_PATH", str(tmp_path / "nope.yaml"))
-    s = load_settings()
-    assert s.report.interval == timedelta(minutes=5)
+def test_defaults_and_json_shape() -> None:
+    s = Settings()
+    assert s.llm.configured is False  # nothing configured until the user does it in the UI
     assert s.arr.dry_run is True
-    assert s.collectors.gpu.enabled == "auto"
+    data = s.public_dict()
+    assert data["report"]["interval"] == "5m"  # human durations, not ISO 8601
+    assert data["collectors"]["gpu"]["enabled"] == "auto"
 
 
-def test_explicit_missing_file_raises(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError):
-        load_settings(tmp_path / "missing.yaml")
+def test_secrets_masked_publicly_but_stored_in_clear() -> None:
+    s = Settings(llm={"api_key": "sk-1"}, outputs={"telegram": {"token": ""}})
+    assert s.public_dict()["llm"]["api_key"] == SECRET_MASK
+    assert s.public_dict()["outputs"]["telegram"]["token"] == ""  # unset stays empty
+    assert s.storage_dict()["llm"]["api_key"] == "sk-1"
+    assert Settings.model_validate(s.storage_dict()) == s  # storage round-trips
 
 
-def test_yaml_and_env_precedence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text(
-        "llm:\n"
-        "  model: from-yaml\n"
-        "  api_key: ${MY_KEY}\n"
-        "  temperature: 0.7\n"
-        "report:\n"
-        "  interval: 10m\n"
-        "arr:\n"
-        "  radarr:\n"
-        "    - { name: radarr, url: 'http://radarr:7878', api_key: abc }\n"
-    )
-    monkeypatch.setenv("MY_KEY", "sk-123")
-    monkeypatch.setenv("ASM__LLM__MODEL", "from-env")
-    monkeypatch.setenv("ASM__REPORT__SKIP_IF_UNCHANGED", "true")
-    s = load_settings(cfg)
-    assert s.llm.model == "from-env"  # env beats yaml
-    assert s.llm.temperature == 0.7  # yaml kept where env is silent (deep merge)
-    assert s.llm.api_key.get_secret_value() == "sk-123"
-    assert s.report.interval == timedelta(minutes=10)
-    assert s.report.skip_if_unchanged is True
-    assert s.arr.radarr[0].url == "http://radarr:7878"
+def test_schema_has_help_text_and_widgets() -> None:
+    schema = settings_json_schema()
+    llm = schema["$defs"]["LLMSettings"]["properties"]
+    assert "OpenAI-compatible" in llm["base_url"]["description"]  # from attribute docstrings
+    assert llm["api_key"]["format"] == "password"
+    assert llm["timeout"]["format"] == "duration" and llm["timeout"]["default"] == "3m"
 
 
-def test_asm_config_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    cfg = tmp_path / "c.yaml"
-    cfg.write_text("server:\n  port: 9999\n")
-    monkeypatch.setenv("ASM_CONFIG", str(cfg))
-    assert load_settings().server.port == 9999
-
-
-def test_unknown_keys_rejected(tmp_path: Path) -> None:
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text("llm:\n  modle: typo\n")
+def test_unknown_keys_rejected() -> None:
     with pytest.raises(ValidationError):
-        load_settings(cfg)
+        Settings.model_validate({"llm": {"modle": "typo"}})
 
 
-def test_example_config_is_valid(monkeypatch: pytest.MonkeyPatch) -> None:
-    s = load_settings(REPO_ROOT / "config.example.yaml")
-    assert s.llm.tool_mode == "auto"
-    assert s.arr.actions.stalled_cleanup.policy == "approve"
-    assert s.arr.actions.cutoff_search.interval == timedelta(hours=24)
+def test_merge_secrets_matches_list_items_by_name() -> None:
+    current = {"radarr": [{"name": "a", "api_key": "KA"}, {"name": "b", "api_key": "KB"}]}
+    incoming = {"radarr": [{"name": "b", "api_key": SECRET_MASK}, {"name": "c", "api_key": "KC"}]}
+    assert merge_secrets(incoming, current) == {
+        "radarr": [{"name": "b", "api_key": "KB"}, {"name": "c", "api_key": "KC"}]
+    }
+    assert merge_secrets({"k": SECRET_MASK}, {}) == {"k": ""}  # mask without stored value
 
 
-def test_redacted_hides_secrets(tmp_path: Path) -> None:
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text("llm:\n  api_key: supersecret\n")
-    dumped = redacted(load_settings(cfg))
-    assert "supersecret" not in str(dumped)
+def test_lenient_validate_keeps_valid_parts() -> None:
+    raw = Settings(llm={"model": "m1", "base_url": "http://x/v1"}).storage_dict()
+    raw["llm"]["removed_in_new_version"] = 1
+    raw["report"]["interval"] = "garbage"
+    settings, problems = lenient_validate(raw)
+    assert settings.llm.model == "m1"  # untouched
+    assert settings.report.interval == timedelta(minutes=5)  # reset to default
+    assert len(problems) == 2
+
+
+def test_lenient_validate_drops_incomplete_list_item_not_everything() -> None:
+    raw = Settings(llm={"model": "keep-me"}).storage_dict()
+    raw["arr"]["radarr"] = [
+        {"name": "", "url": "", "api_key": ""},
+        {"name": "ok", "url": "http://radarr:7878", "api_key": "k"},
+    ]
+    del raw["arr"]["radarr"][0]["name"]  # missing required field
+    settings, _ = lenient_validate(raw)
+    assert settings.llm.model == "keep-me"
+    assert [r.name for r in settings.arr.radarr] == ["ok"]
+
+
+async def test_store_roundtrip_and_repair(db: Database) -> None:
+    store = SettingsStore(db)
+    assert await store.load() == Settings()  # first run
+    await store.save(Settings(llm={"model": "m2", "api_key": "k"}))
+    loaded = await store.load()
+    assert loaded.llm.model == "m2" and loaded.llm.api_key.get_secret_value() == "k"
+
+    raw = await db.kv_get(KV_KEY)
+    raw["report"]["interval"] = "nope"  # e.g. written by an older/newer version
+    await db.kv_set(KV_KEY, raw)
+    repaired = await store.load()
+    assert repaired.llm.model == "m2"
+    backups = await db.fetchall("SELECT key FROM kv WHERE key LIKE 'settings.backup.%'")
+    assert len(backups) == 1

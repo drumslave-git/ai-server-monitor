@@ -10,4 +10,3 @@ data
 *.db
 *.db-*
 .env
-config.yaml

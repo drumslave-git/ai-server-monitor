@@ -5,17 +5,21 @@ from typing import Any
 
 import pytest
 
-from servermon.collectors import journal as journal_mod
-from servermon.collectors.base import HostEnv
-from servermon.collectors.journal import JournalCollector, normalize_message, summarize_journal
-from servermon.collectors.systemd import (
+from ai_server_monitor.collectors import journal as journal_mod
+from ai_server_monitor.collectors.base import CollectorUnavailable, HostEnv
+from ai_server_monitor.collectors.journal import (
+    JournalCollector,
+    normalize_message,
+    summarize_journal,
+)
+from ai_server_monitor.collectors.systemd import (
     MANAGER_IFACE,
     SERVICE_IFACE,
     UNIT_IFACE,
     DbusError,
     SystemdCollector,
 )
-from servermon.config import JournalCollectorConfig, SystemdCollectorConfig
+from ai_server_monitor.config import JournalCollectorSettings, SystemdCollectorSettings
 
 
 def unit(name: str, active: str, sub: str, load: str = "loaded") -> list[Any]:
@@ -56,7 +60,7 @@ class FakeBus:
 
 async def test_systemd_collect() -> None:
     bus = FakeBus()
-    collector = SystemdCollector(SystemdCollectorConfig(), HostEnv(), bus=bus)
+    collector = SystemdCollector(SystemdCollectorSettings(), HostEnv(), bus=bus)
     first = await collector.collect()
 
     assert first["system_state"] == "degraded"
@@ -80,10 +84,10 @@ async def test_systemd_collect() -> None:
 
 
 def test_systemd_default_bus_address_uses_host_root(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    collector = SystemdCollector(SystemdCollectorConfig(), HostEnv(root=tmp_path), bus=FakeBus())
+    collector = SystemdCollector(SystemdCollectorSettings(), HostEnv(root=tmp_path), bus=FakeBus())
     assert collector._address() == f"unix:path={tmp_path / 'run/dbus/system_bus_socket'}"
     custom = SystemdCollector(
-        SystemdCollectorConfig(bus_address="unix:path=/x"), HostEnv(), bus=FakeBus()
+        SystemdCollectorSettings(bus_address="unix:path=/x"), HostEnv(), bus=FakeBus()
     )
     assert custom._address() == "unix:path=/x"
 
@@ -124,6 +128,22 @@ def test_summarize_journal() -> None:
     assert any("binary" in g["sample"] for g in summary["top_messages"])
 
 
+async def test_journal_never_reads_container_journal(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    calls: list[list[str]] = []
+
+    async def fake_run(args: list[str], **kwargs: Any) -> str:
+        calls.append(args)
+        return ""
+
+    monkeypatch.setattr(journal_mod, "run_command", fake_run)
+    collector = JournalCollector(JournalCollectorSettings(), HostEnv(root=tmp_path))  # no journal
+    with pytest.raises(CollectorUnavailable):
+        await collector.collect()
+    assert calls == []
+
+
 async def test_journal_collector_uses_cursor(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
     journal_dir = tmp_path / "var/log/journal"
     (journal_dir / "machine").mkdir(parents=True)
@@ -139,7 +159,7 @@ async def test_journal_collector_uses_cursor(tmp_path, monkeypatch: pytest.Monke
 
     monkeypatch.setattr(journal_mod.shutil, "which", lambda name: "/usr/bin/journalctl")
     monkeypatch.setattr(journal_mod, "run_command", fake_run)
-    collector = JournalCollector(JournalCollectorConfig(), HostEnv(root=tmp_path))
+    collector = JournalCollector(JournalCollectorSettings(), HostEnv(root=tmp_path))
     await collector.check()
 
     first = await collector.collect()

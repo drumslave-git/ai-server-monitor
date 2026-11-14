@@ -17,7 +17,7 @@ from typing import Any
 
 import psutil
 
-from ..config import SystemCollectorConfig
+from ..config import SystemCollectorSettings
 from .base import Collector, HostEnv, RateTracker, round_or_none
 
 # Filesystems that never represent user-visible storage capacity.
@@ -128,9 +128,9 @@ def statvfs_usage(path: Path) -> dict[str, Any] | None:
 class SystemCollector(Collector):
     name = "system"
     timeout = timedelta(seconds=20)
-    cfg: SystemCollectorConfig
+    cfg: SystemCollectorSettings
 
-    def __init__(self, cfg: SystemCollectorConfig, env: HostEnv):
+    def __init__(self, cfg: SystemCollectorSettings, env: HostEnv):
         super().__init__(cfg, env)
         self._rates = RateTracker()
         self._cpu_primed = False
