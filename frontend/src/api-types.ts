@@ -4,6 +4,66 @@
  */
 
 export interface paths {
+    "/api/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Actions
+         * @description The audit log, newest first. Filter with ?status= and ?action=.
+         */
+        get: operations["list_actions_api_actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Approvals
+         * @description Actions waiting for a decision (expired ones are swept first).
+         */
+        get: operations["list_approvals_api_approvals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/approvals/{action_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide
+         * @description Approve (→ executes it now) or reject a pending action.
+         */
+        post: operations["decide_api_approvals__action_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/collectors": {
         parameters: {
             query?: never;
@@ -225,6 +285,12 @@ export interface components {
         /** ActionSettings */
         ActionSettings: {
             /**
+             * Max Per Hour
+             * @description Cap on how many of these actions run per hour (0 = no cap).
+             * @default 0
+             */
+            max_per_hour: number;
+            /**
              * Policy
              * @description off = never; suggest = mention in reports; approve = ask you first; auto = just do it.
              * @default suggest
@@ -237,6 +303,7 @@ export interface components {
             /**
              * @description Add movies/series when asked in chat.
              * @default {
+             *       "max_per_hour": 0,
              *       "policy": "approve"
              *     }
              */
@@ -257,6 +324,7 @@ export interface components {
              * @default {
              *       "batch": 5,
              *       "interval": "1d",
+             *       "max_per_hour": 30,
              *       "policy": "suggest"
              *     }
              */
@@ -264,15 +332,18 @@ export interface components {
             /**
              * @description Test/disable failing indexers in Prowlarr.
              * @default {
+             *       "interval": "1h",
+             *       "max_per_hour": 0,
              *       "policy": "suggest"
              *     }
              */
-            indexer_triage: components["schemas"]["ActionSettings"];
+            indexer_triage: components["schemas"]["IndexerTriageSettings"];
             /**
              * @description Search for missing episodes/movies.
              * @default {
              *       "batch": 10,
              *       "interval": "6h",
+             *       "max_per_hour": 30,
              *       "policy": "suggest"
              *     }
              */
@@ -280,12 +351,39 @@ export interface components {
             /**
              * @description Remove stalled/failed downloads, blocklist the release and search again.
              * @default {
+             *       "interval": "30m",
              *       "max_per_hour": 10,
              *       "policy": "approve",
              *       "stalled_after": "6h"
              *     }
              */
             stalled_cleanup: components["schemas"]["StalledCleanupSettings"];
+        };
+        /** ArrCollectorSettings */
+        ArrCollectorSettings: {
+            /**
+             * Enabled
+             * @description auto = on as soon as an *arr app, Prowlarr or qBittorrent is configured under
+             *     *arr & downloads.
+             * @default auto
+             */
+            enabled: boolean | "auto";
+            /**
+             * Interval
+             * Format: duration
+             * @default 2m
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            interval: string;
+            /**
+             * Max Queue Items
+             * @description Max queue entries listed per *arr instance (the rest is only counted).
+             * @default 50
+             */
+            max_queue_items: number;
         };
         /** ArrInstance */
         ArrInstance: {
@@ -311,23 +409,29 @@ export interface components {
             /**
              * @default {
              *       "add_media": {
+             *         "max_per_hour": 0,
              *         "policy": "approve"
              *       },
              *       "approval_ttl": "1d",
              *       "cutoff_search": {
              *         "batch": 5,
              *         "interval": "1d",
+             *         "max_per_hour": 30,
              *         "policy": "suggest"
              *       },
              *       "indexer_triage": {
+             *         "interval": "1h",
+             *         "max_per_hour": 0,
              *         "policy": "suggest"
              *       },
              *       "missing_search": {
              *         "batch": 10,
              *         "interval": "6h",
+             *         "max_per_hour": 30,
              *         "policy": "suggest"
              *       },
              *       "stalled_cleanup": {
+             *         "interval": "30m",
              *         "max_per_hour": 10,
              *         "policy": "approve",
              *         "stalled_after": "6h"
@@ -347,6 +451,17 @@ export interface components {
             radarr?: components["schemas"]["ArrInstance"][];
             /** Sonarr */
             sonarr?: components["schemas"]["ArrInstance"][];
+            /**
+             * Timeout
+             * Format: duration
+             * @description Per-request timeout for *arr, Prowlarr and qBittorrent.
+             * @default 15s
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            timeout: string;
             /** Whisparr */
             whisparr?: components["schemas"]["ArrInstance"][];
         };
@@ -396,6 +511,16 @@ export interface components {
              */
             apt: components["schemas"]["CollectorSettings"];
             /**
+             * @description Radarr/Sonarr/Whisparr queues and health, Prowlarr indexers, qBittorrent torrents
+             *     (the apps themselves are configured under *arr & downloads).
+             * @default {
+             *       "enabled": "auto",
+             *       "interval": "2m",
+             *       "max_queue_items": 50
+             *     }
+             */
+            arr: components["schemas"]["ArrCollectorSettings"];
+            /**
              * @description Containers: state, health, restarts, resource use, log errors, disk usage.
              * @default {
              *       "df_interval": "30m",
@@ -416,13 +541,16 @@ export interface components {
              */
             gpu: components["schemas"]["CollectorSettings"];
             /**
-             * @description Newer images for running containers (coming in M3).
+             * @description Running containers whose image tag has a newer build in its registry (same tag, new
+             *     digest; does not look for newer version numbers).
              * @default {
-             *       "enabled": true,
-             *       "interval": "12h"
+             *       "cache_ttl": "6h",
+             *       "enabled": "auto",
+             *       "interval": "12h",
+             *       "url": ""
              *     }
              */
-            image_updates: components["schemas"]["CollectorSettings"];
+            image_updates: components["schemas"]["ImageUpdatesCollectorSettings"];
             /**
              * @description Warnings and errors from the system journal.
              * @default {
@@ -436,12 +564,28 @@ export interface components {
              */
             journal: components["schemas"]["JournalCollectorSettings"];
             /**
-             * @description Query an existing Prometheus (coming in M3).
+             * @description Run PromQL queries against an existing Prometheus.
              * @default {
-             *       "enabled": false,
+             *       "enabled": "auto",
              *       "interval": "1m",
-             *       "queries": {},
-             *       "url": "http://prometheus:9090"
+             *       "max_series": 50,
+             *       "password": "",
+             *       "queries": [
+             *         {
+             *           "description": "Scrape targets that are down",
+             *           "name": "targets_down",
+             *           "query": "up == 0"
+             *         },
+             *         {
+             *           "description": "Alerts currently firing in Prometheus",
+             *           "name": "firing_alerts",
+             *           "query": "ALERTS{alertstate=\"firing\"}"
+             *         }
+             *       ],
+             *       "timeout": "10s",
+             *       "token": "",
+             *       "url": "",
+             *       "username": ""
              *     }
              */
             prometheus: components["schemas"]["PrometheusCollectorSettings"];
@@ -475,6 +619,14 @@ export interface components {
              * @default 0
              */
             unhealthy: number;
+        };
+        /** Decision */
+        Decision: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "reject";
         };
         /** Digest */
         Digest: {
@@ -598,6 +750,69 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** ImageUpdatesCollectorSettings */
+        ImageUpdatesCollectorSettings: {
+            /**
+             * Cache Ttl
+             * Format: duration
+             * @description How long a registry answer is reused. Registries rate-limit, so don't set this low.
+             * @default 6h
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            cache_ttl: string;
+            /**
+             * Enabled
+             * @default auto
+             */
+            enabled: boolean | "auto";
+            /**
+             * Interval
+             * Format: duration
+             * @default 12h
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            interval: string;
+            /**
+             * Url
+             * @description Docker API, e.g. tcp://docker-proxy:2375. Empty = $DOCKER_HOST (set by the compose
+             *     file), else the local socket.
+             * @default
+             */
+            url: string;
+        };
+        /** IndexerTriageSettings */
+        IndexerTriageSettings: {
+            /**
+             * Interval
+             * Format: duration
+             * @description How often to look for failing indexers.
+             * @default 1h
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            interval: string;
+            /**
+             * Max Per Hour
+             * @description Cap on how many of these actions run per hour (0 = no cap).
+             * @default 0
+             */
+            max_per_hour: number;
+            /**
+             * Policy
+             * @description off = never; suggest = mention in reports; approve = ask you first; auto = just do it.
+             * @default suggest
+             * @enum {string}
+             */
+            policy: "off" | "suggest" | "approve" | "auto";
         };
         /** JournalCollectorSettings */
         JournalCollectorSettings: {
@@ -818,11 +1033,31 @@ export interface components {
             /** Security */
             security?: number | null;
         };
+        /** PromQuery */
+        PromQuery: {
+            /**
+             * Description
+             * @description What the result means, e.g. "Scrape targets that are down". Helps the report writer.
+             * @default
+             */
+            description: string;
+            /**
+             * Name
+             * @description Short identifier shown in reports, e.g. targets_down.
+             */
+            name: string;
+            /**
+             * Query
+             * @description PromQL expression, evaluated as an instant query.
+             */
+            query: string;
+        };
         /** PrometheusCollectorSettings */
         PrometheusCollectorSettings: {
             /**
              * Enabled
-             * @default false
+             * @description auto = on as soon as a URL is set.
+             * @default auto
              */
             enabled: boolean | "auto";
             /**
@@ -836,17 +1071,52 @@ export interface components {
              */
             interval: string;
             /**
-             * Queries
-             * @description Named PromQL queries to include in reports, e.g. node_load: node_load5.
+             * Max Series
+             * @description Max series kept per query result; the rest is only counted.
+             * @default 50
              */
-            queries?: {
-                [key: string]: string;
-            };
+            max_series: number;
+            /**
+             * Password
+             * Format: password
+             * @default
+             */
+            password: string;
+            /**
+             * Queries
+             * @description PromQL queries run on every collection and included in reports.
+             */
+            queries?: components["schemas"]["PromQuery"][];
+            /**
+             * Timeout
+             * Format: duration
+             * @description Per-query timeout.
+             * @default 10s
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            timeout: string;
+            /**
+             * Token
+             * Format: password
+             * @description Bearer token, if Prometheus sits behind an authenticating proxy.
+             * @default
+             */
+            token: string;
             /**
              * Url
-             * @default http://prometheus:9090
+             * @description Prometheus base URL, e.g. http://prometheus:9090. Empty = not used.
+             * @default
              */
             url: string;
+            /**
+             * Username
+             * @description Basic-auth user (used when no bearer token is set).
+             * @default
+             */
+            username: string;
         };
         /** QbitSettings */
         QbitSettings: {
@@ -1149,6 +1419,11 @@ export interface components {
              */
             interval: string;
             /**
+             * Max Per Hour
+             * @default 30
+             */
+            max_per_hour: number;
+            /**
              * Policy
              * @description off = never; suggest = mention in reports; approve = ask you first; auto = just do it.
              * @default suggest
@@ -1165,23 +1440,29 @@ export interface components {
              * @default {
              *       "actions": {
              *         "add_media": {
+             *           "max_per_hour": 0,
              *           "policy": "approve"
              *         },
              *         "approval_ttl": "1d",
              *         "cutoff_search": {
              *           "batch": 5,
              *           "interval": "1d",
+             *           "max_per_hour": 30,
              *           "policy": "suggest"
              *         },
              *         "indexer_triage": {
+             *           "interval": "1h",
+             *           "max_per_hour": 0,
              *           "policy": "suggest"
              *         },
              *         "missing_search": {
              *           "batch": 10,
              *           "interval": "6h",
+             *           "max_per_hour": 30,
              *           "policy": "suggest"
              *         },
              *         "stalled_cleanup": {
+             *           "interval": "30m",
              *           "max_per_hour": 10,
              *           "policy": "approve",
              *           "stalled_after": "6h"
@@ -1190,6 +1471,7 @@ export interface components {
              *       "dry_run": true,
              *       "radarr": [],
              *       "sonarr": [],
+             *       "timeout": "15s",
              *       "whisparr": []
              *     }
              */
@@ -1199,6 +1481,11 @@ export interface components {
              *       "apt": {
              *         "enabled": true,
              *         "interval": "6h"
+             *       },
+             *       "arr": {
+             *         "enabled": "auto",
+             *         "interval": "2m",
+             *         "max_queue_items": 50
              *       },
              *       "docker": {
              *         "df_interval": "30m",
@@ -1213,8 +1500,10 @@ export interface components {
              *         "interval": "30s"
              *       },
              *       "image_updates": {
-             *         "enabled": true,
-             *         "interval": "12h"
+             *         "cache_ttl": "6h",
+             *         "enabled": "auto",
+             *         "interval": "12h",
+             *         "url": ""
              *       },
              *       "journal": {
              *         "directory": "",
@@ -1225,10 +1514,26 @@ export interface components {
              *         "priority": "warning"
              *       },
              *       "prometheus": {
-             *         "enabled": false,
+             *         "enabled": "auto",
              *         "interval": "1m",
-             *         "queries": {},
-             *         "url": "http://prometheus:9090"
+             *         "max_series": 50,
+             *         "password": "",
+             *         "queries": [
+             *           {
+             *             "description": "Scrape targets that are down",
+             *             "name": "targets_down",
+             *             "query": "up == 0"
+             *           },
+             *           {
+             *             "description": "Alerts currently firing in Prometheus",
+             *             "name": "firing_alerts",
+             *             "query": "ALERTS{alertstate=\"firing\"}"
+             *           }
+             *         ],
+             *         "timeout": "10s",
+             *         "token": "",
+             *         "url": "",
+             *         "username": ""
              *       },
              *       "system": {
              *         "enabled": true,
@@ -1332,6 +1637,17 @@ export interface components {
         /** StalledCleanupSettings */
         StalledCleanupSettings: {
             /**
+             * Interval
+             * Format: duration
+             * @description How often to look for stalled downloads.
+             * @default 30m
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            interval: string;
+            /**
              * Max Per Hour
              * @default 10
              */
@@ -1366,6 +1682,8 @@ export interface components {
             next_report: components["schemas"]["NextReport"];
             /** Now */
             now: number;
+            /** Pending Approvals */
+            pending_approvals: number;
             report: components["schemas"]["LatestReport"] | null;
             resources: components["schemas"]["Resources"];
             /** Uptime S */
@@ -1507,6 +1825,101 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_actions_api_actions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                status?: string | null;
+                action?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_approvals_api_approvals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    decide_api_approvals__action_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                action_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Decision"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     collectors_api_collectors_get: {
         parameters: {
             query?: never;

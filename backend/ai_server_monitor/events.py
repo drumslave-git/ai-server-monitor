@@ -6,11 +6,13 @@ Event types published today (exposed to browsers by GET /api/stream):
     metrics.tick                                                    (system/gpu collectors)
     collector.status                                                (collector state changes)
 
-Reserved for the action layer (M9), which should publish them on this bus:
+Published by the action layer through `outputs/action_events.ActionEventBridge`:
 
+    action.suggested   an action was only suggested
     approval.pending   a write action is waiting for a decision
     approval.decided   an approval was approved/rejected/expired
-    action.result      an action finished (executed/failed/dry_run)
+    approval.expired   a pending approval timed out
+    action.result      an action finished (executed/failed/dry_run/rejected)
 
 `publish` never blocks and never fails: every subscriber has a bounded queue, and when it
 is full the oldest event is dropped (a slow consumer loses history, never stalls the

@@ -367,6 +367,30 @@ def _journal_section(j: JournalSummary | None, label: str) -> Section | None:
     return Section("journal", "System journal", 50, lines)
 
 
+def _arr_section(snap: Snapshot, pending_approvals: int) -> Section | None:
+    arr = snap.data("arr")
+    if not arr:
+        return None
+    s = arr.get("summary") or {}
+    parts = [f"{s.get('instances', '?')} instances"]
+    if s.get("unreachable"):
+        parts.append("UNREACHABLE: " + ", ".join(map(str, s["unreachable"])))
+    queue_total, queue_problems = s.get("queue_total", 0), s.get("queue_problems", 0)
+    parts.append(f"download queues {queue_total} items ({queue_problems} with problems)")
+    missing, cutoff = s.get("wanted_missing", 0), s.get("wanted_cutoff_unmet", 0)
+    parts.append(f"wanted: {missing} missing, {cutoff} below cutoff")
+    if s.get("indexers_failing"):
+        parts.append(f"{s['indexers_failing']} indexers failing")
+    if s.get("stalled_candidates"):
+        parts.append(f"{s['stalled_candidates']} stalled torrents")
+    lines = ["; ".join(parts)]
+    if pending_approvals:
+        lines.append(f"{pending_approvals} action(s) waiting for approval")
+    for f in (arr.get("findings") or [])[:8]:
+        lines.append(f"[{str(f.get('severity')).upper()}] {f.get('source')}: {f.get('message')}")
+    return Section("arr", "*arr and downloads", 45, lines)
+
+
 def _updates_section(snap: Snapshot) -> Section | None:
     apt = snap.data("apt")
     img = snap.data("image_updates")
@@ -469,6 +493,14 @@ def fingerprint(text: str) -> str:
 # --------------------------------------------------------------------------- entry point
 
 
+async def _pending_approvals(db: Database) -> int:
+    try:
+        row = await db.fetchone("SELECT COUNT(*) AS n FROM actions WHERE status = 'pending'")
+        return int(row["n"]) if row else 0
+    except Exception:
+        return 0
+
+
 async def build_digest(
     raw_snapshot: dict[str, dict[str, Any]],
     db: Database,
@@ -496,7 +528,8 @@ async def build_digest(
         journal = summarize_windows([snap.data("journal")])
         label = f"in the last {fmt_duration(max(journal.seconds, 60))}"
 
-    flags = evaluate(Context(snap, cfg, trends, journal, label))
+    pending = await _pending_approvals(db)
+    flags = evaluate(Context(snap, cfg, trends, journal, label, pending))
 
     sections: list[Section] = [
         s
@@ -510,6 +543,7 @@ async def build_digest(
             _process_section(snap, cfg.digest_top_n),
             _gpu_section(snap),
             _journal_section(journal, label),
+            _arr_section(snap, pending),
             _updates_section(snap),
         )
         if s is not None

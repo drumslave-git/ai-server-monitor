@@ -192,6 +192,7 @@ def create_app(
                 interval_s=ctx.settings.report.interval.total_seconds(),
             ),
             llm_configured=ctx.settings.llm.configured,
+            pending_approvals=await ctx.pending_approvals_count(),
             collectors={
                 name: api_models.CollectorState.model_validate(
                     {k: v for k, v in entry.items() if k != "result"}

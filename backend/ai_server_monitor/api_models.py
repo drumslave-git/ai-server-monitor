@@ -155,6 +155,8 @@ class StatusResponse(BaseModel):
     """Set when the newest attempt failed/was skipped (e.g. LLM not configured)."""
     next_report: NextReport
     llm_configured: bool
+    pending_approvals: int
+    """Actions waiting for a human decision (GET /api/approvals lists them)."""
     collectors: dict[str, CollectorState]
     resources: Resources
 

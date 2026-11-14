@@ -186,7 +186,8 @@ There are no config files.
   key resource numbers (typed: `StatusResponse`).
 - `GET /api/stream` — SSE over the in-process event bus; `?types=report,metrics` filters by
   prefix. Events: `report.started|token|done|failed`, `metrics.tick` (compact cpu/mem/load/net
-  or per-GPU numbers after each system/gpu collect), `collector.status` (ok/failing changes).
+  or per-GPU numbers after each system/gpu collect), `collector.status` (ok/failing changes),
+  `action.suggested|result`, `approval.pending|decided|expired` (action layer, compact payloads).
   Every frame has an `id:`; `retry: 3000` is sent first; a `: keepalive` comment every 15 s;
   each client has a bounded queue (a slow client loses its oldest events, publishers never
   wait). There is no replay on reconnect: clients re-fetch state via `/api/status`. The action
@@ -204,7 +205,9 @@ There are no config files.
   `report_last_success_timestamp_seconds`, `report_generation_seconds`, `reports_total{result}`,
   `collector_up|duration_seconds|errors_total|last_success_timestamp_seconds{collector}`,
   `llm_request_duration_seconds` (histogram), `llm_requests_total{result}`,
-  `llm_tokens_total{direction}`, `llm_errors_total{type}`, `build_info{version}`. Other modules
+  `llm_tokens_total{direction}`, `llm_errors_total{type}`, `build_info{version}`, and for the
+  action layer / *arr: `actions_total{action,result}`, `pending_approvals`, `arr_up{app}`,
+  `arr_queue_size{app}`, `arr_stalled_downloads{app}`, `qbittorrent_torrents{state}`. Other modules
   add series with `MetricsHub.add_provider` (the action layer lists its names in `metrics.py`).
   An example Grafana dashboard is in `docs/grafana-dashboard.json`.
 

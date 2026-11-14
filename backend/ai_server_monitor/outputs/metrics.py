@@ -8,9 +8,10 @@ Two ways to get numbers in:
 * **Providers**: `hub.add_provider(fn)` where `fn()` returns `Family` objects (sync or
   async), evaluated at scrape time. Other modules plug in this way.
 
-The action layer / *arr integration (M9) should add, as a provider or as instruments:
+The action layer / *arr series are added by `outputs/arr_metrics.py` (a provider) and
+`outputs/action_events.py` (the `asm_actions_total` counter):
 
-    asm_actions_total{action,result}          counter  actions by type and outcome
+    asm_actions_total{action,result}          counter  actions by type and status
     asm_pending_approvals                     gauge    approvals waiting for a decision
     asm_arr_queue_size{app}                   gauge    items in each *arr queue
     asm_arr_stalled_downloads{app}            gauge    stalled/failed downloads found
@@ -122,14 +123,14 @@ class MetricsHub:
 
     # -- definitions ------------------------------------------------------------
 
-    def _define(self, name: str, kind: str, help_: str, buckets: tuple[float, ...] = ()) -> None:
+    def define(self, name: str, kind: str, help_: str, buckets: tuple[float, ...] = ()) -> None:
         self._meta[name] = (kind, help_, buckets)
         self._values.setdefault(name, {})
         if kind == "histogram":  # an unobserved histogram still exposes its (zero) buckets
             self._values[name][()] = _Hist(buckets, [0] * len(buckets))
 
     def _define_builtin(self) -> None:
-        d = self._define
+        d = self.define
         d("asm_reports_total", "counter", "Report attempts by result (ok, failed, skipped).")
         d("asm_collector_up", "gauge", "1 if the collector's latest run succeeded.")
         d("asm_collector_duration_seconds", "gauge", "Duration of the collector's latest run.")
@@ -153,6 +154,12 @@ class MetricsHub:
         d("asm_llm_tokens_total", "counter", "LLM tokens (prompt, completion); estimated if the "
           "endpoint does not report usage.")  # fmt: skip
         d("asm_llm_errors_total", "counter", "Failed LLM requests by error type.")
+        d(
+            "asm_actions_total",
+            "counter",
+            "Actions by type and status (suggested, pending, executed, failed, dry_run, "
+            "rejected, expired).",
+        )
         for result in ("ok", "failed", "skipped"):
             self.inc("asm_reports_total", {"result": result}, 0)
         for result in ("ok", "error"):

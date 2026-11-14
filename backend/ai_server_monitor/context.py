@@ -24,8 +24,10 @@ from .db import Database
 from .digest import WindowObserver
 from .events import EventBus
 from .llm import LLMClient, ToolModeResolver
+from .outputs.action_events import ActionEventBridge
+from .outputs.arr_metrics import arr_families
 from .outputs.live import LiveFeed
-from .outputs.metrics import MetricsHub
+from .outputs.metrics import Family, MetricsHub
 from .report.engine import ReportEngine
 from .scheduler import Scheduler
 from .settings_store import SettingsStore
@@ -65,8 +67,9 @@ class AppContext:
         self.observer = WindowObserver()
         self.live = LiveFeed(self.events)
         self.metrics = MetricsHub()
+        self.metrics.add_provider(self._arr_metrics)
         self._metrics_task: asyncio.Task[None] | None = None
-        self.action_notifiers: list[Notifier] = []
+        self.action_notifiers: list[Notifier] = [ActionEventBridge(self.events, self.metrics)]
         """Callables `(event, record)` told about suggested/pending/finished actions.
         Survives settings changes; the event bus subscribes here."""
         # Built in start() / apply_settings():
@@ -158,6 +161,15 @@ class AppContext:
             initial_delay=REPORT_INITIAL_DELAY,
         )
         await self.scheduler.start()
+
+    async def pending_approvals_count(self) -> int:
+        row = await self.db.fetchone("SELECT COUNT(*) AS n FROM actions WHERE status = 'pending'")
+        return int(row["n"]) if row else 0
+
+    async def _arr_metrics(self) -> list[Family]:
+        result = self.collectors.latest.get("arr")
+        data = result.data if result is not None and result.ok else None
+        return arr_families(self.settings, data, await self.pending_approvals_count())
 
     def _on_collector_result(self, result: CollectorResult) -> None:
         self.metrics.on_collector_result(result)
