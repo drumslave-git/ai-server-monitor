@@ -60,6 +60,8 @@ class _Turn:
     steps: int = 0
     repairs: int = 0
     model: str | None = None
+    streamed: str = ""
+    """Text of the current model turn that was already sent to the client."""
 
 
 class ChatEngine:
@@ -127,11 +129,13 @@ class ChatEngine:
             if turn.steps >= settings.chat.max_steps and tools:
                 stopped = "step_limit"
                 messages.append({"role": "user", "content": STEP_LIMIT_NOTE})
-                completion = await app.llm.complete(messages)
-                self._count(turn, completion)
-                final = strip_reasoning(completion.content) or (
-                    "I could not finish: the tool-call limit was reached."
-                )
+                async for event in self._llm_turn(turn, messages):
+                    if event["type"] == "_end":
+                        final = strip_reasoning(event["text"]) or (
+                            "I could not finish: the tool-call limit was reached."
+                        )
+                    else:
+                        yield event
                 break
             turn.steps += 1
             if mode == "native" and tools:
@@ -144,9 +148,11 @@ class ChatEngine:
                 else:
                     yield event
 
-        for piece in _chunks(final):
-            yield {"type": "token", "text": piece}
-            await asyncio.sleep(0)
+        # Whatever of the answer was not streamed already (text held back as possible tool
+        # JSON, an empty-answer fallback) goes out now.
+        rest = final[len(turn.streamed) :] if final.startswith(turn.streamed) else ""
+        for piece in _chunks(rest) if rest else []:
+            yield {"type": "token", "text": piece, "step": turn.steps}
         meta = {
             "tool_mode": mode,
             "steps": turn.steps,
@@ -162,18 +168,57 @@ class ChatEngine:
 
     # ------------------------------------------------------------------ protocols
 
-    def _count(self, turn: _Turn, completion: Any) -> None:
-        turn.usage.prompt_tokens += completion.usage.prompt_tokens
-        turn.usage.completion_tokens += completion.usage.completion_tokens
-        turn.model = completion.model or turn.model
+    async def _llm_turn(
+        self,
+        turn: _Turn,
+        messages: list[dict[str, Any]],
+        *,
+        defs: list[dict[str, Any]] | None = None,
+        hold_json: bool = False,
+    ) -> AsyncIterator[Event]:
+        """One streamed model call. Yields `token` events as text arrives, then a final
+        internal `_end` event with the full text and the assembled tool calls.
+
+        With `hold_json` (JSON-in-text protocol) text from the first `{` or code fence on is
+        not sent: it is probably a tool request, and the caller decides at the end whether it
+        was (nothing of it leaks) or not (the rest is flushed as the answer).
+        Reasoning blocks (<think>…</think>) are never sent."""
+        turn.streamed = ""
+        text = ""
+        tool_calls: list[Any] = []
+        async for chunk in self.app.llm.stream(
+            messages, tools=defs, tool_choice="auto" if defs else None
+        ):
+            if chunk.done:
+                if chunk.usage:
+                    turn.usage.prompt_tokens += chunk.usage.prompt_tokens
+                    turn.usage.completion_tokens += chunk.usage.completion_tokens
+                tool_calls = chunk.tool_calls
+                continue
+            text += chunk.text
+            shown = _visible(text)
+            if hold_json:
+                starts = [i for i in (shown.find("{"), shown.find("```")) if i != -1]
+                # (an incomplete fence at the end, "`" or "``", is held back too)
+                shown = (shown[: min(starts)] if starts else shown.rstrip("`")).rstrip()
+            if len(shown) > len(turn.streamed) and shown.startswith(turn.streamed):
+                piece = shown[len(turn.streamed) :]
+                turn.streamed = shown
+                yield {"type": "token", "text": piece, "step": turn.steps}
+        turn.model = self.app.llm.model
+        yield {"type": "_end", "text": text, "tool_calls": tool_calls}
 
     async def _native_step(
         self, turn: _Turn, messages: list[dict[str, Any]], definitions: list[dict[str, Any]]
     ) -> AsyncIterator[Event]:
-        completion = await self.app.llm.complete(messages, tools=definitions, tool_choice="auto")
-        self._count(turn, completion)
-        if not completion.tool_calls:
-            yield {"type": "_final", "text": strip_reasoning(completion.content) or "(no answer)"}
+        text, tool_calls = "", []
+        async for event in self._llm_turn(turn, messages, defs=definitions):
+            if event["type"] == "_end":
+                text, tool_calls = event["text"], event["tool_calls"]
+            else:
+                yield event
+        if not tool_calls:
+            yield {"type": "_final", "text": strip_reasoning(text) or "(no answer)"}
             return
         calls = [
             {
@@ -181,15 +226,13 @@ class ChatEngine:
                 "type": "function",
                 "function": {"name": c.name, "arguments": c.arguments or "{}"},
             }
-            for c in completion.tool_calls
+            for c in tool_calls
         ]
-        messages.append(
-            {"role": "assistant", "content": completion.content or None, "tool_calls": calls}
-        )
+        messages.append({"role": "assistant", "content": text or None, "tool_calls": calls})
         await self.store.add_message(
             turn.session_id,
             "assistant",
-            completion.content or None,
+            text or None,
             tool_calls=[
                 {
                     "id": c["id"],
@@ -200,7 +243,7 @@ class ChatEngine:
             ],
             meta={"step": turn.steps},
         )
-        for call, raw in zip(calls, completion.tool_calls, strict=True):
+        for call, raw in zip(calls, tool_calls, strict=True):
             try:
                 args = raw.parsed_arguments()
             except ValueError as exc:
@@ -215,9 +258,12 @@ class ChatEngine:
     async def _json_step(
         self, turn: _Turn, messages: list[dict[str, Any]], *, plain: bool
     ) -> AsyncIterator[Event]:
-        completion = await self.app.llm.complete(messages)
-        self._count(turn, completion)
-        text = completion.content
+        text = ""
+        async for event in self._llm_turn(turn, messages, hold_json=not plain):
+            if event["type"] == "_end":
+                text = event["text"]
+            else:
+                yield event
         if plain:
             yield {"type": "_final", "text": strip_reasoning(text) or "(no answer)"}
             return
@@ -327,6 +373,16 @@ class ChatEngine:
             return False, f"{name} failed: {type(exc).__name__}", False
         text, truncated = shrink(turn.scrub.clean(result), turn.limit_chars)
         return True, text, truncated
+
+
+def _visible(text: str) -> str:
+    """The part of streamed text that may be shown so far: reasoning blocks removed and a
+    trailing, still incomplete tag (`<thi`) held back."""
+    shown = strip_reasoning(text)
+    cut = shown.rfind("<")
+    if cut != -1 and ">" not in shown[cut:] and len(shown) - cut < 12:
+        shown = shown[:cut]
+    return shown
 
 
 def _chunks(text: str) -> list[str]:

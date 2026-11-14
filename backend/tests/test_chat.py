@@ -52,6 +52,12 @@ class FakeLLM:
         self.requests.append(body)
         step = self.script.pop(0) if self.script else {"content": "(script ended)"}
         message = step(body) if callable(step) else step
+        if body.get("stream"):
+            return httpx.Response(
+                200,
+                content=sse_body(message),
+                headers={"content-type": "text/event-stream"},
+            )
         return httpx.Response(
             200,
             json={
@@ -60,6 +66,43 @@ class FakeLLM:
                 "usage": {"prompt_tokens": 10, "completion_tokens": 5},
             },
         )
+
+
+def sse_body(message: dict[str, Any]) -> bytes:
+    """A streamed version of a chat completion message: the text in small pieces, tool
+    calls the way OpenAI streams them (name first, arguments in fragments)."""
+    frames: list[str] = []
+
+    def delta(d: dict[str, Any], finish: str | None = None) -> None:
+        frames.append(json.dumps({"choices": [{"index": 0, "delta": d, "finish_reason": finish}]}))
+
+    content = message.get("content") or ""
+    for i in range(0, len(content), 7):
+        delta({"content": content[i : i + 7]})
+    for index, tool in enumerate(message.get("tool_calls") or []):
+        fn = tool["function"]
+        delta(
+            {
+                "tool_calls": [
+                    {
+                        "index": index,
+                        "id": tool["id"],
+                        "type": "function",
+                        "function": {"name": fn["name"], "arguments": ""},
+                    }
+                ]
+            }
+        )
+        args = fn["arguments"]
+        for i in range(0, len(args), 9):
+            delta({"tool_calls": [{"index": index, "function": {"arguments": args[i : i + 9]}}]})
+    delta({}, "tool_calls" if message.get("tool_calls") else "stop")
+    frames.append(
+        json.dumps({"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
+    )
+    blank = "\n\n"
+    body = "".join(f"data: {f}{blank}" for f in frames) + f"data: [DONE]{blank}"
+    return body.encode()
 
 
 def say(content: str) -> dict[str, Any]:
@@ -321,9 +364,13 @@ def test_json_mode_repairs_malformed_tool_json_then_answers(bootstrap: Bootstrap
     with TestClient(app) as client:
         prepare(client, app)
         events = ask(client, "how much memory is used?")
-    assert types(events) == ["session", "tool_call", "tool_result", "token", "done"]
+    # Streaming: only the prose before the tool JSON ("Sure:") was sent; none of the JSON.
+    assert types(events) == ["session", "token", "tool_call", "tool_result", "token", "done"]
     assert events[-1]["tool_mode"] == "json" and events[-1]["steps"] == 3
-    assert answer(events) == "Memory is 60% used."
+    tokens = [e for e in events if e["type"] == "token"]
+    assert [e["text"] for e in tokens if e["step"] == 2] == ["Sure:"]
+    assert not any("{" in e["text"] or "tool" in e["text"] for e in tokens)
+    assert "".join(e["text"] for e in tokens if e["step"] == 3) == "Memory is 60% used."
     # JSON protocol: no native tools in the request, the tool list is in the system prompt.
     first = llm.requests[0]
     assert "tools" not in first
