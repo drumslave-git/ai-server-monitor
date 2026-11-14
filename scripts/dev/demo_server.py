@@ -114,6 +114,7 @@ async def main() -> None:
     parser.add_argument("--port", type=int, default=8099)
     parser.add_argument("--llm-url", default="")
     parser.add_argument("--llm-model", default="")
+    parser.add_argument("--tool-mode", default="none", choices=["auto", "native", "json", "none"])
     parser.add_argument("--static", default=str(ROOT / "frontend" / "dist"))
     args = parser.parse_args()
 
@@ -128,7 +129,7 @@ async def main() -> None:
     )
     settings.llm.base_url = args.llm_url
     settings.llm.model = args.llm_model
-    settings.llm.tool_mode = "none"
+    settings.llm.tool_mode = args.tool_mode
     settings.report.interval = timedelta(hours=1)
     settings.collectors.arr.interval = timedelta(seconds=30)
     for name in ("system", "docker", "gpu", "systemd", "journal", "apt"):

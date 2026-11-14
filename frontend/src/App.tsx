@@ -4,10 +4,10 @@ import { api, type StatusResponse } from "./api";
 import { useConnected, useStream } from "./live";
 import { ApprovalsPage } from "./pages/Approvals";
 import { ArrPage } from "./pages/Arr";
+import { ChatPage } from "./pages/Chat";
 import { DashboardPage } from "./pages/Dashboard";
 import { ReportsPage } from "./pages/Reports";
 import { SettingsPage } from "./pages/Settings";
-import { PageHead, Panel } from "./ui";
 
 const PAGES: { key: string; title: string; icon: LucideIcon }[] = [
   { key: "dashboard", title: "Dashboard", icon: Activity },
@@ -75,27 +75,13 @@ export function App() {
         ) : page === "arr" ? (
           <ArrPage />
         ) : page === "chat" ? (
-          <ChatPlaceholder />
+          <ChatPage params={params} />
         ) : page === "settings" ? (
           <SettingsPage />
         ) : (
           <DashboardPage />
         )}
       </main>
-    </div>
-  );
-}
-
-function ChatPlaceholder() {
-  return (
-    <div className="stack">
-      <PageHead title="Chat" />
-      <Panel>
-        <p className="empty">
-          Ask the monitor about your server here: what is using the disk, why a container restarted, what changed since
-          yesterday. Chat is not available yet.
-        </p>
-      </Panel>
     </div>
   );
 }
