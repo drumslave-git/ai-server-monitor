@@ -14,6 +14,9 @@ from datetime import timedelta
 
 import httpx
 
+from .actions import ActionService, Notifier
+from .arr.automations import AutomationEnv
+from .arr.automations import register as register_automations
 from .collectors import Collector, CollectorManager, HostEnv
 from .collectors.base import CollectorResult
 from .config import Bootstrap, Settings
@@ -33,6 +36,7 @@ LLM_PROBE_RETRY = timedelta(minutes=5)
 REPORT_INITIAL_DELAY = timedelta(seconds=45)
 """Let the collectors produce their first results before the first report."""
 OBSERVE_INTERVAL = timedelta(seconds=30)
+APPROVAL_SWEEP = timedelta(minutes=1)
 
 
 class AppContext:
@@ -44,6 +48,7 @@ class AppContext:
         collector_registry: dict[str, type[Collector]] | None = None,
         host_env: HostEnv | None = None,
         seed_settings: Settings | None = None,
+        arr_transport: httpx.AsyncBaseTransport | None = None,
     ):
         self.bootstrap = bootstrap
         self.db = Database(bootstrap.db_path)
@@ -53,6 +58,7 @@ class AppContext:
         self._llm_transport = llm_transport
         self._registry = collector_registry
         self._seed = seed_settings
+        self._arr_transport = arr_transport
         self._lock = asyncio.Lock()
         # Survive settings changes (subscribers and journal history stay valid):
         self.events = EventBus()
@@ -60,6 +66,9 @@ class AppContext:
         self.live = LiveFeed(self.events)
         self.metrics = MetricsHub()
         self._metrics_task: asyncio.Task[None] | None = None
+        self.action_notifiers: list[Notifier] = []
+        """Callables `(event, record)` told about suggested/pending/finished actions.
+        Survives settings changes; the event bus subscribes here."""
         # Built in start() / apply_settings():
         self.settings = Settings()
         self.scheduler = Scheduler()
@@ -69,6 +78,9 @@ class AppContext:
             self.settings, self.db, self.scheduler, registry=collector_registry, env=self.host_env
         )
         self.reports = self._build_reports()
+        self.actions = ActionService(
+            self.db, self.settings, notifiers=self.action_notifiers, transport=arr_transport
+        )
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -124,6 +136,14 @@ class AppContext:
             LLM_PROBE_RETRY,
             timeout=timedelta(seconds=s.llm.timeout.total_seconds() * 2 + 30),
         )
+        self.actions = ActionService(
+            self.db, s, notifiers=self.action_notifiers, transport=self._arr_transport
+        )
+        self.scheduler.add("approvals:sweep", self.actions.sweep_expired, APPROVAL_SWEEP)
+        register_automations(
+            self.scheduler,
+            AutomationEnv(self.actions, s, collector_results=lambda: self.collectors.latest),
+        )
         await self.collectors.setup()
         self.metrics.reset_collectors()
         self.llm.stats.on_success = self.metrics.on_llm_success
@@ -161,6 +181,7 @@ class AppContext:
     async def _stop_services(self) -> None:
         await self.scheduler.stop()
         await self.collectors.close()
+        await self.actions.close()
         await self.llm.aclose()
 
     # ------------------------------------------------------------------ reports

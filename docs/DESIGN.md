@@ -120,12 +120,12 @@ Docker API access through a GET-only socket proxy (see `docker/compose.example.y
 |---|---|
 | CPU, memory, swap, load, disks, network, temps, processes | `psutil` (host `/proc` via `pid: host`). Host mounts from `/proc/1/mounts`, usage via `statvfs` under `/host`; interfaces from `/proc/1/net/dev` (host net namespace); process owners from host `/etc/passwd`; process → container via `/proc/<pid>/cgroup` |
 | Docker | Engine API over httpx (unix socket or `tcp://` socket proxy): state, health (running only), restarts + deltas, one-shot stats (CPU% from deltas), log error scan since last run, `/system/df` every 30 min |
-| Container image updates | (M3) compare local image digests with registry manifest digests, cached |
+| Container image updates | Running containers' images via the Docker API (`/images/{id}/json` `RepoDigests`) vs the digest the registry serves for the tag (`HEAD /v2/<repo>/manifests/<tag>`, anonymous Bearer tokens, multi-arch index digest), cached per ref, 429 backoff; private/locally built → `unknown` + reason |
 | apt updates | Container's `apt list --upgradable -o Dir=/host` with caches + locking disabled; security flag from `-security` suites; `reboot-required(.pkgs)`; age of host apt lists |
 | NVIDIA GPU | NVML (`nvidia-ml-py`) in a thread: util, VRAM, temp, power, fan, per-process VRAM. `enabled: auto` (needs NVIDIA runtime, `utility` capability) |
 | systemd units | `dbus-fast` → `/host/run/dbus/system_bus_socket`: `ListUnits`, failed units with result + since, `NRestarts` deltas, `SystemState` |
 | Journal | `journalctl --directory=/host/var/log/journal -o json -p warning`, continued by cursor: counts by priority/source, grouped normalized messages, notable kernel events (OOM, I/O, FS errors, segfaults, MCE, thermal, GPU Xid) |
-| Prometheus | (M3) PromQL HTTP API, configured queries plus a free-form `promql_query` chat tool |
+| Prometheus | PromQL HTTP API (`promql.py`: instant/range queries, normalized and capped results); configured named queries run by the collector, free-form `promql_query` chat tool comes later |
 | *arr / qBit | (M9) Radarr/Sonarr/Whisparr v3 API, Prowlarr v1 API, qBittorrent WebUI API v2 |
 
 Collector results are kept in memory (latest per collector, served at

@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from . import __version__, api_models
+from .actions.api import router as actions_router
 from .collectors import Collector
 from .config import Bootstrap, LLMSettings, Settings, settings_json_schema
 from .context import AppContext
@@ -67,6 +68,7 @@ def create_app(
     llm_transport: httpx.AsyncBaseTransport | None = None,
     collector_registry: dict[str, type[Collector]] | None = None,
     seed_settings: Settings | None = None,
+    arr_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     bootstrap = bootstrap or Bootstrap()
 
@@ -77,6 +79,7 @@ def create_app(
             llm_transport=llm_transport,
             collector_registry=collector_registry,
             seed_settings=seed_settings,
+            arr_transport=arr_transport,
         )
         app.state.ctx = ctx
         await ctx.start()
@@ -86,6 +89,7 @@ def create_app(
             await ctx.stop()
 
     app = FastAPI(title="AI Server Monitor", version=__version__, lifespan=lifespan)
+    app.include_router(actions_router)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz(request: Request) -> JSONResponse:

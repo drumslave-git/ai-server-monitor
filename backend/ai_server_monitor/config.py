@@ -29,6 +29,7 @@ from pydantic import (
     StringConstraints,
     WithJsonSchema,
     field_validator,
+    model_validator,
 )
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -282,12 +283,81 @@ class JournalCollectorSettings(CollectorSettings):
     """How far back to read after a (re)start."""
 
 
+class PromQuery(_Model):
+    name: Name
+    """Short identifier shown in reports, e.g. targets_down."""
+    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    """PromQL expression, evaluated as an instant query."""
+    description: str = ""
+    """What the result means, e.g. "Scrape targets that are down". Helps the report writer."""
+
+
 class PrometheusCollectorSettings(CollectorSettings):
-    enabled: bool | Literal["auto"] = False
+    enabled: bool | Literal["auto"] = "auto"
+    """auto = on as soon as a URL is set."""
     interval: Duration = timedelta(minutes=1)
-    url: HttpUrl = "http://prometheus:9090"
-    queries: dict[str, str] = Field(default_factory=dict)
-    """Named PromQL queries to include in reports, e.g. node_load: node_load5."""
+    url: OptionalHttpUrl = ""
+    """Prometheus base URL, e.g. http://prometheus:9090. Empty = not used."""
+    token: Secret = SecretStr("")
+    """Bearer token, if Prometheus sits behind an authenticating proxy."""
+    username: str = ""
+    """Basic-auth user (used when no bearer token is set)."""
+    password: Secret = SecretStr("")
+    timeout: Duration = timedelta(seconds=10)
+    """Per-query timeout."""
+    max_series: int = Field(default=50, ge=1, le=1000)
+    """Max series kept per query result; the rest is only counted."""
+    queries: list[PromQuery] = Field(
+        default_factory=lambda: [
+            PromQuery(
+                name="targets_down",
+                query="up == 0",
+                description="Scrape targets that are down",
+            ),
+            PromQuery(
+                name="firing_alerts",
+                query='ALERTS{alertstate="firing"}',
+                description="Alerts currently firing in Prometheus",
+            ),
+        ]
+    )
+    """PromQL queries run on every collection and included in reports."""
+
+    @field_validator("queries", mode="before")
+    @classmethod
+    def _legacy_queries(cls, value: Any) -> Any:
+        # Before the query list existed this was a {name: expression} map.
+        if isinstance(value, dict):
+            return [{"name": k, "query": v} for k, v in value.items()]
+        return value
+
+    @field_validator("queries")
+    @classmethod
+    def _unique_names(cls, value: list[PromQuery]) -> list[PromQuery]:
+        names = [q.name for q in value]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            raise ValueError(f"duplicate query names: {', '.join(dupes)}")
+        return value
+
+
+class ImageUpdatesCollectorSettings(CollectorSettings):
+    enabled: bool | Literal["auto"] = "auto"
+    interval: Duration = timedelta(hours=12)
+    url: str = ""
+    """Docker API, e.g. tcp://docker-proxy:2375. Empty = $DOCKER_HOST (set by the compose
+    file), else the local socket."""
+    cache_ttl: Duration = timedelta(hours=6)
+    """How long a registry answer is reused. Registries rate-limit, so don't set this low."""
+
+
+class ArrCollectorSettings(CollectorSettings):
+    enabled: bool | Literal["auto"] = "auto"
+    """auto = on as soon as an *arr app, Prowlarr or qBittorrent is configured under
+    *arr & downloads."""
+    interval: Duration = timedelta(minutes=2)
+    max_queue_items: int = Field(default=50, ge=1, le=500)
+    """Max queue entries listed per *arr instance (the rest is only counted)."""
 
 
 class CollectorsSettings(_Model):
@@ -303,10 +373,14 @@ class CollectorsSettings(_Model):
     """Warnings and errors from the system journal."""
     apt: CollectorSettings = CollectorSettings(interval=timedelta(hours=6))
     """Pending package updates, security updates, reboot required."""
-    image_updates: CollectorSettings = CollectorSettings(interval=timedelta(hours=12))
-    """Newer images for running containers (coming in M3)."""
+    image_updates: ImageUpdatesCollectorSettings = ImageUpdatesCollectorSettings()
+    """Running containers whose image tag has a newer build in its registry (same tag, new
+    digest; does not look for newer version numbers)."""
     prometheus: PrometheusCollectorSettings = PrometheusCollectorSettings()
-    """Query an existing Prometheus (coming in M3)."""
+    """Run PromQL queries against an existing Prometheus."""
+    arr: ArrCollectorSettings = ArrCollectorSettings()
+    """Radarr/Sonarr/Whisparr queues and health, Prowlarr indexers, qBittorrent torrents
+    (the apps themselves are configured under *arr & downloads)."""
 
 
 class TelegramSettings(_Model):
@@ -361,16 +435,26 @@ Policy = Literal["off", "suggest", "approve", "auto"]
 class ActionSettings(_Model):
     policy: Policy = "suggest"
     """off = never; suggest = mention in reports; approve = ask you first; auto = just do it."""
+    max_per_hour: int = Field(default=0, ge=0)
+    """Cap on how many of these actions run per hour (0 = no cap)."""
 
 
 class StalledCleanupSettings(ActionSettings):
     policy: Policy = "approve"
+    interval: Duration = timedelta(minutes=30)
+    """How often to look for stalled downloads."""
     stalled_after: Duration = timedelta(hours=6)
     """A download with no progress for this long counts as stalled."""
-    max_per_hour: int = Field(default=10, ge=1)
+    max_per_hour: int = Field(default=10, ge=0)
+
+
+class IndexerTriageSettings(ActionSettings):
+    interval: Duration = timedelta(hours=1)
+    """How often to look for failing indexers."""
 
 
 class SearchActionSettings(ActionSettings):
+    max_per_hour: int = Field(default=30, ge=0)
     interval: Duration = timedelta(hours=6)
     batch: int = Field(default=10, ge=1)
     """Items searched per run (keeps indexers from being hammered)."""
@@ -387,7 +471,7 @@ class ActionsSettings(_Model):
     """Search for quality upgrades (cutoff unmet)."""
     add_media: ActionSettings = ActionSettings(policy="approve")
     """Add movies/series when asked in chat."""
-    indexer_triage: ActionSettings = ActionSettings()
+    indexer_triage: IndexerTriageSettings = IndexerTriageSettings()
     """Test/disable failing indexers in Prowlarr."""
     approval_ttl: Duration = timedelta(hours=24)
     """Pending approvals expire after this."""
@@ -396,12 +480,23 @@ class ActionsSettings(_Model):
 class ArrSettings(_Model):
     dry_run: bool = True
     """Log what would be done without changing anything."""
+    timeout: Duration = timedelta(seconds=15)
+    """Per-request timeout for *arr, Prowlarr and qBittorrent."""
     radarr: list[ArrInstance] = Field(default_factory=list)
     sonarr: list[ArrInstance] = Field(default_factory=list)
     whisparr: list[ArrInstance] = Field(default_factory=list)
     prowlarr: ArrInstance | None = None
     qbittorrent: QbitSettings | None = None
     actions: ActionsSettings = ActionsSettings()
+
+    @model_validator(mode="after")
+    def _unique_instance_names(self) -> ArrSettings:
+        for kind in ("radarr", "sonarr", "whisparr"):
+            names = [i.name for i in getattr(self, kind)]
+            dupes = sorted({n for n in names if names.count(n) > 1})
+            if dupes:
+                raise ValueError(f"{kind}: duplicate instance names: {', '.join(dupes)}")
+        return self
 
 
 class Settings(_Model):
