@@ -151,6 +151,21 @@ def test_container_id_from_ancestry() -> None:
     assert container_id_from_ancestry(900, FakeProc) is None  # host process
 
 
+def test_persist_view_slims_processes_on_every_platform() -> None:
+    """Regression: persist_view was once accidentally moved out of the class, so full
+    process rows (with cmd) went into history. This test runs on Windows too."""
+    collector = SystemCollector(SystemCollectorSettings(), HostEnv())
+    row = {"pid": 1, "name": "x", "cpu_percent": 1.0, "rss": 1, "container_id": None,
+           "cmd": "/bin/x --secret", "user": "root", "threads": 1}  # fmt: skip
+    data = {"cpu": {}, "processes": {"total": 1, "zombies": 0, "top_cpu": [row],
+                                      "top_memory": [row]}}  # fmt: skip
+    slim = collector.persist_view(data)
+    assert slim["processes"]["top_cpu"] == [
+        {"pid": 1, "name": "x", "cpu_percent": 1.0, "rss": 1, "container_id": None}
+    ]
+    assert slim["cpu"] == {}
+
+
 def test_rate_tracker() -> None:
     rates = RateTracker()
     assert rates.rate("x", 100, now=0.0) is None

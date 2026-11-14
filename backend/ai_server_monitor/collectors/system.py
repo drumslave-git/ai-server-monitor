@@ -101,6 +101,26 @@ def container_id_from_cgroup(text: str) -> str | None:
     return match.group(1)[:12] if match else None
 
 
+def container_id_from_shim_cmdline(cmdline: list[str]) -> str | None:
+    """`containerd-shim-runc-v2 -namespace moby -id <64 hex> -address ...` → short id."""
+    for i, arg in enumerate(cmdline[:-1]):
+        if arg in ("-id", "--id") and _HEX64.fullmatch(cmdline[i + 1]):
+            return cmdline[i + 1][:12]
+    return None
+
+
+def container_id_from_ancestry(pid: int, process: Any = None) -> str | None:
+    """Walk up the parent chain to the nearest containerd shim and read its `-id`."""
+    process_cls = process or psutil.Process
+    try:
+        for parent in process_cls(pid).parents():
+            if parent.name().startswith("containerd-shim"):
+                return container_id_from_shim_cmdline(parent.cmdline())
+    except (psutil.Error, OSError):
+        return None
+    return None
+
+
 def statvfs_usage(path: Path) -> dict[str, Any] | None:
     """df-style usage for a path; None if not accessible (or not POSIX)."""
     statvfs = getattr(os, "statvfs", None)
@@ -409,26 +429,6 @@ class SystemCollector(Collector):
             # containerd shim that parents every container process always has `-id <id>`.
             container_id = container_id_from_ancestry(pid)
         row["container_id"] = container_id
-
-
-def container_id_from_shim_cmdline(cmdline: list[str]) -> str | None:
-    """`containerd-shim-runc-v2 -namespace moby -id <64 hex> -address ...` → short id."""
-    for i, arg in enumerate(cmdline[:-1]):
-        if arg in ("-id", "--id") and _HEX64.fullmatch(cmdline[i + 1]):
-            return cmdline[i + 1][:12]
-    return None
-
-
-def container_id_from_ancestry(pid: int, process: Any = None) -> str | None:
-    """Walk up the parent chain to the nearest containerd shim and read its `-id`."""
-    process_cls = process or psutil.Process
-    try:
-        for parent in process_cls(pid).parents():
-            if parent.name().startswith("containerd-shim"):
-                return container_id_from_shim_cmdline(parent.cmdline())
-    except (psutil.Error, OSError):
-        return None
-    return None
 
     def persist_view(self, data: dict[str, Any]) -> dict[str, Any]:
         procs = data.get("processes", {})
