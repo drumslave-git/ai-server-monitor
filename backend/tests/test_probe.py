@@ -87,3 +87,7 @@ async def test_resolver_stays_unresolved_when_unreachable(llm: LLMClient, db: Da
     with pytest.raises(LLMConnectionError):
         await resolver.resolve()
     assert resolver.mode is None
+
+    await resolver.resolve_job()  # the scheduler job swallows it and records the reason
+    assert resolver.mode is None
+    assert "ConnectError" in (resolver.status()["last_error"] or "")

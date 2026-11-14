@@ -57,6 +57,12 @@ def test_interpolate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     }
 
 
+def test_interpolate_empty_value_uses_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EMPTY", "")  # what docker compose passes for unset variables
+    assert interpolate("${EMPTY:-fallback}") == "fallback"
+    assert interpolate("${EMPTY}") == ""
+
+
 def test_defaults_without_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # No ASM_CONFIG and default path missing: pure defaults, no error.
     monkeypatch.setattr("servermon.config.DEFAULT_CONFIG_PATH", str(tmp_path / "nope.yaml"))

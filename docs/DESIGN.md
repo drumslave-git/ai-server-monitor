@@ -111,19 +111,25 @@ qBittorrent under per-action policy.
 
 ## Data sources
 
-All host access is read-only.
+All host access is read-only. The container needs just two things for everything below:
+`pid: host` and the host root mounted at `/host` read-only (`/:/host:ro,rslave`), plus
+Docker API access through a GET-only socket proxy (see `docker/compose.example.yaml`).
 
-| Source | How | Container requirements |
-|---|---|---|
-| CPU, memory, swap, load, disks, filesystems, network, processes | `psutil` against host `/proc`, `/sys` | `pid: host`, mount `/proc` and `/sys` ro, `HOST_PROC`/`HOST_SYS` env; host root at `/host` ro for filesystem usage |
-| Docker | Docker SDK: containers, stats, restarts, health, images | `/var/run/docker.sock` ro (consider a socket proxy that only allows GET) |
-| Container image updates | Compare local image digests with registry manifest digests (Docker Hub, GHCR, etc.), cached | Network access to registries |
-| apt updates | Parse `/host/var/lib/apt/lists` + `/host/var/lib/dpkg/status` and compute upgradable packages (python-apt or `apt` with `-o Dir=/host`); flag security updates and `reboot-required` | `/var/lib/apt`, `/var/lib/dpkg`, `/etc/apt`, `/var/run/reboot-required*` ro |
-| NVIDIA GPU | NVML (`pynvml`): utilization, VRAM, temperature, power, per-process use | NVIDIA container runtime, `gpus: all` (optional) |
-| systemd units | D-Bus to host systemd (failed units, recent restarts) | `/run/dbus/system_bus_socket` ro, or `systemctl --root` fallback |
-| Journal / logs | `journalctl -D /host/var/log/journal` (error/crit bursts, top offenders); container logs via Docker API | `/var/log/journal` ro, `/etc/machine-id` ro |
-| Prometheus | PromQL HTTP API, configured queries plus a free-form `promql_query` chat tool | Network access |
-| *arr / qBit | Radarr/Sonarr/Whisparr v3 API, Prowlarr v1 API, qBittorrent WebUI API v2 | URLs + API keys / credentials |
+| Source | How (as built in M2) |
+|---|---|
+| CPU, memory, swap, load, disks, network, temps, processes | `psutil` (host `/proc` via `pid: host`). Host mounts from `/proc/1/mounts`, usage via `statvfs` under `/host`; interfaces from `/proc/1/net/dev` (host net namespace); process owners from host `/etc/passwd`; process → container via `/proc/<pid>/cgroup` |
+| Docker | Engine API over httpx (unix socket or `tcp://` socket proxy): state, health (running only), restarts + deltas, one-shot stats (CPU% from deltas), log error scan since last run, `/system/df` every 30 min |
+| Container image updates | (M3) compare local image digests with registry manifest digests, cached |
+| apt updates | Container's `apt list --upgradable -o Dir=/host` with caches + locking disabled; security flag from `-security` suites; `reboot-required(.pkgs)`; age of host apt lists |
+| NVIDIA GPU | NVML (`nvidia-ml-py`) in a thread: util, VRAM, temp, power, fan, per-process VRAM. `enabled: auto` (needs NVIDIA runtime, `utility` capability) |
+| systemd units | `dbus-fast` → `/host/run/dbus/system_bus_socket`: `ListUnits`, failed units with result + since, `NRestarts` deltas, `SystemState` |
+| Journal | `journalctl --directory=/host/var/log/journal -o json -p warning`, continued by cursor: counts by priority/source, grouped normalized messages, notable kernel events (OOM, I/O, FS errors, segfaults, MCE, thermal, GPU Xid) |
+| Prometheus | (M3) PromQL HTTP API, configured queries plus a free-form `promql_query` chat tool |
+| *arr / qBit | (M9) Radarr/Sonarr/Whisparr v3 API, Prowlarr v1 API, qBittorrent WebUI API v2 |
+
+Collector results are kept in memory (latest per collector, served at
+`/api/collectors[/{name}]`) and persisted to `collector_samples` at most every
+`storage.sample_interval` (default 5m), using a slimmed `persist_view`.
 
 Every collector can be disabled in config, and missing mounts or devices degrade
 gracefully (the collector reports "unavailable").

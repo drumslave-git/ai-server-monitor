@@ -8,11 +8,12 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
+from .collectors import Collector
 from .config import Settings, load_settings
 from .context import AppContext
 
@@ -25,12 +26,15 @@ def create_app(
     settings: Settings | None = None,
     *,
     llm_transport: httpx.AsyncBaseTransport | None = None,
+    collector_registry: dict[str, type[Collector]] | None = None,
 ) -> FastAPI:
     settings = settings or load_settings()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        ctx = AppContext.build(settings, llm_transport=llm_transport)
+        ctx = AppContext.build(
+            settings, llm_transport=llm_transport, collector_registry=collector_registry
+        )
         app.state.ctx = ctx
         await ctx.start()
         try:
@@ -68,7 +72,27 @@ def create_app(
                 },
             },
             "jobs": ctx.scheduler.status(),
+            "collectors": ctx.collectors.status(),
         }
+
+    @app.get("/api/collectors")
+    async def collectors(request: Request) -> dict[str, Any]:
+        ctx = get_ctx(request)
+        return {
+            name: {
+                **status,
+                "result": r.to_dict() if (r := ctx.collectors.latest.get(name)) else None,
+            }
+            for name, status in ctx.collectors.status().items()
+        }
+
+    @app.get("/api/collectors/{name}")
+    async def collector(name: str, request: Request) -> dict[str, Any]:
+        ctx = get_ctx(request)
+        if name not in ctx.collectors.registry:
+            raise HTTPException(status_code=404, detail=f"unknown collector {name!r}")
+        result = ctx.collectors.latest.get(name)
+        return {**ctx.collectors.status()[name], "result": result.to_dict() if result else None}
 
     static_dir = settings.server.static_dir
     if static_dir is not None and static_dir.is_dir():

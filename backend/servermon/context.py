@@ -9,6 +9,7 @@ from datetime import timedelta
 
 import httpx
 
+from .collectors import Collector, CollectorManager, HostEnv
 from .config import Settings
 from .db import Database
 from .llm import LLMClient, ToolModeResolver
@@ -26,20 +27,30 @@ class AppContext:
     scheduler: Scheduler
     llm: LLMClient
     tool_mode: ToolModeResolver
+    collectors: CollectorManager
     started_at: float = field(default_factory=time.time)
 
     @classmethod
     def build(
-        cls, settings: Settings, *, llm_transport: httpx.AsyncBaseTransport | None = None
+        cls,
+        settings: Settings,
+        *,
+        llm_transport: httpx.AsyncBaseTransport | None = None,
+        collector_registry: dict[str, type[Collector]] | None = None,
+        host_env: HostEnv | None = None,
     ) -> AppContext:
         db = Database(settings.storage.path)
         llm = LLMClient(settings.llm, transport=llm_transport)
+        scheduler = Scheduler()
         return cls(
             settings=settings,
             db=db,
-            scheduler=Scheduler(),
+            scheduler=scheduler,
             llm=llm,
             tool_mode=ToolModeResolver(llm, db, settings.llm.tool_mode),
+            collectors=CollectorManager(
+                settings, db, scheduler, registry=collector_registry, env=host_env
+            ),
         )
 
     def _register_jobs(self) -> None:
@@ -53,7 +64,7 @@ class AppContext:
         # Retries until the LLM is reachable; becomes a no-op once resolved.
         self.scheduler.add(
             "llm_probe",
-            self.tool_mode.resolve,
+            self.tool_mode.resolve_job,
             LLM_PROBE_RETRY,
             timeout=timedelta(seconds=self.settings.llm.timeout.total_seconds() * 2 + 30),
         )
@@ -61,6 +72,7 @@ class AppContext:
     async def start(self) -> None:
         await self.db.connect()
         self._register_jobs()
+        await self.collectors.setup()
         await self.scheduler.start()
         log.info(
             "started (db=%s, llm=%s @ %s)", self.db.path, self.llm.model, self.settings.llm.base_url
@@ -68,6 +80,7 @@ class AppContext:
 
     async def stop(self) -> None:
         await self.scheduler.stop()
+        await self.collectors.close()
         await self.llm.aclose()
         await self.db.close()
         log.info("stopped")

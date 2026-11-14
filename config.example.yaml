@@ -37,14 +37,27 @@ report:
 storage:
   path: /data/monitor.db
   retention: 30d
+  sample_interval: 5m   # history resolution; live data is always fresh
 
 collectors:
-  host_root: /host
-  system:        { enabled: true, interval: 15s }
-  docker:        { enabled: true, interval: 30s }
-  gpu:           { enabled: auto, interval: 30s }
-  systemd:       { enabled: true, interval: 1m }
-  journal:       { enabled: true, interval: 1m, priority: warning }
+  # enabled: true | false | auto (auto = silently skip if the source isn't present)
+  host_root: /host      # host / mounted read-only here; falls back to / when missing
+  system:  { enabled: true, interval: 15s, top_n: 10 }
+  docker:
+    enabled: true
+    interval: 30s
+    url: null           # default $DOCKER_HOST or unix:///var/run/docker.sock
+    log_scan: true      # count error lines in container logs since the last run
+    log_tail: 300
+    df_interval: 30m
+  gpu:     { enabled: auto, interval: 30s }
+  systemd: { enabled: true, interval: 1m }   # bus_address: unix:path=...
+  journal:
+    enabled: true
+    interval: 1m
+    priority: warning   # emerg|alert|crit|err|warning|notice|info
+    max_entries: 2000
+    initial_lookback: 1h
   apt:           { enabled: true, interval: 6h }
   image_updates: { enabled: true, interval: 12h }
   prometheus:

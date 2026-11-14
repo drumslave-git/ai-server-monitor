@@ -7,7 +7,7 @@ import time
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
-from .client import LLMClient, LLMStatusError
+from .client import LLMClient, LLMError, LLMStatusError
 from .jsontools import json_tool_system_prompt, parse_tool_request
 
 if TYPE_CHECKING:
@@ -81,6 +81,17 @@ class ToolModeResolver:
         self.mode: ResolvedToolMode | None = None
         self.source: Literal["config", "cache", "probe"] | None = None
         self.resolved_at: float | None = None
+        self.last_error: str | None = None
+
+    async def resolve_job(self) -> None:
+        """Scheduler job: like resolve(), but an unreachable/misconfigured LLM is an
+        expected condition — log one line and retry next interval, no traceback."""
+        try:
+            await self.resolve()
+            self.last_error = None
+        except LLMError as exc:
+            self.last_error = str(exc)
+            log.warning("LLM tool-mode probe failed (will retry): %s", exc)
 
     def _cache_matches(self, cached: Any) -> bool:
         return (
@@ -126,4 +137,5 @@ class ToolModeResolver:
             "effective": self.mode,
             "source": self.source,
             "resolved_at": self.resolved_at,
+            "last_error": self.last_error,
         }

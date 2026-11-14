@@ -23,6 +23,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# journalctl (from `systemd`) reads the host journal; `apt` (already in the base image)
+# reads the host's package state. Neither runs as a service inside the container.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends systemd \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies first (cached layer), then the package itself.
 COPY backend/pyproject.toml backend/README.md /app/backend/
 RUN mkdir -p /app/backend/servermon \

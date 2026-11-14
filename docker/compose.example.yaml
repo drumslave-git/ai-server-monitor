@@ -1,0 +1,65 @@
+# AI Server Monitor — example compose file (single Debian/Ubuntu host).
+#
+#   cp config.example.yaml config.yaml   # then edit
+#   docker compose -f docker/compose.example.yaml up -d --build
+#
+# Everything the monitor reads from the host is mounted read-only. Docker access goes
+# through a socket proxy that only allows GET requests, because a read-only *mount* of
+# docker.sock does NOT make the Docker API read-only.
+
+services:
+  servermon:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: ai-server-monitor:local
+    container_name: servermon
+    restart: unless-stopped
+    pid: host                      # see host processes (top consumers, per-process stats)
+    ports:
+      - "${SERVERMON_PORT:-8080}:8080"   # put a reverse proxy with auth in front of this
+    environment:
+      ASM__COLLECTORS__DOCKER__URL: tcp://docker-proxy:2375
+      # Optional (referenced from config.yaml):
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:-}
+    volumes:
+      # Host root, read-only. rslave lets later host mounts (USB disks, NFS) show up.
+      # (Needs / to be a shared mount, the default on systemd hosts. If Docker refuses with
+      #  "not a shared or slave mount", use "/:/host:ro".)
+      - /:/host:ro,rslave
+      - ../config.yaml:/config/config.yaml:ro
+      - servermon-data:/data
+    depends_on:
+      - docker-proxy
+    # NVIDIA GPU monitoring (needs nvidia-container-toolkit on the host):
+    # environment:
+    #   NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu, utility]
+
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:v0.4.1
+    container_name: servermon-docker-proxy
+    restart: unless-stopped
+    environment:
+      POST: 0          # read-only: no POST/PUT/DELETE
+      CONTAINERS: 1    # list, inspect, stats, logs
+      IMAGES: 1
+      INFO: 1
+      SYSTEM: 1        # /system/df (disk usage)
+      PING: 1
+      VERSION: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Not published: only reachable from servermon on the compose network.
+
+volumes:
+  servermon-data:

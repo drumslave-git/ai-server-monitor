@@ -67,8 +67,11 @@ _VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
 
 def _lookup_env(name: str, default: str | None) -> str:
-    if name in os.environ:
-        return os.environ[name]
+    # Like the shell's ${VAR:-default}: an empty value also falls back to the default
+    # (docker compose passes unset variables through as empty strings).
+    value = os.environ.get(name)
+    if value:
+        return value
     file_path = os.environ.get(f"{name}_FILE")
     if file_path:
         try:
@@ -136,6 +139,9 @@ class StorageConfig(_Model):
     path: Path = Path("/data/monitor.db")
     retention: Duration = timedelta(days=30)
     prune_interval: Duration = timedelta(hours=1)
+    sample_interval: Duration = timedelta(minutes=5)
+    """Minimum spacing of persisted collector samples (history/trends); the latest
+    in-memory result is always fresh."""
 
 
 class CollectorConfig(_Model):
@@ -143,9 +149,34 @@ class CollectorConfig(_Model):
     interval: Duration = timedelta(seconds=30)
 
 
+class SystemCollectorConfig(CollectorConfig):
+    interval: Duration = timedelta(seconds=15)
+    top_n: int = Field(default=10, ge=1, le=50)
+
+
+class DockerCollectorConfig(CollectorConfig):
+    url: str | None = None
+    """unix:///path/docker.sock or tcp://host:2375 (e.g. a GET-only socket proxy).
+    Default: $DOCKER_HOST, else unix:///var/run/docker.sock."""
+    log_scan: bool = True
+    log_tail: int = Field(default=300, ge=10, le=5000)
+    df_interval: Duration = timedelta(minutes=30)
+    """How often to query disk usage (/system/df — slow on big hosts)."""
+
+
+class SystemdCollectorConfig(CollectorConfig):
+    interval: Duration = timedelta(minutes=1)
+    bus_address: str | None = None
+    """D-Bus address. Default: unix:path=<host_root>/run/dbus/system_bus_socket."""
+
+
 class JournalCollectorConfig(CollectorConfig):
     interval: Duration = timedelta(minutes=1)
     priority: Literal["emerg", "alert", "crit", "err", "warning", "notice", "info"] = "warning"
+    directory: Path | None = None
+    """Journal directory. Default: <host_root>/var/log/journal, else <host_root>/run/log/journal."""
+    max_entries: int = Field(default=2000, ge=100, le=50000)
+    initial_lookback: Duration = timedelta(hours=1)
 
 
 class PrometheusCollectorConfig(CollectorConfig):
@@ -157,11 +188,12 @@ class PrometheusCollectorConfig(CollectorConfig):
 
 class CollectorsConfig(_Model):
     host_root: Path = Path("/host")
-    """Where the host filesystem is mounted read-only inside the container."""
-    system: CollectorConfig = CollectorConfig(interval=timedelta(seconds=15))
-    docker: CollectorConfig = CollectorConfig(interval=timedelta(seconds=30))
+    """Where the host filesystem is mounted read-only inside the container. If it does
+    not exist (running directly on the host), '/' is used."""
+    system: SystemCollectorConfig = SystemCollectorConfig()
+    docker: DockerCollectorConfig = DockerCollectorConfig()
     gpu: CollectorConfig = CollectorConfig(enabled="auto", interval=timedelta(seconds=30))
-    systemd: CollectorConfig = CollectorConfig(interval=timedelta(minutes=1))
+    systemd: SystemdCollectorConfig = SystemdCollectorConfig()
     journal: JournalCollectorConfig = JournalCollectorConfig()
     apt: CollectorConfig = CollectorConfig(interval=timedelta(hours=6))
     image_updates: CollectorConfig = CollectorConfig(interval=timedelta(hours=12))
