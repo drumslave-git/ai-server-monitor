@@ -32,8 +32,13 @@ EXCLUDED_FS_TYPES = frozenset(
 )  # fmt: skip
 EXCLUDED_MOUNT_PREFIXES = ("/var/lib/docker/", "/run/docker/", "/snap/", "/var/snap/",
                            "/var/lib/containers/", "/proc/", "/sys/", "/dev/")  # fmt: skip
-EXCLUDED_NET_PREFIXES = ("lo", "veth", "docker_gwbridge", "virbr", "cali", "flannel", "cni")
+# Virtual interfaces: loopback, container veths and bridges (per-container traffic is
+# reported by the Docker collector), libvirt/k8s overlays.
+EXCLUDED_NET_PREFIXES = (
+    "lo", "veth", "br-", "docker", "virbr", "cali", "flannel", "cni", "vxlan", "tunl",
+)  # fmt: skip
 _CONTAINER_ID = re.compile(r"(?:docker[-/]|cri-containerd-|libpod-|/containerd/)([0-9a-f]{64})")
+_HEX64 = re.compile(r"[0-9a-f]{64}")
 _OCTAL_ESCAPE = re.compile(r"\\([0-7]{3})")
 
 
@@ -393,11 +398,37 @@ class SystemCollector(Collector):
             row["cmd"] = " ".join(cmd)[:160] if cmd else None
         except (psutil.Error, OSError):
             row["cmd"] = None
+        container_id = None
         try:
             cgroup = (self.env.proc / str(pid) / "cgroup").read_text()
-            row["container_id"] = container_id_from_cgroup(cgroup)
+            container_id = container_id_from_cgroup(cgroup)
         except OSError:
-            row["container_id"] = None
+            pass
+        if container_id is None:
+            # cgroup paths vary by Docker version / cgroup driver / cgroup namespace; the
+            # containerd shim that parents every container process always has `-id <id>`.
+            container_id = container_id_from_ancestry(pid)
+        row["container_id"] = container_id
+
+
+def container_id_from_shim_cmdline(cmdline: list[str]) -> str | None:
+    """`containerd-shim-runc-v2 -namespace moby -id <64 hex> -address ...` → short id."""
+    for i, arg in enumerate(cmdline[:-1]):
+        if arg in ("-id", "--id") and _HEX64.fullmatch(cmdline[i + 1]):
+            return cmdline[i + 1][:12]
+    return None
+
+
+def container_id_from_ancestry(pid: int, process: Any = None) -> str | None:
+    """Walk up the parent chain to the nearest containerd shim and read its `-id`."""
+    process_cls = process or psutil.Process
+    try:
+        for parent in process_cls(pid).parents():
+            if parent.name().startswith("containerd-shim"):
+                return container_id_from_shim_cmdline(parent.cmdline())
+    except (psutil.Error, OSError):
+        return None
+    return None
 
     def persist_view(self, data: dict[str, Any]) -> dict[str, Any]:
         procs = data.get("processes", {})

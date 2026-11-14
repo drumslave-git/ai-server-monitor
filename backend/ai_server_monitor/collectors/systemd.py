@@ -64,9 +64,9 @@ class DbusSystemdBus:
             # usual cause; see the README troubleshooting section.
             self._bus = None
             raise CollectorUnavailable(
-                f"D-Bus at {self.address} closed the connection "
-                f"({type(exc).__name__}: {exc or 'EOF'}). Host D-Bus policy or the "
-                "container's AppArmor profile may block system bus access."
+                f"D-Bus at {self.address} closed the connection ({str(exc) or 'EOF'}). "
+                "On AppArmor hosts (Ubuntu) the container needs "
+                "security_opt: apparmor=unconfined (see the compose file)."
             ) from exc
         if reply.message_type == MessageType.ERROR:
             raise DbusError(f"{reply.error_name}: {reply.body}")

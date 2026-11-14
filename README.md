@@ -23,6 +23,8 @@ The compose file only sets what the container needs to run:
 
 - `./data` — settings and history (SQLite). Back this up; it contains your API keys.
 - `/:/host:ro,rslave` and `pid: host` — read-only view of the host.
+- `apparmor=unconfined` — on AppArmor hosts (Ubuntu) Docker's default profile blocks the
+  systemd D-Bus queries and reading other processes. Host access stays read-only.
 - `DOCKER_HOST` → a socket proxy that only allows read (GET) requests.
 - `# gpus: all` — uncomment for NVIDIA GPU monitoring.
 
@@ -39,10 +41,10 @@ Every collector's status and error is on the **Overview** page; a collector that
 work on your host never stops the service. Disable it under Settings → Collectors if you
 don't need it.
 
-- **systemd: "D-Bus … closed the connection"** — the host's system bus dropped the
-  container's connection. On Ubuntu this is usually D-Bus AppArmor mediation blocking the
-  container's `docker-default` AppArmor profile. Check with
-  `journalctl -b | grep -iE 'apparmor="DENIED".*dbus'`.
+- **systemd: "D-Bus … closed the connection"**, or `apparmor="DENIED" operation="ptrace"
+  profile="docker-default"` in the host's kernel log — the container is running under
+  Docker's default AppArmor profile. Keep `security_opt: [apparmor=unconfined]` from the
+  compose file.
 
 ## Development
 

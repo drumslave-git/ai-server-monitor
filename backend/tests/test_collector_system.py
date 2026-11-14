@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -10,7 +10,9 @@ from ai_server_monitor.collectors import system as system_mod
 from ai_server_monitor.collectors.base import HostEnv, RateTracker
 from ai_server_monitor.collectors.system import (
     SystemCollector,
+    container_id_from_ancestry,
     container_id_from_cgroup,
+    container_id_from_shim_cmdline,
     parse_mounts,
     parse_net_dev,
 )
@@ -37,6 +39,8 @@ Inter-|   Receive                                                |  Transmit
     lo: 1000 10 0 0 0 0 0 0 1000 10 0 0 0 0 0 0
   eth0: 5000000 4000 2 1 0 0 0 0 7000000 3000 0 3 0 0 0 0
 vethab12: 10 1 0 0 0 0 0 0 10 1 0 0 0 0 0 0
+br-106486da7062: 10 1 0 0 0 0 0 0 10 1 0 0 0 0 0 0
+docker0: 10 1 0 0 0 0 0 0 10 1 0 0 0 0 0 0
 """
 
 
@@ -86,7 +90,7 @@ def test_parse_net_dev() -> None:
     assert nets["eth0"]["rx_bytes"] == 5_000_000
     assert nets["eth0"]["tx_bytes"] == 7_000_000
     assert nets["eth0"]["rx_errors"] == 2 and nets["eth0"]["tx_dropped"] == 3
-    assert set(nets) == {"lo", "eth0", "vethab12"}
+    assert set(nets) == {"lo", "eth0", "vethab12", "br-106486da7062", "docker0"}
 
 
 @pytest.mark.parametrize(
@@ -100,6 +104,51 @@ def test_parse_net_dev() -> None:
 )
 def test_container_id_from_cgroup(cgroup: str, expected: str | None) -> None:
     assert container_id_from_cgroup(cgroup) == expected
+
+
+def test_container_id_from_shim_cmdline() -> None:
+    cid = "f" * 64
+    shim = ["/usr/bin/containerd-shim-runc-v2", "-namespace", "moby", "-id", cid,
+            "-address", "/run/containerd/containerd.sock"]  # fmt: skip
+    assert container_id_from_shim_cmdline(shim) == "f" * 12
+    assert container_id_from_shim_cmdline(["containerd-shim-runc-v2", "-id", "short"]) is None
+    assert container_id_from_shim_cmdline(["bash"]) is None
+
+
+class FakeProc:
+    TABLE: ClassVar[dict[int, tuple[str, list[str], int]]] = {
+        # pid: (name, cmdline, ppid)
+        1: ("systemd", ["/sbin/init"], 0),
+        500: (
+            "containerd-shim-runc-v2",
+            ["containerd-shim-runc-v2", "-namespace", "moby", "-id", "e" * 64],
+            1,
+        ),
+        501: ("s6-svscan", ["s6-svscan"], 500),
+        502: ("Whisparr", ["/app/bin/Whisparr"], 501),
+        900: ("llama-server", ["/usr/lib/ollama/llama-server"], 1),
+    }
+
+    def __init__(self, pid: int):
+        self.pid = pid
+
+    def name(self) -> str:
+        return self.TABLE[self.pid][0]
+
+    def cmdline(self) -> list[str]:
+        return self.TABLE[self.pid][1]
+
+    def parents(self) -> list[FakeProc]:
+        out, ppid = [], self.TABLE[self.pid][2]
+        while ppid:
+            out.append(FakeProc(ppid))
+            ppid = self.TABLE[ppid][2]
+        return out
+
+
+def test_container_id_from_ancestry() -> None:
+    assert container_id_from_ancestry(502, FakeProc) == "e" * 12  # nested under the shim
+    assert container_id_from_ancestry(900, FakeProc) is None  # host process
 
 
 def test_rate_tracker() -> None:
@@ -140,7 +189,7 @@ def test_host_view_uses_pid1_mounts_and_net(
     assert collector._hostname() == "myserver"
 
     first = collector._network(now=0.0)
-    assert [n["name"] for n in first] == ["eth0"]  # lo and veth filtered
+    assert [n["name"] for n in first] == ["eth0"]  # lo, veth, bridges, docker0 filtered
     assert first[0]["rx_bps"] is None  # no previous sample yet
     (fake_host.proc / "1" / "net" / "dev").write_text(
         NET_DEV.replace("5000000 4000", "5100000 4100")
