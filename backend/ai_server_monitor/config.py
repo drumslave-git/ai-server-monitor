@@ -29,6 +29,7 @@ from pydantic import (
     StringConstraints,
     WithJsonSchema,
     field_validator,
+    model_validator,
 )
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -314,6 +315,15 @@ class ImageUpdatesCollectorSettings(CollectorSettings):
     """How long a registry answer is reused. Registries rate-limit, so don't set this low."""
 
 
+class ArrCollectorSettings(CollectorSettings):
+    enabled: bool | Literal["auto"] = "auto"
+    """auto = on as soon as an *arr app, Prowlarr or qBittorrent is configured under
+    *arr & downloads."""
+    interval: Duration = timedelta(minutes=2)
+    max_queue_items: int = Field(default=50, ge=1, le=500)
+    """Max queue entries listed per *arr instance (the rest is only counted)."""
+
+
 class CollectorsSettings(_Model):
     system: SystemCollectorSettings = SystemCollectorSettings()
     """CPU, memory, disks, network, temperatures, top processes."""
@@ -332,6 +342,9 @@ class CollectorsSettings(_Model):
     digest; does not look for newer version numbers)."""
     prometheus: PrometheusCollectorSettings = PrometheusCollectorSettings()
     """Run PromQL queries against an existing Prometheus."""
+    arr: ArrCollectorSettings = ArrCollectorSettings()
+    """Radarr/Sonarr/Whisparr queues and health, Prowlarr indexers, qBittorrent torrents
+    (the apps themselves are configured under *arr & downloads)."""
 
 
 class TelegramSettings(_Model):
@@ -383,16 +396,19 @@ Policy = Literal["off", "suggest", "approve", "auto"]
 class ActionSettings(_Model):
     policy: Policy = "suggest"
     """off = never; suggest = mention in reports; approve = ask you first; auto = just do it."""
+    max_per_hour: int = Field(default=0, ge=0)
+    """Cap on how many of these actions run per hour (0 = no cap)."""
 
 
 class StalledCleanupSettings(ActionSettings):
     policy: Policy = "approve"
     stalled_after: Duration = timedelta(hours=6)
     """A download with no progress for this long counts as stalled."""
-    max_per_hour: int = Field(default=10, ge=1)
+    max_per_hour: int = Field(default=10, ge=0)
 
 
 class SearchActionSettings(ActionSettings):
+    max_per_hour: int = Field(default=30, ge=0)
     interval: Duration = timedelta(hours=6)
     batch: int = Field(default=10, ge=1)
     """Items searched per run (keeps indexers from being hammered)."""
@@ -418,12 +434,23 @@ class ActionsSettings(_Model):
 class ArrSettings(_Model):
     dry_run: bool = True
     """Log what would be done without changing anything."""
+    timeout: Duration = timedelta(seconds=15)
+    """Per-request timeout for *arr, Prowlarr and qBittorrent."""
     radarr: list[ArrInstance] = Field(default_factory=list)
     sonarr: list[ArrInstance] = Field(default_factory=list)
     whisparr: list[ArrInstance] = Field(default_factory=list)
     prowlarr: ArrInstance | None = None
     qbittorrent: QbitSettings | None = None
     actions: ActionsSettings = ActionsSettings()
+
+    @model_validator(mode="after")
+    def _unique_instance_names(self) -> ArrSettings:
+        for kind in ("radarr", "sonarr", "whisparr"):
+            names = [i.name for i in getattr(self, kind)]
+            dupes = sorted({n for n in names if names.count(n) > 1})
+            if dupes:
+                raise ValueError(f"{kind}: duplicate instance names: {', '.join(dupes)}")
+        return self
 
 
 class Settings(_Model):

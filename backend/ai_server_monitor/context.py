@@ -14,6 +14,7 @@ from datetime import timedelta
 
 import httpx
 
+from .actions import ActionService, Notifier
 from .collectors import Collector, CollectorManager, HostEnv
 from .config import Bootstrap, Settings
 from .db import Database
@@ -24,6 +25,7 @@ from .settings_store import SettingsStore
 log = logging.getLogger(__name__)
 
 LLM_PROBE_RETRY = timedelta(minutes=5)
+APPROVAL_SWEEP = timedelta(minutes=1)
 
 
 class AppContext:
@@ -35,6 +37,7 @@ class AppContext:
         collector_registry: dict[str, type[Collector]] | None = None,
         host_env: HostEnv | None = None,
         seed_settings: Settings | None = None,
+        arr_transport: httpx.AsyncBaseTransport | None = None,
     ):
         self.bootstrap = bootstrap
         self.db = Database(bootstrap.db_path)
@@ -44,7 +47,11 @@ class AppContext:
         self._llm_transport = llm_transport
         self._registry = collector_registry
         self._seed = seed_settings
+        self._arr_transport = arr_transport
         self._lock = asyncio.Lock()
+        self.action_notifiers: list[Notifier] = []
+        """Callables `(event, record)` told about suggested/pending/finished actions.
+        Survives settings changes; the event bus subscribes here."""
         # Built in start() / apply_settings():
         self.settings = Settings()
         self.scheduler = Scheduler()
@@ -52,6 +59,9 @@ class AppContext:
         self.tool_mode = ToolModeResolver(self.llm, self.db, self.settings.llm.tool_mode)
         self.collectors = CollectorManager(
             self.settings, self.db, self.scheduler, registry=collector_registry, env=self.host_env
+        )
+        self.actions = ActionService(
+            self.db, self.settings, notifiers=self.action_notifiers, transport=arr_transport
         )
 
     # ------------------------------------------------------------------ lifecycle
@@ -102,10 +112,15 @@ class AppContext:
             LLM_PROBE_RETRY,
             timeout=timedelta(seconds=s.llm.timeout.total_seconds() * 2 + 30),
         )
+        self.actions = ActionService(
+            self.db, s, notifiers=self.action_notifiers, transport=self._arr_transport
+        )
+        self.scheduler.add("approvals:sweep", self.actions.sweep_expired, APPROVAL_SWEEP)
         await self.collectors.setup()
         await self.scheduler.start()
 
     async def _stop_services(self) -> None:
         await self.scheduler.stop()
         await self.collectors.close()
+        await self.actions.close()
         await self.llm.aclose()

@@ -29,7 +29,7 @@ def test_healthz_and_info(bootstrap: Bootstrap, settings: Settings) -> None:
         info = client.get("/api/info").json()
     assert info["schema_version"] >= 1
     assert info["llm"]["model"] == "test-model" and info["llm"]["configured"] is True
-    assert {job["name"] for job in info["jobs"]} == {"prune", "llm_probe"}
+    assert {job["name"] for job in info["jobs"]} == {"prune", "llm_probe", "approvals:sweep"}
     assert (bootstrap.data_dir / "monitor.db").exists()
 
 
