@@ -10,6 +10,9 @@
     "gen:api": "python ../scripts/export_openapi.py .openapi.json && npm --prefix tools/api-gen ci --silent && node tools/api-gen/node_modules/openapi-typescript/bin/cli.js .openapi.json -o src/api-types.ts && node -e \"require('fs').rmSync('.openapi.json')\""
   },
   "dependencies": {
+    "dompurify": "3.4.18",
+    "lucide-react": "1.73.0",
+    "marked": "18.2.0",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },

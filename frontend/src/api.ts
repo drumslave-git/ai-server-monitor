@@ -88,3 +88,39 @@ export type LlmTestResult = {
   model_listed?: boolean | null;
   error?: string;
 };
+
+// ---- generated types (src/api-types.ts is produced by `npm run gen:api`)
+import type { components } from "./api-types";
+export type Schemas = components["schemas"];
+export type StatusResponse = Schemas["StatusResponse"];
+export type Report = Schemas["Report"];
+export type ReportSummary = Schemas["ReportSummary"];
+export type ReportList = Schemas["ReportList"];
+export type Finding = Schemas["Finding"];
+
+/** One entry of GET /api/collectors: status plus the latest result (shape of `data` varies). */
+export type CollectorEntry = {
+  state: "active" | "disabled" | "unavailable";
+  reason: string | null;
+  ok: boolean | null;
+  error: string | null;
+  last_ts: number | null;
+  duration_s: number | null;
+  result: { ts: number; ok: boolean; data: Record<string, any>; error: string | null } | null;
+};
+export type Collectors = Record<string, CollectorEntry>;
+
+export type ActionRecord = {
+  id: number;
+  ts: number;
+  action: string;
+  target: string | null;
+  args: Record<string, unknown> | null;
+  policy: string;
+  status: string;
+  source: string;
+  reason: string | null;
+  result: Record<string, any> | null;
+  decided_by: string | null;
+  expires_at: number | null;
+};
