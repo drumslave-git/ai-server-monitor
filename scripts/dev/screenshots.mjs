@@ -17,6 +17,7 @@ const shots = [
   { name: "approvals-desktop", route: "approvals", width: 1440, height: 900 },
   { name: "arr-desktop", route: "arr", width: 1440, height: 1200 },
   { name: "settings-desktop", route: "settings/llm", width: 1440, height: 900 },
+  { name: "dashboard-light-desktop", route: "dashboard", width: 1440, height: 1180, scheme: "light" },
   { name: "dashboard-375", route: "dashboard", width: 375, height: 1900, mobile: true },
   { name: "reports-375", route: "reports", width: 375, height: 900, mobile: true },
 ];
@@ -51,8 +52,10 @@ const call = (method, params = {}) => new Promise((resolve) => {
   ws.send(JSON.stringify({ id: n, method, params }));
 });
 
-await call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "dark" }] });
 for (const s of shots.filter((x) => !only || only.includes(x.name))) {
+  await call("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-color-scheme", value: s.scheme ?? "dark" }],
+  });
   await call("Emulation.setDeviceMetricsOverride", {
     width: s.width, height: s.height, deviceScaleFactor: s.mobile ? 2 : 1, mobile: !!s.mobile,
   });

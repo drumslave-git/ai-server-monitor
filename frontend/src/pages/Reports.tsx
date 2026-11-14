@@ -79,7 +79,7 @@ function HistoryRow({ report: r, now, selected }: { report: ReportSummary; now: 
   const level = r.status === "ok" ? healthLevel(r.health) : "off";
   return (
     <li>
-      <a href={`#/reports/${r.id}`} className={selected ? "history-row selected" : "history-row"}>
+      <a href={`#/reports/${r.id}`} className={`history-row${selected ? " selected" : ""}${r.status === "ok" ? "" : " problem"}`}>
         <span className="history-top">
           <Dot level={level} />
           <span className="history-time">{clock(r.ts)}</span>

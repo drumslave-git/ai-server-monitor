@@ -184,6 +184,7 @@ pre { margin: 0; font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wra
 .history-row:hover { background: var(--hover); text-decoration: none; }
 .history-row.selected { background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); }
 .history-top { display: flex; align-items: center; gap: 8px; }
+.history-row.problem .history-time { color: var(--muted); font-weight: 400; }
 .history-time { font-weight: 500; }
 .history-score { margin-left: auto; color: var(--muted); }
 .history-summary { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 4px; color: var(--muted); font-size: 13px; }
@@ -356,7 +357,8 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .finding-title { display: block; margin: 0; }
   .live-row { grid-template-columns: 88px minmax(0, 1fr) 88px; gap: 12px; }
   .live-value small { display: none; }
-  .disks li { grid-template-columns: minmax(0, 1fr) 64px 56px; gap: 8px; }
+  .disks li { grid-template-columns: minmax(0, 1fr) 56px 56px; gap: 8px; align-items: center; }
+  .disk-mount { white-space: normal; overflow-wrap: anywhere; font-size: 12px; line-height: 16px; }
   .toplists { grid-template-columns: minmax(0, 1fr); }
   .facts { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .facts dd { margin-bottom: 12px; }

@@ -217,8 +217,8 @@ function LivePanel({ system, gpu }: { system: Data; gpu: Data }) {
           sub={`5 min ${cpu.load?.[1]?.toFixed(2) ?? "—"}`}
           level={lvl(load === null ? null : load / cores, 1.5, 3)}
         />
-        <LiveRow label="Network in" values={ticks.map((t) => t.net_rx_bps)} now={rate(rx)} />
-        <LiveRow label="Network out" values={ticks.map((t) => t.net_tx_bps)} now={rate(tx)} />
+        <LiveRow label="Net in" values={ticks.map((t) => t.net_rx_bps)} now={rate(rx)} />
+        <LiveRow label="Net out" values={ticks.map((t) => t.net_tx_bps)} now={rate(tx)} />
         {g0 && (
           <>
             <LiveRow
