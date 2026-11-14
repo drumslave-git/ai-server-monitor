@@ -266,6 +266,10 @@ async def test_arr_actions_send_the_right_calls(
     await svc.request("arr_search", {"app": "sonarr", "instance": "sonarr", "ids": [9]}, "x")
     body = json.loads(world.calls("sonarr.test", "POST")[0]["body"])
     assert body == {"name": "EpisodeSearch", "episodeIds": [9]}
+    # Whisparr v3 is Radarr-based: movies, not episodes.
+    await svc.request("arr_search", {"app": "whisparr", "instance": "whisparr", "ids": [3]}, "x")
+    body = json.loads(world.calls("whisparr.test", "POST")[0]["body"])
+    assert body == {"name": "MoviesSearch", "movieIds": [3]}
 
 
 async def test_prowlarr_indexer_test(db: Database, world: FakeArrWorld, clock: Clock) -> None:
@@ -311,6 +315,7 @@ async def test_every_registered_action_is_a_write_with_a_json_schema() -> None:
         "qbit_delete_torrent",
         "arr_remove_queue_item",
         "arr_search",
+        "arr_add_media",
         "prowlarr_test_indexer",
     }
     for definition in REGISTRY.values():

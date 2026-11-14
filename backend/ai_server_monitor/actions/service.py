@@ -92,10 +92,19 @@ class ActionService:
     # ------------------------------------------------------------------ requests
 
     async def request(
-        self, action: str, args: dict[str, Any], source: str, *, reason: str | None = None
+        self,
+        action: str,
+        args: dict[str, Any],
+        source: str,
+        *,
+        reason: str | None = None,
+        suggest_only: bool = False,
     ) -> dict[str, Any]:
         """Ask for an action. Returns the audit record; its `status` says what happened:
         suggested | pending | rejected | executed | failed | dry_run.
+
+        `suggest_only` caps the outcome at "suggested" whatever the policy says (for things
+        an automation only wants to point out, never carry out).
 
         Raises ActionError for an unknown action or malformed arguments (nothing to audit:
         no valid action was requested)."""
@@ -131,7 +140,7 @@ class ActionService:
         problem = definition.check(self.settings, parsed)
         if problem:
             return await self._finish(fields, "rejected", {"detail": problem}, "policy")
-        if policy == "suggest":
+        if policy == "suggest" or suggest_only:
             record = await self._insert(fields, "suggested")
             await self._notify(EVENT_SUGGESTED, record)
             return record

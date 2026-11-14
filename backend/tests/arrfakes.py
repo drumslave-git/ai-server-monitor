@@ -24,6 +24,7 @@ def arr_settings(**overrides: Any) -> dict[str, Any]:
         "dry_run": False,
         "radarr": [{"name": "radarr", "url": "http://radarr.test:7878", "api_key": API_KEY}],
         "sonarr": [{"name": "sonarr", "url": "http://sonarr.test:8989", "api_key": API_KEY}],
+        "whisparr": [{"name": "whisparr", "url": "http://whisparr.test:6969", "api_key": API_KEY}],
         "prowlarr": {"name": "prowlarr", "url": "http://prowlarr.test:9696", "api_key": API_KEY},
         "qbittorrent": {
             "url": "http://qbit.test:8080",
@@ -42,13 +43,44 @@ def make_settings(actions: dict[str, Any] | None = None, **arr: Any) -> Settings
     return Settings(arr=ArrSettings.model_validate(cfg))
 
 
+# Query parameters the real apps accept (from Radarr/Sonarr/Whisparr openapi.json and source).
+# Anything else is a bug in our client, so the fake answers 400 instead of ignoring it.
+QUEUE_PARAMS = {
+    "radarr": {"page", "pageSize", "sortKey", "sortDirection", "includeUnknownMovieItems"},
+    "whisparr": {"page", "pageSize", "sortKey", "sortDirection", "includeUnknownMovieItems"},
+    "sonarr": {"page", "pageSize", "sortKey", "sortDirection", "includeUnknownSeriesItems"},
+}
+WANTED_PARAMS = {"page", "pageSize", "sortKey", "sortDirection", "monitored"}
+WANTED_SORT = {
+    "radarr": "movies.lastSearchTime",
+    "whisparr": "movies.lastSearchTime",
+    "sonarr": "episodes.lastSearchTime",
+}
+QUEUE_DELETE_PARAMS = {"removeFromClient", "blocklist", "skipRedownload", "changeCategory"}
+SEARCH_BODY = {
+    "radarr": ("MoviesSearch", "movieIds"),
+    "whisparr": ("MoviesSearch", "movieIds"),
+    "sonarr": ("EpisodeSearch", "episodeIds"),
+}
+QBIT_INFO_PARAMS = {"filter", "category", "tag", "sort", "reverse", "limit", "offset", "hashes"}
+
+
+def bad_request(message: str) -> httpx.Response:
+    return httpx.Response(400, json={"message": f"fake: {message}"})
+
+
 class FakeArrWorld:
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
         self.session_valid = False
         self.logins = 0
         self.torrents: dict[str, dict[str, Any]] = {}
-        self.queue: dict[str, list[dict[str, Any]]] = {"radarr": [], "sonarr": []}
+        self.queue: dict[str, list[dict[str, Any]]] = {"radarr": [], "sonarr": [], "whisparr": []}
+        # (app, "missing"|"cutoff") -> records, each with a lastSearchTime
+        self.wanted: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        self.wanted_unsupported: set[str] = set()
+        self.lookup_results: list[dict[str, Any]] = []
+        self.added: list[dict[str, Any]] = []
         self.health: dict[str, list[dict[str, Any]]] = {}
         self.indexers: list[dict[str, Any]] = []
         self.indexer_status: list[dict[str, Any]] = []
@@ -83,7 +115,7 @@ class FakeArrWorld:
             raise httpx.ConnectError("refused")
         if host == "qbit.test":
             return self._qbit(request, body)
-        if host in ("radarr.test", "sonarr.test"):
+        if host in ("radarr.test", "sonarr.test", "whisparr.test"):
             return self._arr(request, host.split(".")[0], body)
         if host == "prowlarr.test":
             return self._prowlarr(request, body)
@@ -109,6 +141,9 @@ class FakeArrWorld:
                 json={"dl_info_speed": 1000, "up_info_speed": 50, "connection_status": "connected"},
             )
         if path == "/api/v2/torrents/info":
+            unknown = set(request.url.params) - QBIT_INFO_PARAMS
+            if unknown:
+                return bad_request(f"unknown torrents/info params {unknown}")
             wanted = request.url.params.get("hashes")
             items = [t for h, t in self.torrents.items() if wanted in (None, h)]
             return httpx.Response(200, json=items)
@@ -129,6 +164,9 @@ class FakeArrWorld:
         if path == "/api/v3/health":
             return httpx.Response(200, json=self.health.get(kind, []))
         if path == "/api/v3/queue" and request.method == "GET":
+            unknown = set(request.url.params) - QUEUE_PARAMS[kind]
+            if unknown:
+                return bad_request(f"unknown queue params {unknown}")
             records = self.queue[kind]
             page = int(request.url.params.get("page", 1))
             size = int(request.url.params.get("pageSize", 10))
@@ -136,16 +174,64 @@ class FakeArrWorld:
                 200,
                 json={
                     "page": page,
+                    "pageSize": size,
                     "totalRecords": len(records),
                     "records": records[(page - 1) * size : page * size],
                 },
             )
         if path.startswith("/api/v3/queue/") and request.method == "DELETE":
+            unknown = set(request.url.params) - QUEUE_DELETE_PARAMS
+            if unknown:
+                return bad_request(f"unknown queue delete params {unknown}")
             return httpx.Response(200)
-        if path.startswith("/api/v3/wanted/"):
-            return httpx.Response(200, json={"totalRecords": 7 if "missing" in path else 3})
+        if path in ("/api/v3/wanted/missing", "/api/v3/wanted/cutoff"):
+            if kind in self.wanted_unsupported:
+                return httpx.Response(404, json={"message": "NotFound"})
+            allowed = WANTED_PARAMS | ({"includeSeries"} if kind == "sonarr" else set())
+            unknown = set(request.url.params) - allowed
+            if unknown:
+                return bad_request(f"unknown wanted params {unknown}")
+            sort_key = request.url.params.get("sortKey")
+            if sort_key and sort_key != WANTED_SORT[kind]:
+                return bad_request(f"sortKey {sort_key} not allowed")
+            records = list(self.wanted.get((kind, path.rsplit("/", 1)[1]), []))
+            if sort_key:  # least recently searched first
+                records.sort(key=lambda r: r.get("lastSearchTime") or "")
+            page = int(request.url.params.get("page", 1))
+            size = int(request.url.params.get("pageSize", 10))
+            return httpx.Response(
+                200,
+                json={
+                    "page": page,
+                    "pageSize": size,
+                    "totalRecords": len(records),
+                    "records": records[(page - 1) * size : page * size],
+                },
+            )
         if path == "/api/v3/command" and request.method == "POST":
-            return httpx.Response(201, json={"id": 99, **json.loads(body)})
+            command = json.loads(body)
+            name, field = SEARCH_BODY[kind]
+            if command.get("name") != name or not isinstance(command.get(field), list):
+                return bad_request(f"{kind} expects {name} with {field}, got {command}")
+            for records in self.wanted.values():  # a search updates lastSearchTime
+                for record in records:
+                    if record["id"] in command[field]:
+                        record["lastSearchTime"] = "2999-01-01T00:00:00Z"
+            return httpx.Response(201, json={"id": 99, **command})
+        lookup = "/api/v3/series/lookup" if kind == "sonarr" else "/api/v3/movie/lookup"
+        if path == lookup and request.method == "GET":
+            if set(request.url.params) - {"term"}:
+                return bad_request("lookup takes only term")
+            return httpx.Response(200, json=self.lookup_results)
+        if path == "/api/v3/qualityprofile":
+            return httpx.Response(200, json=[{"id": 4, "name": "HD-1080p"}])
+        if path == "/api/v3/rootfolder":
+            return httpx.Response(200, json=[{"id": 1, "path": "/media/movies", "freeSpace": 10}])
+        add_path = "/api/v3/series" if kind == "sonarr" else "/api/v3/movie"
+        if path == add_path and request.method == "POST":
+            added = json.loads(body)
+            self.added.append(added)
+            return httpx.Response(201, json={**added, "id": 501})
         return httpx.Response(404, json={"message": "NotFound"})
 
     # ---------------------------------------------------------------- Prowlarr
@@ -197,6 +283,9 @@ def torrent(
         "availability": 0.4,
         "size": 1000,
         "category": "radarr",
+        "num_leechs": 0,
+        "amount_left": 500,
+        "eta": 8640000,
         "last_activity": int(time.time()) - inactive_s,
         "added_on": int(time.time()) - inactive_s - 100,
         "dlspeed": dlspeed,

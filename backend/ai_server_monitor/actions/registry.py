@@ -59,6 +59,19 @@ class ArrSearchArgs(_Args):
     """Which policy applies: searching for missing items, or for quality upgrades."""
 
 
+class ArrAddMediaArgs(_Args):
+    app: ArrKind
+    instance: str = Field(min_length=1)
+    tmdb_id: int | None = Field(default=None, ge=1)
+    """TMDB id (Radarr, Whisparr)."""
+    tvdb_id: int | None = Field(default=None, ge=1)
+    """TVDB id (Sonarr)."""
+    quality_profile_id: int = Field(ge=1)
+    root_folder_path: str = Field(min_length=1)
+    search: bool = True
+    """Search for the release right after adding."""
+
+
 class ProwlarrTestArgs(_Args):
     indexer_id: int = Field(ge=1)
 
@@ -99,6 +112,17 @@ def _check_search(settings: Settings, args: Any) -> str | None:
     limit = getattr(settings.arr.actions, f"{args.purpose}_search").batch
     if len(args.ids) > limit:
         return f"{len(args.ids)} ids exceed the batch size of {limit} for {args.purpose} searches"
+    return None
+
+
+def _check_add(settings: Settings, args: Any) -> str | None:
+    problem = _has_instance(settings, args)
+    if problem:
+        return problem
+    if args.app == "sonarr" and args.tvdb_id is None:
+        return "tvdb_id is required for Sonarr"
+    if args.app != "sonarr" and args.tmdb_id is None:
+        return "tmdb_id is required for Radarr/Whisparr"
     return None
 
 
@@ -156,6 +180,30 @@ async def _arr_search(clients: Clients, args: ArrSearchArgs) -> dict[str, Any]:
     return {"command": command, "ids": args.ids, "command_id": reply.get("id")}
 
 
+async def _arr_add(clients: Clients, args: ArrAddMediaArgs) -> dict[str, Any]:
+    app = clients.apps.get((args.app, args.instance))
+    if app is None:
+        raise ActionError(f"no {args.app} instance named {args.instance!r}")
+    term, key = (
+        (f"tvdb:{args.tvdb_id}", "tvdbId")
+        if args.app == "sonarr"
+        else (f"tmdb:{args.tmdb_id}", "tmdbId")
+    )
+    wanted_id = args.tvdb_id if args.app == "sonarr" else args.tmdb_id
+    candidate = next((c for c in await app.lookup(term) if c.get(key) == wanted_id), None)
+    if candidate is None:
+        raise ActionError(f"nothing found for {term}")
+    if candidate.get("id"):
+        raise ActionError(f"{candidate.get('title')} is already in the library")
+    added = await app.add(
+        candidate,
+        quality_profile_id=args.quality_profile_id,
+        root_folder_path=args.root_folder_path,
+        search=args.search,
+    )
+    return {"title": candidate.get("title"), "id": added.get("id"), "searching": args.search}
+
+
 async def _prowlarr_test(clients: Clients, args: ProwlarrTestArgs) -> dict[str, Any]:
     if clients.prowlarr is None:
         raise ActionError("Prowlarr is not configured")
@@ -195,6 +243,15 @@ _ACTIONS = (
         target=lambda a: f"{a.app}/{a.instance}: {a.title or f'{len(a.ids)} item(s)'}",
         check=_check_search,
         execute=_arr_search,
+    ),
+    ActionDef(
+        name="arr_add_media",
+        description="Add a movie (Radarr/Whisparr) or series (Sonarr) to the library.",
+        args_model=ArrAddMediaArgs,
+        policy_key=lambda a: "add_media",
+        target=lambda a: f"{a.app}/{a.instance}: add {a.title or (a.tmdb_id or a.tvdb_id)}",
+        check=_check_add,
+        execute=_arr_add,
     ),
     ActionDef(
         name="prowlarr_test_indexer",

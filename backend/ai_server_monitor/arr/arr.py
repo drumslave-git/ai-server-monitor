@@ -11,6 +11,22 @@ from .base import ArrError, HttpClient, error_text
 PAGE_SIZE = 200
 MAX_PAGES = 10
 
+# Radarr and Whisparr v3 (Radarr-based) work on movies; Sonarr on series/episodes.
+MOVIE_LIKE = ("radarr", "whisparr")
+# Parameters differ per app (checked against the apps' openapi.json / source).
+UNKNOWN_ITEMS_PARAM = {
+    "radarr": "includeUnknownMovieItems",
+    "whisparr": "includeUnknownMovieItems",
+    "sonarr": "includeUnknownSeriesItems",
+}
+LAST_SEARCH_SORT_KEY = {
+    "radarr": "movies.lastSearchTime",
+    "whisparr": "movies.lastSearchTime",
+    "sonarr": "episodes.lastSearchTime",
+}
+LOOKUP_PATH = {"radarr": "/movie/lookup", "whisparr": "/movie/lookup", "sonarr": "/series/lookup"}
+ADD_PATH = {"radarr": "/movie", "whisparr": "/movie", "sonarr": "/series"}
+
 
 class ArrApp:
     """Radarr, Sonarr or Whisparr: same v3 API, `X-Api-Key` header."""
@@ -53,7 +69,10 @@ class ArrApp:
         total = 0
         for page in range(1, MAX_PAGES + 1):
             data = await self._get(
-                "/queue", page=page, pageSize=PAGE_SIZE, includeUnknownMovieItems="true"
+                "/queue",
+                page=page,
+                pageSize=PAGE_SIZE,
+                **{UNKNOWN_ITEMS_PARAM[self.kind]: "true"},
             )
             records = data.get("records") or []
             total = int(data.get("totalRecords") or 0)
@@ -62,10 +81,39 @@ class ArrApp:
                 break
         return items[:max_items], total
 
-    async def wanted_total(self, kind: str) -> int:
-        """Total missing (kind='missing') or cutoff-unmet (kind='cutoff') items."""
-        data = await self._get(f"/wanted/{kind}", page=1, pageSize=1, monitored="true")
-        return int(data.get("totalRecords") or 0)
+    async def wanted(
+        self, kind: str, *, page: int = 1, page_size: int = 1, least_recently_searched: bool = False
+    ) -> tuple[list[dict[str, Any]], int | None]:
+        """One page of missing (kind='missing') or cutoff-unmet (kind='cutoff') items and
+        the total. Radarr/Whisparr return movies, Sonarr episodes (with their series).
+        `total` is None if this app does not offer the endpoint."""
+        params: dict[str, Any] = {"page": page, "pageSize": page_size, "monitored": "true"}
+        if least_recently_searched:
+            params.update(sortKey=LAST_SEARCH_SORT_KEY[self.kind], sortDirection="ascending")
+        if self.kind == "sonarr":
+            params["includeSeries"] = "true"
+        try:
+            data = await self._get(f"/wanted/{kind}", **params)
+        except ArrError as exc:
+            if exc.status == 404:
+                return [], None
+            raise
+        return data.get("records") or [], int(data.get("totalRecords") or 0)
+
+    async def wanted_total(self, kind: str) -> int | None:
+        return (await self.wanted(kind))[1]
+
+    # ---- add media (lookup is read-only)
+
+    async def lookup(self, term: str) -> list[dict[str, Any]]:
+        """Search for a movie/series to add. `term` may be 'tmdb:123' / 'tvdb:456'."""
+        return await self._get(LOOKUP_PATH[self.kind], term=term)
+
+    async def quality_profiles(self) -> list[dict[str, Any]]:
+        return await self._get("/qualityprofile")
+
+    async def root_folders(self) -> list[dict[str, Any]]:
+        return await self._get("/rootfolder")
 
     # ---- writes (only ever called through the action layer)
 
@@ -82,6 +130,32 @@ class ArrApp:
             },
         )
 
+    async def add(
+        self,
+        candidate: dict[str, Any],
+        *,
+        quality_profile_id: int,
+        root_folder_path: str,
+        search: bool,
+    ) -> dict[str, Any]:
+        """Add a lookup result to the library (monitored; optionally search right away)."""
+        body = {
+            **candidate,
+            "qualityProfileId": quality_profile_id,
+            "rootFolderPath": root_folder_path,
+            "monitored": True,
+        }
+        if self.kind == "sonarr":
+            body["seasonFolder"] = True
+            body["addOptions"] = {"monitor": "all", "searchForMissingEpisodes": search}
+        else:
+            body.setdefault("minimumAvailability", "released")
+            body["addOptions"] = {"monitor": "movieOnly", "searchForMovie": search}
+        result = await self._http.request_json(
+            "POST", f"{self.api_prefix}{ADD_PATH[self.kind]}", json=body
+        )
+        return result if isinstance(result, dict) else {}
+
     async def command(self, name: str, **body: Any) -> dict[str, Any]:
         result = await self._http.request_json(
             "POST", f"{self.api_prefix}/command", json={"name": name, **body}
@@ -89,11 +163,12 @@ class ArrApp:
         return result if isinstance(result, dict) else {}
 
 
-# Search command and id field per app: Radarr works on movies, Sonarr/Whisparr on episodes.
+# Search command and id field per app (from each app's *SearchCommand source): Radarr and
+# Whisparr v3 search movies, Sonarr searches episodes.
 SEARCH_COMMANDS: dict[str, tuple[str, str]] = {
     "radarr": ("MoviesSearch", "movieIds"),
     "sonarr": ("EpisodeSearch", "episodeIds"),
-    "whisparr": ("EpisodeSearch", "episodeIds"),
+    "whisparr": ("MoviesSearch", "movieIds"),
 }
 
 

@@ -15,6 +15,8 @@ from datetime import timedelta
 import httpx
 
 from .actions import ActionService, Notifier
+from .arr.automations import AutomationEnv
+from .arr.automations import register as register_automations
 from .collectors import Collector, CollectorManager, HostEnv
 from .config import Bootstrap, Settings
 from .db import Database
@@ -116,6 +118,10 @@ class AppContext:
             self.db, s, notifiers=self.action_notifiers, transport=self._arr_transport
         )
         self.scheduler.add("approvals:sweep", self.actions.sweep_expired, APPROVAL_SWEEP)
+        register_automations(
+            self.scheduler,
+            AutomationEnv(self.actions, s, collector_results=lambda: self.collectors.latest),
+        )
         await self.collectors.setup()
         await self.scheduler.start()
 

@@ -108,6 +108,8 @@ async def test_collector_reports_queue_health_wanted_indexers_and_torrents() -> 
         },
         {"indexerId": 1, "disabledTill": "2001-01-01T00:00:00Z"},
     ]
+    world.wanted[("radarr", "missing")] = [{"id": i, "title": f"m{i}"} for i in range(7)]
+    world.wanted[("radarr", "cutoff")] = [{"id": i, "title": f"c{i}"} for i in range(3)]
     world.torrents = {
         HASH_A: torrent(HASH_A, "Stuck", "stalledDL", 0.4, inactive_s=7 * 3600),
         HASH_B: torrent(HASH_B, "Moving", "downloading", 0.4, inactive_s=7 * 3600, dlspeed=500),
@@ -130,7 +132,7 @@ async def test_collector_reports_queue_health_wanted_indexers_and_torrents() -> 
         {"source": "IndexerStatusCheck", "level": "warning", "message": "Indexers down"}
     ]
     assert radarr["wanted"] == {"missing": 7, "cutoff_unmet": 3}
-    assert {a["name"] for a in data["apps"]} == {"radarr", "sonarr"}
+    assert {a["name"] for a in data["apps"]} == {"radarr", "sonarr", "whisparr"}
 
     indexers = {i["name"]: i for i in data["prowlarr"]["indexers"]}
     assert indexers["Bad"]["failing"] and indexers["Bad"]["disabled_till"].startswith("2999")
@@ -153,7 +155,7 @@ async def test_collector_isolates_a_down_instance_and_is_unavailable_when_all_ar
     assert data["summary"]["unreachable"] == ["sonarr/sonarr"]
     sonarr = next(a for a in data["apps"] if a["name"] == "sonarr")
     assert sonarr["ok"] is False and "cannot reach" in sonarr["error"]
-    world.fail_hosts.update({"radarr.test", "prowlarr.test", "qbit.test"})
+    world.fail_hosts.update({"radarr.test", "whisparr.test", "prowlarr.test", "qbit.test"})
     with pytest.raises(CollectorUnavailable):
         await collector.collect()
     await collector.close()
@@ -212,3 +214,30 @@ def test_arr_settings_validation_and_secret_masking() -> None:
                 ]
             }
         )
+
+
+async def test_app_without_wanted_endpoints_stays_ok_with_unknown_totals() -> None:
+    world = FakeArrWorld()
+    world.wanted_unsupported.add("whisparr")
+    world.queue["whisparr"] = [{"id": 1, "title": "x", "movieId": 5, "downloadId": HASH_A.upper()}]
+    collector = make_collector(world, make_settings())
+    data = await collector.collect()
+    await collector.close()
+    whisparr = next(a for a in data["apps"] if a["name"] == "whisparr")
+    assert whisparr["ok"] and whisparr["wanted"] == {"missing": None, "cutoff_unmet": None}
+    assert whisparr["queue"]["items"][0]["download_id"] == HASH_A.upper()
+    assert data["summary"]["wanted_missing"] == 0  # unknown counts as nothing, not as a crash
+
+
+async def test_each_app_gets_its_own_query_parameters() -> None:
+    world = FakeArrWorld()  # the fake rejects parameters the real apps do not know
+    clients = Clients(make_settings().arr, transport=world.transport())
+    for key in (("radarr", "radarr"), ("sonarr", "sonarr"), ("whisparr", "whisparr")):
+        app = clients.apps[key]
+        await app.queue()
+        await app.wanted("missing", least_recently_searched=True)
+    sonarr_queue = [r for r in world.calls("sonarr.test", "GET") if r["path"].endswith("/queue")]
+    assert "includeUnknownSeriesItems" in sonarr_queue[0]["params"]
+    radarr_queue = [r for r in world.calls("radarr.test", "GET") if r["path"].endswith("/queue")]
+    assert "includeUnknownMovieItems" in radarr_queue[0]["params"]
+    await clients.close()

@@ -402,9 +402,16 @@ class ActionSettings(_Model):
 
 class StalledCleanupSettings(ActionSettings):
     policy: Policy = "approve"
+    interval: Duration = timedelta(minutes=30)
+    """How often to look for stalled downloads."""
     stalled_after: Duration = timedelta(hours=6)
     """A download with no progress for this long counts as stalled."""
     max_per_hour: int = Field(default=10, ge=0)
+
+
+class IndexerTriageSettings(ActionSettings):
+    interval: Duration = timedelta(hours=1)
+    """How often to look for failing indexers."""
 
 
 class SearchActionSettings(ActionSettings):
@@ -425,7 +432,7 @@ class ActionsSettings(_Model):
     """Search for quality upgrades (cutoff unmet)."""
     add_media: ActionSettings = ActionSettings(policy="approve")
     """Add movies/series when asked in chat."""
-    indexer_triage: ActionSettings = ActionSettings()
+    indexer_triage: IndexerTriageSettings = IndexerTriageSettings()
     """Test/disable failing indexers in Prowlarr."""
     approval_ttl: Duration = timedelta(hours=24)
     """Pending approvals expire after this."""

@@ -20,13 +20,15 @@ from .base import Collector, CollectorUnavailable, HostEnv
 
 _MAX_MESSAGES = 3
 _MAX_STALLED = 30
+_MAX_FINDINGS = 20
 _PERSIST_PROBLEMS = 10
 
 # qBittorrent states in which a torrent is expected to make progress.
 _ACTIVE_DOWNLOAD = {"downloading", "forcedDL", "stalledDL", "metaDL", "forcedMetaDL"}
 # States that are problems by themselves, whatever the activity.
 _BROKEN = {"error", "missingFiles"}
-_BAD_QUEUE_STATES = {"importBlocked", "importFailed", "failedPending", "failed"}
+_BAD_QUEUE_STATES = {"importBlocked", "failedPending", "failed"}
+_BAD_QUEUE_STATUSES = {"failed", "warning", "downloadClientUnavailable"}
 
 
 def parse_time(value: Any) -> float | None:
@@ -51,6 +53,7 @@ def queue_row(item: dict[str, Any]) -> dict[str, Any]:
     state = item.get("trackedDownloadState")
     return {
         "id": item.get("id"),
+        "download_id": item.get("downloadId"),
         "title": str(item.get("title") or "")[:200],
         "status": item.get("status"),
         "tracked_status": status,
@@ -65,7 +68,7 @@ def queue_row(item: dict[str, Any]) -> dict[str, Any]:
         "added": item.get("added"),
         "problem": status in ("warning", "error")
         or state in _BAD_QUEUE_STATES
-        or item.get("status") in ("failed", "warning"),
+        or item.get("status") in _BAD_QUEUE_STATUSES,
     }
 
 
@@ -97,6 +100,62 @@ def is_stalled_candidate(row: dict[str, Any], stalled_after: float) -> bool:
         and row["inactive_s"] >= stalled_after
         and not row["dlspeed"]
     )
+
+
+def build_findings(entries: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Compact problem list for the report digest: [{severity: warn|crit, source, message}]."""
+    out: list[dict[str, str]] = []
+    for e in entries:
+        source = f"{e['type']}/{e['name']}" if e["type"] != "qbittorrent" else "qbittorrent"
+        if not e["ok"]:
+            out.append(
+                {"severity": "crit", "source": source, "message": f"unreachable: {e['error']}"}
+            )
+            continue
+        for h in e.get("health", []):
+            if h["level"] in ("error", "warning"):
+                out.append(
+                    {
+                        "severity": "crit" if h["level"] == "error" else "warn",
+                        "source": source,
+                        "message": f"health: {h['message']}",
+                    }
+                )
+        queue = e.get("queue")
+        if queue and queue["problems"]:
+            states: dict[str, int] = {}
+            for row in queue["items"]:
+                if row["problem"]:
+                    key = str(row["tracked_state"] or row["status"])
+                    states[key] = states.get(key, 0) + 1
+            detail = ", ".join(f"{k}: {v}" for k, v in sorted(states.items()))
+            out.append(
+                {
+                    "severity": "warn",
+                    "source": source,
+                    "message": f"{queue['problems']} queue item(s) with problems ({detail})",
+                }
+            )
+        for ix in e.get("indexers", []):
+            if ix["failing"]:
+                out.append(
+                    {
+                        "severity": "warn",
+                        "source": source,
+                        "message": f"indexer {ix['name']} is failing "
+                        f"(disabled until {ix['disabled_till']})",
+                    }
+                )
+        if e.get("stalled_total"):
+            out.append(
+                {
+                    "severity": "warn",
+                    "source": source,
+                    "message": f"{e['stalled_total']} stalled/broken torrent(s) "
+                    f"(no progress for {e['stalled_after_s'] // 3600}h or in an error state)",
+                }
+            )
+    return out[:_MAX_FINDINGS]
 
 
 class ArrCollector(Collector):
@@ -155,13 +214,14 @@ class ArrCollector(Collector):
                 "queue_total": sum(a.get("queue", {}).get("total", 0) for a in apps),
                 "queue_problems": sum(a.get("queue", {}).get("problems", 0) for a in apps),
                 "health_issues": sum(len(e.get("health", [])) for e in entries),
-                "wanted_missing": sum(a.get("wanted", {}).get("missing", 0) for a in apps),
+                "wanted_missing": sum(a.get("wanted", {}).get("missing") or 0 for a in apps),
                 "wanted_cutoff_unmet": sum(
-                    a.get("wanted", {}).get("cutoff_unmet", 0) for a in apps
+                    a.get("wanted", {}).get("cutoff_unmet") or 0 for a in apps
                 ),
                 "indexers_failing": (prowlarr or {}).get("summary", {}).get("failing", 0),
                 "stalled_candidates": (qbit or {}).get("stalled_total", 0),
             },
+            "findings": build_findings(entries),
             "apps": apps,
             "prowlarr": prowlarr,
             "qbittorrent": qbit,
