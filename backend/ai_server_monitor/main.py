@@ -5,11 +5,11 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import httpx
-from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
@@ -135,6 +135,45 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"unknown collector {name!r}")
         result = ctx.collectors.latest.get(name)
         return {**ctx.collectors.status()[name], "result": result.to_dict() if result else None}
+
+    # ------------------------------------------------------------------ reports
+
+    @app.get("/api/reports")
+    async def list_reports(
+        request: Request,
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        status: Annotated[Literal["ok", "failed", "skipped"] | None, Query()] = None,
+    ) -> dict[str, Any]:
+        """Newest first, without the Markdown body (fetch one report for that)."""
+        items, total = await get_ctx(request).reports.store.page(
+            limit=limit, offset=offset, status=status
+        )
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+    @app.get("/api/reports/digest")
+    async def current_digest(
+        request: Request, format: Annotated[Literal["json", "text"], Query()] = "json"
+    ) -> Any:
+        """The digest the next report would be written from (for debugging)."""
+        digest = await get_ctx(request).reports.digest()
+        if format == "text":
+            return PlainTextResponse(digest.text)
+        return digest.to_dict()
+
+    @app.post("/api/reports/run", status_code=202)
+    async def run_report(request: Request) -> dict[str, Any]:
+        """Write a report now (ignores skip_if_unchanged). 409 if one is running."""
+        if not get_ctx(request).run_report_now():
+            raise HTTPException(status_code=409, detail="A report is already being written.")
+        return {"status": "started"}
+
+    @app.get("/api/reports/{report_id}")
+    async def get_report(report_id: int, request: Request) -> dict[str, Any]:
+        report = await get_ctx(request).reports.store.get(report_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail=f"no report {report_id}")
+        return report
 
     # ------------------------------------------------------------------ settings
 

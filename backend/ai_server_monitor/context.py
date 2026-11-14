@@ -17,13 +17,19 @@ import httpx
 from .collectors import Collector, CollectorManager, HostEnv
 from .config import Bootstrap, Settings
 from .db import Database
+from .digest import WindowObserver
+from .events import EventBus
 from .llm import LLMClient, ToolModeResolver
+from .report.engine import ReportEngine
 from .scheduler import Scheduler
 from .settings_store import SettingsStore
 
 log = logging.getLogger(__name__)
 
 LLM_PROBE_RETRY = timedelta(minutes=5)
+REPORT_INITIAL_DELAY = timedelta(seconds=45)
+"""Let the collectors produce their first results before the first report."""
+OBSERVE_INTERVAL = timedelta(seconds=30)
 
 
 class AppContext:
@@ -45,6 +51,9 @@ class AppContext:
         self._registry = collector_registry
         self._seed = seed_settings
         self._lock = asyncio.Lock()
+        # Survive settings changes (subscribers and journal history stay valid):
+        self.events = EventBus()
+        self.observer = WindowObserver()
         # Built in start() / apply_settings():
         self.settings = Settings()
         self.scheduler = Scheduler()
@@ -53,6 +62,7 @@ class AppContext:
         self.collectors = CollectorManager(
             self.settings, self.db, self.scheduler, registry=collector_registry, env=self.host_env
         )
+        self.reports = self._build_reports()
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -66,6 +76,7 @@ class AppContext:
 
     async def stop(self) -> None:
         await self._stop_services()
+        self.events.close()
         await self.db.close()
         log.info("stopped")
 
@@ -103,9 +114,33 @@ class AppContext:
             timeout=timedelta(seconds=s.llm.timeout.total_seconds() * 2 + 30),
         )
         await self.collectors.setup()
+        self.reports = self._build_reports()
+        self.scheduler.add("digest_observe", self.reports.observe, OBSERVE_INTERVAL)
+        self.scheduler.add(
+            "report",
+            self.reports.run_job,
+            s.report.interval,
+            initial_delay=REPORT_INITIAL_DELAY,
+        )
         await self.scheduler.start()
+
+    def _build_reports(self) -> ReportEngine:
+        return ReportEngine(
+            self.settings, self.db, self.llm, self.collectors, self.events, self.observer
+        )
 
     async def _stop_services(self) -> None:
         await self.scheduler.stop()
         await self.collectors.close()
         await self.llm.aclose()
+
+    # ------------------------------------------------------------------ reports
+
+    def run_report_now(self) -> bool:
+        """Trigger the report job. False if a report is already being written."""
+        job = self.scheduler.jobs["report"]
+        if job.running:
+            return False
+        self.reports.force_next = True
+        self.scheduler.trigger("report")
+        return True

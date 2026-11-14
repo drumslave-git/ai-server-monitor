@@ -29,7 +29,12 @@ def test_healthz_and_info(bootstrap: Bootstrap, settings: Settings) -> None:
         info = client.get("/api/info").json()
     assert info["schema_version"] >= 1
     assert info["llm"]["model"] == "test-model" and info["llm"]["configured"] is True
-    assert {job["name"] for job in info["jobs"]} == {"prune", "llm_probe"}
+    assert {job["name"] for job in info["jobs"]} == {
+        "prune",
+        "llm_probe",
+        "digest_observe",
+        "report",
+    }
     assert (bootstrap.data_dir / "monitor.db").exists()
 
 
@@ -139,3 +144,67 @@ def test_serves_spa_when_static_dir_exists(tmp_path: Path) -> None:
     with TestClient(create_app(bootstrap, collector_registry={})) as client:
         assert "spa" in client.get("/").text
         assert client.get("/healthz").status_code == 200  # API routes win over the mount
+
+
+# --------------------------------------------------------------------------- reports API
+
+
+def _wait_for(predicate: Any, timeout: float = 5.0) -> Any:
+    import time
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        value = predicate()
+        if value:
+            return value
+        time.sleep(0.02)
+    raise AssertionError("timed out waiting")
+
+
+@respx.mock
+def test_reports_run_list_get_and_digest(bootstrap: Bootstrap, settings: Settings) -> None:
+    from .fake_llm import stream_response
+
+    respx.post(f"{LLM_URL}/chat/completions").mock(return_value=stream_response())
+    app = create_app(bootstrap, collector_registry={"system": StubSystem}, seed_settings=settings)
+    with TestClient(app) as client:
+        client.portal.call(app.state.ctx.collectors.run, "system")  # type: ignore[union-attr]
+        assert client.get("/api/reports").json()["total"] == 0
+
+        digest = client.get("/api/reports/digest").json()
+        assert "SERVER DIGEST" in digest["text"] and digest["tokens"] > 0
+        assert "Data sources" in client.get("/api/reports/digest?format=text").text
+
+        started = client.post("/api/reports/run")
+        assert started.status_code == 202 and started.json() == {"status": "started"}
+        listing = _wait_for(lambda: (r := client.get("/api/reports").json())["total"] and r)
+        item = listing["items"][0]
+        assert item["status"] == "ok" and item["health"] == "warn" and item["score"] == 74
+        assert "markdown" not in item and "digest" not in item  # list is slim
+
+        report = client.get(f"/api/reports/{item['id']}").json()
+        assert report["markdown"].startswith("## Overview") and report["findings"][0]["title"]
+        assert client.get("/api/reports/9999").status_code == 404
+        assert client.get("/api/reports?status=failed").json()["total"] == 0
+        assert client.get("/api/reports?limit=0").status_code == 422
+
+
+def test_run_report_conflicts_while_one_is_running(
+    bootstrap: Bootstrap, settings: Settings
+) -> None:
+    app = create_app(bootstrap, collector_registry={}, seed_settings=settings)
+    with TestClient(app) as client:
+        job = app.state.ctx.scheduler.jobs["report"]
+        job.running = True
+        busy = client.post("/api/reports/run")
+        job.running = False
+    assert busy.status_code == 409
+
+
+def test_unconfigured_llm_report_run_records_a_skip(bootstrap: Bootstrap) -> None:
+    app = create_app(bootstrap, collector_registry={})
+    with TestClient(app) as client:
+        assert client.post("/api/reports/run").status_code == 202
+        listing = _wait_for(lambda: (r := client.get("/api/reports").json())["total"] and r)
+    item = listing["items"][0]
+    assert item["status"] == "skipped" and "not configured" in item["error"]

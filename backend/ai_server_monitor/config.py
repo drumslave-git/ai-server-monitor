@@ -193,6 +193,39 @@ class ReportSettings(_Model):
     """Skip the LLM call when nothing relevant changed since the last report."""
     language: str = "en"
     """Language of reports and chat answers."""
+    digest_token_budget: int = Field(default=3000, ge=500, le=100_000)
+    """Size limit (in tokens, ~4 characters each) of the pre-analyzed data digest the model
+    reads. Over the limit, the least important sections are shortened or dropped first.
+    Raise it for models with a big context, lower it for small ones."""
+    digest_top_n: int = Field(default=5, ge=1, le=20)
+    """How many top processes, containers and disk writers the digest lists."""
+    trend_window: Duration = timedelta(days=7)
+    """How much stored history the digest uses for trends (disk growth, restarts)."""
+    disk_warn_percent: float = Field(default=85, ge=1, le=100)
+    """A filesystem fuller than this is flagged as a warning."""
+    disk_crit_percent: float = Field(default=95, ge=1, le=100)
+    """A filesystem fuller than this is flagged as critical."""
+    disk_full_warn_days: float = Field(default=14, gt=0)
+    """Warn when a disk's growth trend predicts it will be full within this many days."""
+    disk_full_crit_days: float = Field(default=3, gt=0)
+    """Critical when a disk is predicted to be full within this many days."""
+    memory_warn_percent: float = Field(default=90, ge=1, le=100)
+    """Memory use (excluding cache) above this is a warning."""
+    memory_crit_percent: float = Field(default=97, ge=1, le=100)
+    """Memory use (excluding cache) above this is critical."""
+    swap_warn_percent: float = Field(default=50, ge=1, le=100)
+    """Swap use above this is a warning."""
+    load_warn_per_core: float = Field(default=1.5, gt=0)
+    """5-minute load average per CPU core above this is a warning."""
+    load_crit_per_core: float = Field(default=3.0, gt=0)
+    """5-minute load average per CPU core above this is critical."""
+    restart_loop_count: int = Field(default=3, ge=1)
+    """A container or service restarted this many times within a day counts as a restart loop."""
+    log_error_burst: int = Field(default=20, ge=1)
+    """This many error lines (journal in one report interval, or one container's log in one
+    check) count as an error burst."""
+    gpu_temp_warn_c: float = Field(default=85, ge=30)
+    """A GPU hotter than this is a warning."""
 
 
 class StorageSettings(_Model):

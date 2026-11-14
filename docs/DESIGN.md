@@ -171,7 +171,10 @@ There are no config files.
 ## Storage schema (SQLite)
 
 - `collector_samples(ts, collector, data_json)` — raw/compact samples, pruned by retention.
-- `reports(id, ts, health, score, findings_json, markdown, model, tokens_in, tokens_out, latency_ms)`.
+- `reports(id, ts, status, health, score, summary, findings, markdown, digest, digest_hash, model, tokens_in, tokens_out, latency_ms, error, parsed)` —
+  `status` ∈ ok | failed | skipped (failed/skipped rows carry the reason in `error`; an identical
+  repeat only moves the last row's `ts`); `parsed` = 0 when the model's JSON header could not be
+  read and the rule-based fallback was used.
 - `chat_sessions`, `chat_messages` — chat history.
 - `actions(id, ts, action, target, args_json, policy, status, source, result_json, decided_by)` —
   permanent audit log; `status` ∈ suggested | pending | approved | rejected | expired | executed | failed | dry_run.
@@ -180,7 +183,9 @@ There are no config files.
 
 - `GET /api/status` — current health + latest snapshot summary.
 - `GET /api/stream` — SSE: report tokens, findings, approvals, action results, metric ticks.
-- `GET /api/reports`, `GET /api/reports/{id}`; `POST /api/reports/run` (run now).
+- `GET /api/reports` (paginated, newest first, no Markdown), `GET /api/reports/{id}`;
+  `POST /api/reports/run` (202; 409 if one is running); `GET /api/reports/digest` (the digest
+  the next report would be written from, `?format=text` for plain text).
 - `POST /api/chat` (SSE response), `GET /api/chat/sessions`.
 - `GET /api/actions`, `GET /api/approvals`, `POST /api/approvals/{id}` (approve/reject).
 - `GET /api/arr/overview`.
