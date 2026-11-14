@@ -73,11 +73,21 @@ class ChatEngine:
 
     # ------------------------------------------------------------------ entry point
 
-    async def run(self, message: str, session_id: str | None = None) -> AsyncIterator[Event]:
-        """Answer `message` in a new or existing session. Yields events until `done`/`error`."""
+    async def run(
+        self,
+        message: str,
+        session_id: str | None = None,
+        *,
+        channel: str = "web",
+        source: str | None = None,
+    ) -> AsyncIterator[Event]:
+        """Answer `message` in a new or existing session. Yields events until `done`/`error`.
+
+        `source` names who asks in the audit log of write actions (default `chat:<session>`);
+        `channel` is stored with a new session (web | telegram)."""
         message = message.strip()[:MAX_MESSAGE]
         if session_id is None:
-            session_id = await self.store.create_session(message)
+            session_id = await self.store.create_session(message, channel)
         elif not await self.store.session_exists(session_id):
             yield {"type": "error", "message": f"unknown session {session_id}"}
             return
@@ -85,7 +95,7 @@ class ChatEngine:
         lock = self._locks.setdefault(session_id, asyncio.Lock())
         async with lock:
             try:
-                async for event in self._answer(session_id, message):
+                async for event in self._answer(session_id, message, source):
                     yield event
             except LLMError as exc:
                 log.warning("chat: LLM failed: %s", exc)
@@ -93,7 +103,9 @@ class ChatEngine:
 
     # ------------------------------------------------------------------ one question
 
-    async def _answer(self, session_id: str, message: str) -> AsyncIterator[Event]:
+    async def _answer(
+        self, session_id: str, message: str, source: str | None
+    ) -> AsyncIterator[Event]:
         app = self.app
         settings = app.settings
         if not settings.llm.configured:
@@ -117,7 +129,7 @@ class ChatEngine:
         turn = _Turn(
             session_id=session_id,
             tools=tools,
-            ctx=ToolContext(app, session_id, self._promql_transport),
+            ctx=ToolContext(app, session_id, self._promql_transport, source),
             scrub=Scrubber(settings),
             limit_chars=settings.chat.max_tool_result_chars,
             timeout=settings.chat.tool_timeout.total_seconds(),
@@ -164,7 +176,13 @@ class ChatEngine:
             "stopped": stopped,
         }
         message_id = await self.store.add_message(session_id, "assistant", final, meta=meta)
-        yield {"type": "done", "session_id": session_id, "message_id": message_id, **meta}
+        yield {
+            "type": "done",
+            "session_id": session_id,
+            "message_id": message_id,
+            **meta,
+            "text": final,
+        }
 
     # ------------------------------------------------------------------ protocols
 

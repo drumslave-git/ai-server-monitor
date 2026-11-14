@@ -40,6 +40,8 @@ class ToolContext:
     app: AppContext
     session_id: str
     promql_transport: Any = None
+    source: str | None = None
+    """Who asks, for the audit log of write actions. Default: chat:<session>."""
 
     @property
     def settings(self) -> Settings:
@@ -428,7 +430,7 @@ def _write_handler(action: str) -> Handler:
             record = await ctx.app.actions.request(
                 action,
                 args.model_dump(exclude_none=True),
-                f"chat:{ctx.session_id}",
+                ctx.source or f"chat:{ctx.session_id}",
                 reason="requested in chat",
             )
         except ActionError as exc:

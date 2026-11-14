@@ -402,6 +402,11 @@ class TelegramSettings(_Model):
     """Only these chats may talk to the bot."""
     report_every: int = Field(default=1, ge=0)
     """Send every Nth report (0 = alerts only)."""
+    alerts: bool = True
+    """Send a short alert whenever the health status changes (also when reports are not
+    sent every time)."""
+    api_url: OptionalHttpUrl = ""
+    """Bot API server. Empty = https://api.telegram.org."""
 
 
 class MetricsSettings(_Model):

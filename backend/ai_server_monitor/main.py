@@ -71,6 +71,7 @@ def create_app(
     collector_registry: dict[str, type[Collector]] | None = None,
     seed_settings: Settings | None = None,
     arr_transport: httpx.AsyncBaseTransport | None = None,
+    telegram_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     bootstrap = bootstrap or Bootstrap()
 
@@ -82,6 +83,7 @@ def create_app(
             collector_registry=collector_registry,
             seed_settings=seed_settings,
             arr_transport=arr_transport,
+            telegram_transport=telegram_transport,
         )
         app.state.ctx = ctx
         await ctx.start()

@@ -30,6 +30,7 @@ from .outputs.action_events import ActionEventBridge
 from .outputs.arr_metrics import arr_families
 from .outputs.live import LiveFeed
 from .outputs.metrics import Family, MetricsHub
+from .outputs.telegram import TelegramBot
 from .report.engine import ReportEngine
 from .scheduler import Scheduler
 from .settings_store import SettingsStore
@@ -53,6 +54,7 @@ class AppContext:
         host_env: HostEnv | None = None,
         seed_settings: Settings | None = None,
         arr_transport: httpx.AsyncBaseTransport | None = None,
+        telegram_transport: httpx.AsyncBaseTransport | None = None,
     ):
         self.bootstrap = bootstrap
         self.db = Database(bootstrap.db_path)
@@ -63,6 +65,8 @@ class AppContext:
         self._registry = collector_registry
         self._seed = seed_settings
         self._arr_transport = arr_transport
+        self._telegram_transport = telegram_transport
+        self.telegram: TelegramBot | None = None
         self._lock = asyncio.Lock()
         # Survive settings changes (subscribers and journal history stay valid):
         self.events = EventBus()
@@ -177,6 +181,10 @@ class AppContext:
             initial_delay=REPORT_INITIAL_DELAY,
         )
         await self.scheduler.start()
+        tg = s.outputs.telegram
+        if tg.enabled and tg.token.get_secret_value():
+            self.telegram = TelegramBot(self, tg, transport=self._telegram_transport)
+            await self.telegram.start()
 
     async def pending_approvals_count(self) -> int:
         row = await self.db.fetchone("SELECT COUNT(*) AS n FROM actions WHERE status = 'pending'")
@@ -207,6 +215,9 @@ class AppContext:
         )
 
     async def _stop_services(self) -> None:
+        if self.telegram is not None:
+            await self.telegram.stop()
+            self.telegram = None
         await self.scheduler.stop()
         await self.collectors.close()
         await self.actions.close()

@@ -1169,7 +1169,9 @@ export interface components {
             metrics: components["schemas"]["MetricsSettings"];
             /**
              * @default {
+             *       "alerts": true,
              *       "allowed_chat_ids": [],
+             *       "api_url": "",
              *       "enabled": false,
              *       "report_every": 1,
              *       "token": ""
@@ -1747,7 +1749,9 @@ export interface components {
              *         "enabled": true
              *       },
              *       "telegram": {
+             *         "alerts": true,
              *         "allowed_chat_ids": [],
+             *         "api_url": "",
              *         "enabled": false,
              *         "report_every": 1,
              *         "token": ""
@@ -1950,10 +1954,23 @@ export interface components {
         /** TelegramSettings */
         TelegramSettings: {
             /**
+             * Alerts
+             * @description Send a short alert whenever the health status changes (also when reports are not
+             *     sent every time).
+             * @default true
+             */
+            alerts: boolean;
+            /**
              * Allowed Chat Ids
              * @description Only these chats may talk to the bot.
              */
             allowed_chat_ids?: number[];
+            /**
+             * Api Url
+             * @description Bot API server. Empty = https://api.telegram.org.
+             * @default
+             */
+            api_url: string;
             /**
              * Enabled
              * @default false
