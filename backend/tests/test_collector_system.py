@@ -210,4 +210,4 @@ async def test_collect_runs_on_this_machine() -> None:
     assert data["processes"]["total"] > 0
     assert len(data["processes"]["top_memory"]) <= 3
     slim = collector.persist_view(data)
-    assert "cmd" not in str(slim["processes"]["top_memory"])
+    assert all("cmd" not in p for p in slim["processes"]["top_memory"])  # slimmed for history

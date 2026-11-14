@@ -66,7 +66,8 @@ python scripts/release.py patch     # or minor / major / X.Y.Z — also syncs fr
 git commit -am "Release vX.Y.Z" && git push
 ```
 
-On push to `main`, the **Release** workflow notices the version change, runs CI, tags
-`vX.Y.Z` and publishes the image to GHCR. No version change → nothing is published.
-Re-publish the current version via Actions → Release → *Run workflow*.
+On push to `main`, the **Release** workflow checks whether the current version has a tag yet;
+if not, it runs CI, publishes the image to GHCR and then tags `vX.Y.Z`. A failed release is
+retried by the next push. Pushes without a version bump publish nothing.
+You can also trigger it via Actions → Release → *Run workflow*.
 **CI** (lint, tests, frontend build) runs on every push and pull request.
