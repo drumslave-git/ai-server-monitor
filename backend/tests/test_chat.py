@@ -8,6 +8,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from ai_server_monitor.chat.safety import REDACTED, Scrubber, shrink, wrap_untrusted
+from ai_server_monitor.chat.store import make_title
 from ai_server_monitor.collectors.base import Collector
 from ai_server_monitor.config import Bootstrap, Settings
 from ai_server_monitor.main import create_app
@@ -507,3 +508,14 @@ def test_sorting_by_a_field_that_does_not_exist_tells_the_model_the_real_fields(
     first, second = [e for e in events if e["type"] == "tool_result"]
     assert not first["ok"] and "numeric fields: size, used_percent" in first["preview"]
     assert second["ok"] and second["preview"].index('"/data"') < second["preview"].index('"/"')
+
+
+def test_session_titles_are_cut_at_a_word_boundary() -> None:
+    assert make_title("  what is" + chr(10) + "using   the disk? ") == "what is using the disk?"
+    long = "why is the download of my favourite series still waiting for my approval in the queue"
+    title = make_title(long)
+    assert len(title) <= 60
+    assert title.endswith("…")
+    assert long.startswith(title[:-1])
+    assert not title[:-1].endswith(("approva", "approv"))
+    assert make_title("x" * 100) == "x" * 59 + "…"

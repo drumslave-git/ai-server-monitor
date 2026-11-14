@@ -4,8 +4,8 @@ An AI-powered, **read-only** monitor for one self-hosted Linux server. It collec
 (CPU, memory, disks, network, processes, Docker, image updates, apt updates, NVIDIA GPU,
 systemd, journal, Prometheus, \*arr/qBittorrent), turns it into a compact digest, and has an LLM
 behind any OpenAI-compatible API write a status report every few minutes. You read the reports
-in the web dashboard or in Telegram, ask questions in chat (Telegram, or the `/api/chat`
-endpoint), and scrape `/metrics` into Grafana. Optionally it automates the \*arr stack
+in the web dashboard or in Telegram, ask questions in chat (the web Chat page, Telegram, or the
+`/api/chat` endpoint), and scrape `/metrics` into Grafana. Optionally it automates the \*arr stack
 (Radarr, Sonarr, Whisparr, Prowlarr) and qBittorrent: stalled-download cleanup, missing and
 upgrade searches, indexer tests, adding media on request. Every one of those writes goes
 through a per-action policy (`off`, `suggest`, `approve`, `auto`), a global dry-run switch,
@@ -108,8 +108,9 @@ value is shown next to the field and nothing is saved until it is fixed.
 
 - **Dashboard** — live health, key numbers, top consumers, collector states. **Reports** — history
   and the full text of each report. **Approvals** — what is waiting for your decision, with the
-  audit log. **\*arr** — queues, indexers, torrents. (The web UI's Chat page is not built yet; chat
-  works in Telegram and through the API.)
+  audit log. **\*arr** — queues, indexers, torrents. **Chat** — ask questions about the server, with
+  conversation history, streamed answers and approval cards for changes
+  (screenshot: `docs/samples/ui/chat-desktop.png`).
 - **Telegram** — reports and alerts arrive by themselves. Write a plain question to chat
   ("what is using the most disk and memory?"); the model looks at live data with read-only tools
   and answers. Commands: `/status` (health and open flags), `/report` (write one now),
@@ -203,9 +204,9 @@ a fresh install starts with.
 | `llm.tool_mode` | auto / native / json / none | `auto` | How the model calls tools in chat. auto = detect; native = OpenAI tool calls; json = JSON-in-text fallback for models without tool calling; none = no tools. |
 | `llm.max_context_tokens` | integer (min 1024) | `8192` | Context window to plan prompts for. For Ollama, also raise OLLAMA_CONTEXT_LENGTH. |
 | `llm.max_output_tokens` | integer (min 64) | `4096` | Maximum tokens per answer/report. |
-| `llm.temperature` | number (min 0, max 2) | `0.2` | — |
+| `llm.temperature` | number (min 0, max 2) | `0.2` | Randomness of answers: 0 is the most predictable, higher is more varied. |
 | `llm.timeout` | duration | `3m` | Per-request timeout. Local models on CPU can be slow. |
-| `llm.max_retries` | integer (min 0, max 10) | `2` | — |
+| `llm.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up. |
 | `llm.stream_usage` | boolean | on | Ask the endpoint for token usage while streaming (turned off automatically if the endpoint rejects it). |
 | `llm.extra_body` | map | empty | Extra provider-specific request fields (JSON), passed through verbatim. |
 
@@ -256,44 +257,44 @@ a fresh install starts with.
 |---|---|---|---|
 | **collectors.system** | group |  | CPU, memory, disks, network, temperatures, top processes. |
 | `collectors.system.enabled` | on / off / auto | on | auto = use it if available on this host, silently skip otherwise. |
-| `collectors.system.interval` | duration | `15s` | — |
+| `collectors.system.interval` | duration | `15s` | How often this collector gathers fresh data. |
 | `collectors.system.top_n` | integer (min 1, max 50) | `10` | How many top processes (by CPU and by memory) to report. |
 | **collectors.docker** | group |  | Containers: state, health, restarts, resource use, log errors, disk usage. |
 | `collectors.docker.enabled` | on / off / auto | on | auto = use it if available on this host, silently skip otherwise. |
-| `collectors.docker.interval` | duration | `30s` | — |
+| `collectors.docker.interval` | duration | `30s` | How often this collector gathers fresh data. |
 | `collectors.docker.url` | string | empty | Docker API, e.g. tcp://docker-proxy:2375 or unix:///var/run/docker.sock. Empty = $DOCKER_HOST (set by the compose file), else the local socket. |
 | `collectors.docker.log_scan` | boolean | on | Count error lines in container logs since the last run. |
 | `collectors.docker.log_tail` | integer (min 10, max 5000) | `300` | Max log lines read per container per run. |
 | `collectors.docker.df_interval` | duration | `30m` | How often to check Docker disk usage (images, volumes, build cache). |
 | **collectors.gpu** | group |  | NVIDIA GPUs (needs the NVIDIA container runtime). |
 | `collectors.gpu.enabled` | on / off / auto | `auto` | auto = use it if available on this host, silently skip otherwise. |
-| `collectors.gpu.interval` | duration | `30s` | — |
+| `collectors.gpu.interval` | duration | `30s` | How often this collector gathers fresh data. |
 | **collectors.systemd** | group |  | Failed units and restart loops. |
 | `collectors.systemd.enabled` | on / off / auto | on | auto = use it if available on this host, silently skip otherwise. |
-| `collectors.systemd.interval` | duration | `1m` | — |
+| `collectors.systemd.interval` | duration | `1m` | How often this collector gathers fresh data. |
 | `collectors.systemd.bus_address` | string | empty | D-Bus address. Empty = the host's system bus under the host mount. |
 | **collectors.journal** | group |  | Warnings and errors from the system journal. |
 | `collectors.journal.enabled` | on / off / auto | on | auto = use it if available on this host, silently skip otherwise. |
-| `collectors.journal.interval` | duration | `1m` | — |
+| `collectors.journal.interval` | duration | `1m` | How often this collector gathers fresh data. |
 | `collectors.journal.priority` | emerg / alert / crit / err / warning / notice / info | `warning` | Lowest severity to read. |
 | `collectors.journal.directory` | string | empty | Journal directory. Empty = the host's /var/log/journal (or /run/log/journal). |
 | `collectors.journal.max_entries` | integer (min 100, max 50000) | `2000` | Max entries read per run. |
 | `collectors.journal.initial_lookback` | duration | `1h` | How far back to read after a (re)start. |
 | **collectors.apt** | group |  | Pending package updates, security updates, reboot required. |
 | `collectors.apt.enabled` | on / off / auto | on | auto = use it if available on this host, silently skip otherwise. |
-| `collectors.apt.interval` | duration | `6h` | — |
+| `collectors.apt.interval` | duration | `6h` | How often this collector gathers fresh data. |
 | **collectors.image_updates** | group |  | Running containers whose image tag has a newer build in its registry (same tag, new digest; does not look for newer version numbers). |
-| `collectors.image_updates.enabled` | on / off / auto | `auto` | — |
-| `collectors.image_updates.interval` | duration | `12h` | — |
+| `collectors.image_updates.enabled` | on / off / auto | `auto` | auto = on when the Docker API is reachable. |
+| `collectors.image_updates.interval` | duration | `12h` | How often this collector gathers fresh data. |
 | `collectors.image_updates.url` | string | empty | Docker API, e.g. tcp://docker-proxy:2375. Empty = $DOCKER_HOST (set by the compose file), else the local socket. |
 | `collectors.image_updates.cache_ttl` | duration | `6h` | How long a registry answer is reused. Registries rate-limit, so don't set this low. |
 | **collectors.prometheus** | group |  | Run PromQL queries against an existing Prometheus. |
 | `collectors.prometheus.enabled` | on / off / auto | `auto` | auto = on as soon as a URL is set. |
-| `collectors.prometheus.interval` | duration | `1m` | — |
+| `collectors.prometheus.interval` | duration | `1m` | How often this collector gathers fresh data. |
 | `collectors.prometheus.url` | string | empty | Prometheus base URL, e.g. http://prometheus:9090. Empty = not used. |
 | `collectors.prometheus.token` | secret | empty | Bearer token, if Prometheus sits behind an authenticating proxy. |
 | `collectors.prometheus.username` | string | empty | Basic-auth user (used when no bearer token is set). |
-| `collectors.prometheus.password` | secret | empty | — |
+| `collectors.prometheus.password` | secret | empty | Basic-auth password. |
 | `collectors.prometheus.timeout` | duration | `10s` | Per-query timeout. |
 | `collectors.prometheus.max_series` | integer (min 1, max 1000) | `50` | Max series kept per query result; the rest is only counted. |
 | **collectors.prometheus.queries** | list of groups | empty | PromQL queries run on every collection and included in reports. |
@@ -302,14 +303,14 @@ a fresh install starts with.
 | `collectors.prometheus.queries[].description` | string | empty | What the result means, e.g. "Scrape targets that are down". Helps the report writer. |
 | **collectors.arr** | group |  | Radarr/Sonarr/Whisparr queues and health, Prowlarr indexers, qBittorrent torrents (the apps themselves are configured under \*arr & downloads). |
 | `collectors.arr.enabled` | on / off / auto | `auto` | auto = on as soon as an \*arr app, Prowlarr or qBittorrent is configured under \*arr & downloads. |
-| `collectors.arr.interval` | duration | `2m` | — |
+| `collectors.arr.interval` | duration | `2m` | How often this collector gathers fresh data. |
 | `collectors.arr.max_queue_items` | integer (min 1, max 500) | `50` | Max queue entries listed per \*arr instance (the rest is only counted). |
 
 ### Outputs (`outputs`)
 
 | Setting | Type | Default | What it does |
 |---|---|---|---|
-| `outputs.telegram.enabled` | boolean | off | — |
+| `outputs.telegram.enabled` | boolean | off | Turn the Telegram bot on (needs a bot token and at least one allowed chat id). |
 | `outputs.telegram.token` | secret | empty | Bot token from @BotFather. |
 | `outputs.telegram.allowed_chat_ids` | list of integer | empty | Only these chats may talk to the bot. |
 | `outputs.telegram.report_every` | integer (min 0) | `1` | Send every Nth report (0 = alerts only). |
@@ -340,22 +341,22 @@ a fresh install starts with.
 | `arr.prowlarr.url` | string | required | Base URL, e.g. http://radarr:7878. |
 | `arr.prowlarr.api_key` | secret | required | Settings → General → API Key in the app. |
 | `arr.qbittorrent.url` | string | required | WebUI URL, e.g. http://qbittorrent:8080. |
-| `arr.qbittorrent.username` | string | `admin` | — |
-| `arr.qbittorrent.password` | secret | empty | — |
+| `arr.qbittorrent.username` | string | `admin` | WebUI user name. |
+| `arr.qbittorrent.password` | secret | empty | WebUI password. |
 | **arr.actions.stalled_cleanup** | group |  | Remove stalled/failed downloads, blocklist the release and search again. |
-| `arr.actions.stalled_cleanup.policy` | off / suggest / approve / auto | `approve` | — |
-| `arr.actions.stalled_cleanup.max_per_hour` | integer (min 0) | `10` | — |
+| `arr.actions.stalled_cleanup.policy` | off / suggest / approve / auto | `approve` | off = never; suggest = mention in reports; approve = ask you first; auto = just do it. |
+| `arr.actions.stalled_cleanup.max_per_hour` | integer (min 0) | `10` | Cap on how many downloads are cleaned up per hour (0 = no cap). |
 | `arr.actions.stalled_cleanup.interval` | duration | `30m` | How often to look for stalled downloads. |
 | `arr.actions.stalled_cleanup.stalled_after` | duration | `6h` | A download with no progress for this long counts as stalled. |
 | **arr.actions.missing_search** | group |  | Search for missing episodes/movies. |
 | `arr.actions.missing_search.policy` | off / suggest / approve / auto | `suggest` | off = never; suggest = mention in reports; approve = ask you first; auto = just do it. |
-| `arr.actions.missing_search.max_per_hour` | integer (min 0) | `30` | — |
-| `arr.actions.missing_search.interval` | duration | `6h` | — |
+| `arr.actions.missing_search.max_per_hour` | integer (min 0) | `30` | Cap on how many searches run per hour (0 = no cap). |
+| `arr.actions.missing_search.interval` | duration | `6h` | How often a search run starts. |
 | `arr.actions.missing_search.batch` | integer (min 1) | `10` | Items searched per run (keeps indexers from being hammered). |
 | **arr.actions.cutoff_search** | group |  | Search for quality upgrades (cutoff unmet). |
 | `arr.actions.cutoff_search.policy` | off / suggest / approve / auto | `suggest` | off = never; suggest = mention in reports; approve = ask you first; auto = just do it. |
-| `arr.actions.cutoff_search.max_per_hour` | integer (min 0) | `30` | — |
-| `arr.actions.cutoff_search.interval` | duration | `1d` | — |
+| `arr.actions.cutoff_search.max_per_hour` | integer (min 0) | `30` | Cap on how many searches run per hour (0 = no cap). |
+| `arr.actions.cutoff_search.interval` | duration | `1d` | How often a search run starts. |
 | `arr.actions.cutoff_search.batch` | integer (min 1) | `5` | Items searched per run (keeps indexers from being hammered). |
 | **arr.actions.add_media** | group |  | Add movies/series when asked in chat. |
 | `arr.actions.add_media.policy` | off / suggest / approve / auto | `approve` | off = never; suggest = mention in reports; approve = ask you first; auto = just do it. |

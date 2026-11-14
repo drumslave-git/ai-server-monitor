@@ -12,6 +12,17 @@ from ..db import Database
 TITLE_LENGTH = 60
 
 
+def make_title(message: str, limit: int = TITLE_LENGTH) -> str:
+    """One-line session title: the message with whitespace collapsed, cut at a word boundary."""
+    text = " ".join(message.split())
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    if text[limit - 1] != " " and " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" ,.;:-") + "…"
+
+
 def _message(row: Any) -> dict[str, Any]:
     out = dict(row)
     for key in ("tool_calls", "meta"):
@@ -29,7 +40,7 @@ class ChatStore:
         await self.db.execute(
             "INSERT INTO chat_sessions (id, created, updated, channel, title) "
             "VALUES (?, ?, ?, ?, ?)",
-            (session_id, now, now, channel, title[:TITLE_LENGTH]),
+            (session_id, now, now, channel, make_title(title)),
         )
         return session_id
 

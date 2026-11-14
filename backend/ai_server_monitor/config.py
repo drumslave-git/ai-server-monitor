@@ -173,9 +173,11 @@ class LLMSettings(_Model):
     max_output_tokens: int = Field(default=4096, ge=64)
     """Maximum tokens per answer/report."""
     temperature: float = Field(default=0.2, ge=0, le=2)
+    """Randomness of answers: 0 is the most predictable, higher is more varied."""
     timeout: Duration = timedelta(minutes=3)
     """Per-request timeout. Local models on CPU can be slow."""
     max_retries: int = Field(default=2, ge=0, le=10)
+    """How many times a failed model request is retried before giving up."""
     stream_usage: bool = True
     """Ask the endpoint for token usage while streaming (turned off automatically if
     the endpoint rejects it)."""
@@ -256,10 +258,12 @@ class CollectorSettings(_Model):
     enabled: bool | Literal["auto"] = True
     """auto = use it if available on this host, silently skip otherwise."""
     interval: Duration = timedelta(seconds=30)
+    """How often this collector gathers fresh data."""
 
 
 class SystemCollectorSettings(CollectorSettings):
     interval: Duration = timedelta(seconds=15)
+    """How often this collector gathers fresh data."""
     top_n: int = Field(default=10, ge=1, le=50)
     """How many top processes (by CPU and by memory) to report."""
 
@@ -278,12 +282,14 @@ class DockerCollectorSettings(CollectorSettings):
 
 class SystemdCollectorSettings(CollectorSettings):
     interval: Duration = timedelta(minutes=1)
+    """How often this collector gathers fresh data."""
     bus_address: str = ""
     """D-Bus address. Empty = the host's system bus under the host mount."""
 
 
 class JournalCollectorSettings(CollectorSettings):
     interval: Duration = timedelta(minutes=1)
+    """How often this collector gathers fresh data."""
     priority: Literal["emerg", "alert", "crit", "err", "warning", "notice", "info"] = "warning"
     """Lowest severity to read."""
     directory: str = ""
@@ -307,6 +313,7 @@ class PrometheusCollectorSettings(CollectorSettings):
     enabled: bool | Literal["auto"] = "auto"
     """auto = on as soon as a URL is set."""
     interval: Duration = timedelta(minutes=1)
+    """How often this collector gathers fresh data."""
     url: OptionalHttpUrl = ""
     """Prometheus base URL, e.g. http://prometheus:9090. Empty = not used."""
     token: Secret = SecretStr("")
@@ -314,6 +321,7 @@ class PrometheusCollectorSettings(CollectorSettings):
     username: str = ""
     """Basic-auth user (used when no bearer token is set)."""
     password: Secret = SecretStr("")
+    """Basic-auth password."""
     timeout: Duration = timedelta(seconds=10)
     """Per-query timeout."""
     max_series: int = Field(default=50, ge=1, le=1000)
@@ -354,7 +362,9 @@ class PrometheusCollectorSettings(CollectorSettings):
 
 class ImageUpdatesCollectorSettings(CollectorSettings):
     enabled: bool | Literal["auto"] = "auto"
+    """auto = on when the Docker API is reachable."""
     interval: Duration = timedelta(hours=12)
+    """How often this collector gathers fresh data."""
     url: str = ""
     """Docker API, e.g. tcp://docker-proxy:2375. Empty = $DOCKER_HOST (set by the compose
     file), else the local socket."""
@@ -367,6 +377,7 @@ class ArrCollectorSettings(CollectorSettings):
     """auto = on as soon as an *arr app, Prowlarr or qBittorrent is configured under
     *arr & downloads."""
     interval: Duration = timedelta(minutes=2)
+    """How often this collector gathers fresh data."""
     max_queue_items: int = Field(default=50, ge=1, le=500)
     """Max queue entries listed per *arr instance (the rest is only counted)."""
 
@@ -396,6 +407,7 @@ class CollectorsSettings(_Model):
 
 class TelegramSettings(_Model):
     enabled: bool = False
+    """Turn the Telegram bot on (needs a bot token and at least one allowed chat id)."""
     token: Secret = SecretStr("")
     """Bot token from @BotFather."""
     allowed_chat_ids: list[int] = Field(default_factory=list)
@@ -442,7 +454,9 @@ class QbitSettings(_Model):
     url: HttpUrl
     """WebUI URL, e.g. http://qbittorrent:8080."""
     username: str = "admin"
+    """WebUI user name."""
     password: Secret = SecretStr("")
+    """WebUI password."""
 
 
 Policy = Literal["off", "suggest", "approve", "auto"]
@@ -457,11 +471,13 @@ class ActionSettings(_Model):
 
 class StalledCleanupSettings(ActionSettings):
     policy: Policy = "approve"
+    """off = never; suggest = mention in reports; approve = ask you first; auto = just do it."""
     interval: Duration = timedelta(minutes=30)
     """How often to look for stalled downloads."""
     stalled_after: Duration = timedelta(hours=6)
     """A download with no progress for this long counts as stalled."""
     max_per_hour: int = Field(default=10, ge=0)
+    """Cap on how many downloads are cleaned up per hour (0 = no cap)."""
 
 
 class IndexerTriageSettings(ActionSettings):
@@ -471,7 +487,9 @@ class IndexerTriageSettings(ActionSettings):
 
 class SearchActionSettings(ActionSettings):
     max_per_hour: int = Field(default=30, ge=0)
+    """Cap on how many searches run per hour (0 = no cap)."""
     interval: Duration = timedelta(hours=6)
+    """How often a search run starts."""
     batch: int = Field(default=10, ge=1)
     """Items searched per run (keeps indexers from being hammered)."""
 
