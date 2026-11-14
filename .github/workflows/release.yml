@@ -1,0 +1,131 @@
+name: Release
+
+# Publishes a new image whenever `version` in backend/pyproject.toml changes on main.
+# Bump with `python scripts/release.py patch|minor|major`, commit, push. This workflow
+# then runs CI, tags vX.Y.Z and pushes ghcr.io/<owner>/<repo>:X.Y.Z, :X.Y and :latest.
+# No version change -> nothing ships. Run it manually (Actions -> Release -> Run
+# workflow) to (re)publish the current version, e.g. after a failed run.
+on:
+  push:
+    branches: [main]
+    paths:
+      - backend/pyproject.toml
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Detect version change
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # need the pre-push commit to diff the version
+      - id: check
+        name: Compare version against the commit before this push
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          read_version() {
+            python3 -c 'import sys, tomllib; print(tomllib.loads(sys.stdin.read())["project"]["version"])'
+          }
+          current=$(read_version < backend/pyproject.toml)
+          echo "version=$current" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual run -> publishing $current."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Compare with the branch tip *before* this push, not HEAD~1: a push may carry
+          # several commits and the bump need not be the last one. A new branch has an
+          # all-zero "before"; fall back to HEAD~1 then.
+          base="$BEFORE"
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="HEAD~1"
+          fi
+          previous=$(git show "$base:backend/pyproject.toml" 2>/dev/null | read_version || true)
+          echo "previous='$previous' current='$current'"
+          if [ "$current" != "$previous" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version unchanged -> nothing to release."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  verify:
+    name: CI
+    needs: version
+    if: needs.version.outputs.changed == 'true'
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Tag and publish image
+    needs: [version, verify]
+    if: needs.version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push the release tag
+      packages: write   # push to ghcr.io
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Create and push tag v${{ env.VERSION }}
+        run: |
+          tag="v${VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists on origin, skipping."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$tag" -m "Release $tag"
+            git push origin "$tag"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}},value=v${{ env.VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ env.VERSION }}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=AI Server Monitor
+            org.opencontainers.image.description=AI-powered read-only server monitor with *arr automation
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### Published v${VERSION}"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

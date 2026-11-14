@@ -1,7 +1,10 @@
-# AI Server Monitor — example compose file (single Debian/Ubuntu host).
+# AI Server Monitor — compose file for a single Debian/Ubuntu host.
 #
-#   cp config.example.yaml config.yaml   # then edit
-#   docker compose -f docker/compose.example.yaml up -d --build
+# On the server, in an empty directory:
+#   curl -fsSLO https://raw.githubusercontent.com/drumslave-git/ai-server-monitor/main/docker/compose.example.yaml
+#   curl -fsSL  https://raw.githubusercontent.com/drumslave-git/ai-server-monitor/main/config.example.yaml -o config.yaml
+#   mv compose.example.yaml compose.yaml      # then edit config.yaml (LLM endpoint etc.)
+#   docker compose up -d
 #
 # Everything the monitor reads from the host is mounted read-only. Docker access goes
 # through a socket proxy that only allows GET requests, because a read-only *mount* of
@@ -9,10 +12,9 @@
 
 services:
   servermon:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: ai-server-monitor:local
+    image: ghcr.io/drumslave-git/ai-server-monitor:${SERVERMON_VERSION:-latest}
+    # To run a local build instead:  docker build -f docker/Dockerfile -t servermon:dev .
+    # and set SERVERMON_IMAGE / replace the image line with servermon:dev.
     container_name: servermon
     restart: unless-stopped
     pid: host                      # see host processes (top consumers, per-process stats)
@@ -20,7 +22,7 @@ services:
       - "${SERVERMON_PORT:-8080}:8080"   # put a reverse proxy with auth in front of this
     environment:
       ASM__COLLECTORS__DOCKER__URL: tcp://docker-proxy:2375
-      # Optional (referenced from config.yaml):
+      # Optional, referenced from config.yaml as ${...}; put them in a .env file:
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-}
@@ -30,7 +32,7 @@ services:
       # (Needs / to be a shared mount, the default on systemd hosts. If Docker refuses with
       #  "not a shared or slave mount", use "/:/host:ro".)
       - /:/host:ro,rslave
-      - ../config.yaml:/config/config.yaml:ro
+      - ./config.yaml:/config/config.yaml:ro
       - servermon-data:/data
     depends_on:
       - docker-proxy
