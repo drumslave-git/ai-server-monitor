@@ -232,6 +232,17 @@ class ReportSettings(_Model):
     Docker data is above the disk warning level."""
 
 
+class ChatSettings(_Model):
+    max_steps: int = Field(default=6, ge=1, le=20)
+    """Most tool-use rounds per question before the model must answer with what it has."""
+    history_messages: int = Field(default=12, ge=0, le=100)
+    """How many earlier messages of a conversation the model sees."""
+    max_tool_result_chars: int = Field(default=6000, ge=500, le=50000)
+    """Longest tool result passed to the model; bigger results are trimmed."""
+    tool_timeout: Duration = timedelta(seconds=30)
+    """Per tool call."""
+
+
 class StorageSettings(_Model):
     retention: Duration = timedelta(days=30)
     """How long metrics history, reports and chats are kept. The action log is permanent."""
@@ -505,6 +516,7 @@ class Settings(_Model):
     general: GeneralSettings = GeneralSettings()
     llm: LLMSettings = LLMSettings()
     report: ReportSettings = ReportSettings()
+    chat: ChatSettings = ChatSettings()
     storage: StorageSettings = StorageSettings()
     collectors: CollectorsSettings = CollectorsSettings()
     outputs: OutputsSettings = OutputsSettings()

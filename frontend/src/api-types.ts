@@ -64,6 +64,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Chat
+         * @description Ask a question. The reply is a server-sent-event stream:
+         *     `session` {session_id}, `tool_call` {id, name, args, kind}, `tool_result` {id, name, ok,
+         *     truncated, size, preview}, `token` {text} (the answer, in pieces), then `done`
+         *     {session_id, message_id, tool_mode, steps, usage, stopped} — or `error` {message}.
+         */
+        post: operations["chat_api_chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Sessions */
+        get: operations["list_sessions_api_chat_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Session */
+        get: operations["get_session_api_chat_sessions__session_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Session */
+        delete: operations["delete_session_api_chat_sessions__session_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/collectors": {
         parameters: {
             query?: never;
@@ -464,6 +522,109 @@ export interface components {
             timeout: string;
             /** Whisparr */
             whisparr?: components["schemas"]["ArrInstance"][];
+        };
+        /** ChatMessage */
+        ChatMessage: {
+            /** Content */
+            content?: string | null;
+            /** Id */
+            id: number;
+            /** Meta */
+            meta?: {
+                [key: string]: unknown;
+            } | null;
+            /** Name */
+            name?: string | null;
+            /** Role */
+            role: string;
+            /** Tool Call Id */
+            tool_call_id?: string | null;
+            /** Tool Calls */
+            tool_calls?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Ts */
+            ts: number;
+        };
+        /** ChatRequest */
+        ChatRequest: {
+            /** Message */
+            message: string;
+            /** Session Id */
+            session_id?: string | null;
+        };
+        /** ChatSession */
+        ChatSession: {
+            /** Channel */
+            channel: string;
+            /** Created */
+            created: number;
+            /** Id */
+            id: string;
+            /** Messages */
+            messages: components["schemas"]["ChatMessage"][];
+            /** Title */
+            title?: string | null;
+            /** Updated */
+            updated: number;
+        };
+        /** ChatSessionList */
+        ChatSessionList: {
+            /** Items */
+            items: components["schemas"]["ChatSessionSummary"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** ChatSessionSummary */
+        ChatSessionSummary: {
+            /** Channel */
+            channel: string;
+            /** Created */
+            created: number;
+            /** Id */
+            id: string;
+            /** Messages */
+            messages: number;
+            /** Title */
+            title?: string | null;
+            /** Updated */
+            updated: number;
+        };
+        /** ChatSettings */
+        ChatSettings: {
+            /**
+             * History Messages
+             * @description How many earlier messages of a conversation the model sees.
+             * @default 12
+             */
+            history_messages: number;
+            /**
+             * Max Steps
+             * @description Most tool-use rounds per question before the model must answer with what it has.
+             * @default 6
+             */
+            max_steps: number;
+            /**
+             * Max Tool Result Chars
+             * @description Longest tool result passed to the model; bigger results are trimmed.
+             * @default 6000
+             */
+            max_tool_result_chars: number;
+            /**
+             * Tool Timeout
+             * Format: duration
+             * @description Per tool call.
+             * @default 30s
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            tool_timeout: string;
         };
         /** CollectorSettings */
         CollectorSettings: {
@@ -1478,6 +1639,15 @@ export interface components {
             arr: components["schemas"]["ArrSettings"];
             /**
              * @default {
+             *       "history_messages": 12,
+             *       "max_steps": 6,
+             *       "max_tool_result_chars": 6000,
+             *       "tool_timeout": "30s"
+             *     }
+             */
+            chat: components["schemas"]["ChatSettings"];
+            /**
+             * @default {
              *       "apt": {
              *         "enabled": true,
              *         "interval": "6h"
@@ -1908,6 +2078,131 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    chat_api_chat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description SSE stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_sessions_api_chat_sessions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSessionList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_session_api_chat_sessions__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSession"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_session_api_chat_sessions__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -11,12 +11,14 @@ import asyncio
 import logging
 import time
 from datetime import timedelta
+from typing import Any
 
 import httpx
 
 from .actions import ActionService, Notifier
 from .arr.automations import AutomationEnv
 from .arr.automations import register as register_automations
+from .chat import ChatEngine
 from .collectors import Collector, CollectorManager, HostEnv
 from .collectors.base import CollectorResult
 from .config import Bootstrap, Settings
@@ -78,12 +80,21 @@ class AppContext:
         self.llm = LLMClient(self.settings.llm, transport=llm_transport)
         self.tool_mode = ToolModeResolver(self.llm, self.db, self.settings.llm.tool_mode)
         self.collectors = CollectorManager(
-            self.settings, self.db, self.scheduler, registry=collector_registry, env=self.host_env
+            self.settings,
+            self.db,
+            self.scheduler,
+            registry=collector_registry,
+            env=self.host_env,
+            options=self._collector_options(),
         )
         self.reports = self._build_reports()
         self.actions = ActionService(
             self.db, self.settings, notifiers=self.action_notifiers, transport=arr_transport
         )
+        self.chat = ChatEngine(self)
+
+    def _collector_options(self) -> dict[str, dict[str, Any]]:
+        return {"arr": {"transport": self._arr_transport}} if self._arr_transport else {}
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -124,7 +135,12 @@ class AppContext:
         self.llm = LLMClient(s.llm, transport=self._llm_transport)
         self.tool_mode = ToolModeResolver(self.llm, self.db, s.llm.tool_mode)
         self.collectors = CollectorManager(
-            s, self.db, self.scheduler, registry=self._registry, env=self.host_env
+            s,
+            self.db,
+            self.scheduler,
+            registry=self._registry,
+            env=self.host_env,
+            options=self._collector_options(),
         )
         self.scheduler.add(
             "prune",

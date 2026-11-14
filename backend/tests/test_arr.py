@@ -241,3 +241,27 @@ async def test_each_app_gets_its_own_query_parameters() -> None:
     radarr_queue = [r for r in world.calls("radarr.test", "GET") if r["path"].endswith("/queue")]
     assert "includeUnknownMovieItems" in radarr_queue[0]["params"]
     await clients.close()
+
+
+def test_app_passes_the_arr_transport_to_the_arr_collector(bootstrap) -> None:  # type: ignore[no-untyped-def]
+    """The collector manager builds the collector itself; the app's test transport must
+    reach it (it used to build its own clients and hit the network)."""
+    from fastapi.testclient import TestClient
+
+    from ai_server_monitor.main import create_app
+
+    world = FakeArrWorld()
+    world.torrents = {HASH_A: torrent(HASH_A, "x", "downloading")}
+    app = create_app(
+        bootstrap,
+        collector_registry={"arr": ArrCollector},
+        seed_settings=make_settings(),
+        arr_transport=world.transport(),
+    )
+    with TestClient(app) as client:
+        ctx = app.state.ctx
+        result = client.portal.call(ctx.collectors.run, "arr")  # type: ignore[union-attr]
+        assert result.ok, result.error
+        assert result.data["qbittorrent"]["summary"]["total"] == 1
+        assert client.get("/api/collectors/arr").json()["state"] == "active"
+    assert world.calls("qbit.test", "GET")

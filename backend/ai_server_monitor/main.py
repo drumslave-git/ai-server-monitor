@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from . import __version__, api_models
 from .actions.api import router as actions_router
+from .chat.api import router as chat_router
 from .collectors import Collector
 from .config import Bootstrap, LLMSettings, Settings, settings_json_schema
 from .context import AppContext
@@ -34,6 +35,7 @@ SECTION_TITLES = {
     "general": "General",
     "llm": "LLM",
     "report": "Reports",
+    "chat": "Chat",
     "storage": "Data retention",
     "collectors": "Collectors",
     "outputs": "Outputs",
@@ -90,6 +92,7 @@ def create_app(
 
     app = FastAPI(title="AI Server Monitor", version=__version__, lifespan=lifespan)
     app.include_router(actions_router)
+    app.include_router(chat_router)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz(request: Request) -> JSONResponse:

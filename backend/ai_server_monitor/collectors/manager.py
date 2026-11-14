@@ -27,6 +27,7 @@ class CollectorManager:
         db: Database,
         scheduler: Scheduler,
         registry: dict[str, type[Collector]] | None = None,
+        options: dict[str, dict[str, Any]] | None = None,
         env: HostEnv | None = None,
     ):
         from . import REGISTRY
@@ -35,6 +36,8 @@ class CollectorManager:
         self.db = db
         self.scheduler = scheduler
         self.registry = registry if registry is not None else REGISTRY
+        self.options = options or {}
+        """Extra constructor arguments per collector name (e.g. an HTTP transport in tests)."""
         self.env = env or HostEnv.detect(Path("/host"))
         self.collectors: dict[str, Collector] = {}
         self.states: dict[str, CollectorState] = {}
@@ -54,7 +57,7 @@ class CollectorManager:
                 continue
             # Nothing a single collector does may stop the service from starting.
             try:
-                collector = cls(cfg, self.env)
+                collector = cls(cfg, self.env, **self.options.get(name, {}))
                 collector.app_settings = self.settings
             except Exception as exc:
                 self.states[name] = "unavailable"
