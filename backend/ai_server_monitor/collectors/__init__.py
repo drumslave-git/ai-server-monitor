@@ -4,8 +4,10 @@ from .apt import AptCollector
 from .base import Collector, CollectorResult, CollectorUnavailable, HostEnv
 from .docker import DockerCollector
 from .gpu import GPUCollector
+from .image_updates import ImageUpdatesCollector
 from .journal import JournalCollector
 from .manager import CollectorManager
+from .prometheus import PrometheusCollector
 from .system import SystemCollector
 from .systemd import SystemdCollector
 
@@ -19,6 +21,8 @@ REGISTRY: dict[str, type[Collector]] = {
         SystemdCollector,
         JournalCollector,
         AptCollector,
+        ImageUpdatesCollector,
+        PrometheusCollector,
     )
 }
 
