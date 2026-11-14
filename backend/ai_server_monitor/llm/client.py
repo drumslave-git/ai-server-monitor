@@ -92,6 +92,8 @@ class StreamChunk:
     usage: Usage | None = None
     finish_reason: str | None = None
     latency_s: float | None = None
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    """Only on the final chunk: the tool calls the model made, assembled from the stream."""
 
 
 @dataclass
@@ -143,6 +145,59 @@ def _messages_text(messages: Sequence[Message]) -> str:
         elif isinstance(content, list):
             parts.extend(str(p.get("text", "")) for p in content if isinstance(p, dict))
     return "\n".join(parts)
+
+
+class _ToolCallAssembler:
+    """Builds tool calls from OpenAI `delta.tool_calls` fragments.
+
+    Fragments carry an `index`; the first has the id and name, later ones append pieces of
+    the JSON arguments. Local servers differ: some send a whole call in one fragment, some
+    omit `index` (then a fragment with a new id or name starts a new call, anything else
+    continues the last one), some send arguments as an object."""
+
+    def __init__(self) -> None:
+        self._calls: dict[int, dict[str, Any]] = {}
+        self._last = -1
+
+    def feed(self, fragments: Any) -> None:
+        if not isinstance(fragments, list):
+            return
+        for item in fragments:
+            if not isinstance(item, dict):
+                continue
+            fn = item.get("function") if isinstance(item.get("function"), dict) else {}
+            index = item.get("index")
+            if not isinstance(index, int):
+                last = self._calls.get(self._last)
+                new_call = last is None or bool(
+                    (item.get("id") and last["id"] and item["id"] != last["id"])
+                    or (fn.get("name") and last["name"])
+                )
+                index = self._last + 1 if new_call else self._last
+            call = self._calls.setdefault(index, {"id": None, "name": "", "arguments": ""})
+            self._last = index
+            if item.get("id"):
+                call["id"] = item["id"]
+            if fn.get("name"):
+                call["name"] = fn["name"]
+            args = fn.get("arguments", item.get("arguments"))
+            if isinstance(args, str):
+                call["arguments"] += args
+            elif args is not None:
+                call["arguments"] = json.dumps(args)
+
+    def add_complete(self, calls: list[ToolCall]) -> None:
+        """A server that put whole calls into a non-delta `message`."""
+        for call in calls:
+            index = len(self._calls)
+            self._calls[index] = {"id": call.id, "name": call.name, "arguments": call.arguments}
+
+    def result(self) -> list[ToolCall]:
+        return [
+            ToolCall(id=c["id"] or f"call_{i}", name=c["name"], arguments=c["arguments"])
+            for i, c in sorted(self._calls.items())
+            if c["name"]
+        ]
 
 
 def _parse_tool_calls(raw: Any) -> list[ToolCall]:
@@ -280,17 +335,22 @@ class LLMClient:
         self,
         messages: Sequence[Message],
         *,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
-        """Stream a completion. Yields text chunks, then one final chunk with done=True.
+        """Stream a completion. Yields text chunks, then one final chunk with done=True
+        (which carries the assembled `tool_calls` when `tools` were offered).
 
         Retries only happen before any text has been yielded.
         """
         started = time.perf_counter()
         text_parts: list[str] = []
         try:
-            async for chunk in self._stream_with_retries(messages, temperature, max_tokens):
+            async for chunk in self._stream_with_retries(
+                messages, temperature, max_tokens, tools, tool_choice
+            ):
                 if chunk.done:
                     chunk.latency_s = time.perf_counter() - started
                     if chunk.usage is None:
@@ -308,12 +368,22 @@ class LLMClient:
             raise
 
     async def _stream_with_retries(
-        self, messages: Sequence[Message], temperature: float | None, max_tokens: int | None
+        self,
+        messages: Sequence[Message],
+        temperature: float | None,
+        max_tokens: int | None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         attempt = 0
         while True:
             payload = self._payload(
-                messages, temperature=temperature, max_tokens=max_tokens, stream=True
+                messages,
+                tools=tools or None,
+                tool_choice=tool_choice if tools else None,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,
             )
             if self._stream_usage_supported:
                 payload["stream_options"] = {"include_usage": True}
@@ -344,6 +414,7 @@ class LLMClient:
     async def _stream_once(self, payload: dict[str, Any]) -> AsyncIterator[StreamChunk]:
         usage: Usage | None = None
         finish_reason: str | None = None
+        assembler = _ToolCallAssembler()
         try:
             async with self._http.stream("POST", "chat/completions", json=payload) as response:
                 if response.status_code >= 400:
@@ -368,6 +439,10 @@ class LLMClient:
                     usage = Usage.from_api(data.get("usage")) or usage
                     for choice in data.get("choices") or []:
                         delta = choice.get("delta") or {}
+                        assembler.feed(delta.get("tool_calls"))
+                        message = choice.get("message")
+                        if isinstance(message, dict):  # whole message instead of deltas
+                            assembler.add_complete(_parse_tool_calls(message.get("tool_calls")))
                         content = delta.get("content")
                         # reasoning_content / reasoning deltas are intentionally ignored
                         if isinstance(content, str) and content:
@@ -376,7 +451,9 @@ class LLMClient:
                             finish_reason = choice["finish_reason"]
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise LLMConnectionError(f"{type(exc).__name__}: {exc}") from exc
-        yield StreamChunk(done=True, usage=usage, finish_reason=finish_reason)
+        yield StreamChunk(
+            done=True, usage=usage, finish_reason=finish_reason, tool_calls=assembler.result()
+        )
 
     async def list_models(self) -> list[str]:
         """GET /models — used as a cheap reachability check."""

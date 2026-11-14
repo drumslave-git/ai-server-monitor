@@ -11,12 +11,14 @@ import asyncio
 import logging
 import time
 from datetime import timedelta
+from typing import Any
 
 import httpx
 
 from .actions import ActionService, Notifier
 from .arr.automations import AutomationEnv
 from .arr.automations import register as register_automations
+from .chat import ChatEngine
 from .collectors import Collector, CollectorManager, HostEnv
 from .collectors.base import CollectorResult
 from .config import Bootstrap, Settings
@@ -28,6 +30,7 @@ from .outputs.action_events import ActionEventBridge
 from .outputs.arr_metrics import arr_families
 from .outputs.live import LiveFeed
 from .outputs.metrics import Family, MetricsHub
+from .outputs.telegram import TelegramBot
 from .report.engine import ReportEngine
 from .scheduler import Scheduler
 from .settings_store import SettingsStore
@@ -51,6 +54,7 @@ class AppContext:
         host_env: HostEnv | None = None,
         seed_settings: Settings | None = None,
         arr_transport: httpx.AsyncBaseTransport | None = None,
+        telegram_transport: httpx.AsyncBaseTransport | None = None,
     ):
         self.bootstrap = bootstrap
         self.db = Database(bootstrap.db_path)
@@ -61,6 +65,8 @@ class AppContext:
         self._registry = collector_registry
         self._seed = seed_settings
         self._arr_transport = arr_transport
+        self._telegram_transport = telegram_transport
+        self.telegram: TelegramBot | None = None
         self._lock = asyncio.Lock()
         # Survive settings changes (subscribers and journal history stay valid):
         self.events = EventBus()
@@ -78,12 +84,21 @@ class AppContext:
         self.llm = LLMClient(self.settings.llm, transport=llm_transport)
         self.tool_mode = ToolModeResolver(self.llm, self.db, self.settings.llm.tool_mode)
         self.collectors = CollectorManager(
-            self.settings, self.db, self.scheduler, registry=collector_registry, env=self.host_env
+            self.settings,
+            self.db,
+            self.scheduler,
+            registry=collector_registry,
+            env=self.host_env,
+            options=self._collector_options(),
         )
         self.reports = self._build_reports()
         self.actions = ActionService(
             self.db, self.settings, notifiers=self.action_notifiers, transport=arr_transport
         )
+        self.chat = ChatEngine(self)
+
+    def _collector_options(self) -> dict[str, dict[str, Any]]:
+        return {"arr": {"transport": self._arr_transport}} if self._arr_transport else {}
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -124,7 +139,12 @@ class AppContext:
         self.llm = LLMClient(s.llm, transport=self._llm_transport)
         self.tool_mode = ToolModeResolver(self.llm, self.db, s.llm.tool_mode)
         self.collectors = CollectorManager(
-            s, self.db, self.scheduler, registry=self._registry, env=self.host_env
+            s,
+            self.db,
+            self.scheduler,
+            registry=self._registry,
+            env=self.host_env,
+            options=self._collector_options(),
         )
         self.scheduler.add(
             "prune",
@@ -161,6 +181,10 @@ class AppContext:
             initial_delay=REPORT_INITIAL_DELAY,
         )
         await self.scheduler.start()
+        tg = s.outputs.telegram
+        if tg.enabled and tg.token.get_secret_value():
+            self.telegram = TelegramBot(self, tg, transport=self._telegram_transport)
+            await self.telegram.start()
 
     async def pending_approvals_count(self) -> int:
         row = await self.db.fetchone("SELECT COUNT(*) AS n FROM actions WHERE status = 'pending'")
@@ -191,6 +215,9 @@ class AppContext:
         )
 
     async def _stop_services(self) -> None:
+        if self.telegram is not None:
+            await self.telegram.stop()
+            self.telegram = None
         await self.scheduler.stop()
         await self.collectors.close()
         await self.actions.close()

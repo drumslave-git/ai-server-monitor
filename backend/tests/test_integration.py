@@ -33,16 +33,17 @@ def test_migrations_are_contiguous_and_complete() -> None:
         (1, "0001_initial.sql"),
         (2, "0002_reports.sql"),
         (3, "0003_actions.sql"),
+        (4, "0004_chat.sql"),
     ]
     names = {e.name for e in resources.files("ai_server_monitor.migrations").iterdir()}
     assert not any("placeholder" in n for n in names)
 
 
-async def test_fresh_database_migrates_to_3(tmp_path: Path) -> None:
+async def test_fresh_database_migrates_to_latest(tmp_path: Path) -> None:
     db = Database(tmp_path / "fresh.db")
     await db.connect()
     try:
-        assert await db.schema_version() == 3
+        assert await db.schema_version() == 4
         report_cols = {r["name"] for r in await db.fetchall("PRAGMA table_info(reports)")}
         assert {"status", "summary", "digest_hash", "parsed"} <= report_cols
         action_cols = {r["name"] for r in await db.fetchall("PRAGMA table_info(actions)")}
@@ -51,7 +52,7 @@ async def test_fresh_database_migrates_to_3(tmp_path: Path) -> None:
         await db.close()
 
 
-async def test_database_at_the_old_main_schema_upgrades_to_3(tmp_path: Path) -> None:
+async def test_database_at_the_old_main_schema_upgrades(tmp_path: Path) -> None:
     path = tmp_path / "old.db"
     first = load_migrations()[0][2]
     conn = sqlite3.connect(path)  # what v0.3.2 (user_version 1) left behind
@@ -65,7 +66,7 @@ async def test_database_at_the_old_main_schema_upgrades_to_3(tmp_path: Path) -> 
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 3
+        assert await db.schema_version() == 4
         old = await db.fetchone("SELECT status, markdown, parsed FROM reports")
         assert old is not None and old["status"] == "ok" and old["markdown"] == "old report"
         assert await db.kv_get("keep") == 1  # data survives
