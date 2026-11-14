@@ -18,6 +18,8 @@ const shots = [
   { name: "arr-desktop", route: "arr", width: 1440, height: 1200 },
   { name: "settings-desktop", route: "settings/llm", width: 1440, height: 900 },
   { name: "dashboard-light-desktop", route: "dashboard", width: 1440, height: 1180, scheme: "light" },
+  { name: "chat-desktop", route: "chat/new", width: 1440, height: 1000, chat: true },
+  { name: "chat-375", route: "chat/new", width: 375, height: 1500, mobile: true, chat: true },
   { name: "dashboard-375", route: "dashboard", width: 375, height: 1900, mobile: true },
   { name: "reports-375", route: "reports", width: 375, height: 900, mobile: true },
 ];
@@ -61,6 +63,17 @@ for (const s of shots.filter((x) => !only || only.includes(x.name))) {
   });
   await call("Page.navigate", { url: `${base}/?shot=${s.name}#/${s.route}` });
   await sleep(Number(process.env.SHOT_WAIT ?? 6000));
+  if (s.chat) {
+    // Type a question into the composer and send it; a tool-using answer takes a while.
+    const question = process.env.CHAT_QUESTION ?? "How full is the root disk, and is anything waiting for my approval?";
+    await call("Runtime.evaluate", {
+      expression: `(() => { const t = document.querySelector("textarea");
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(t, ${JSON.stringify(question)});
+        t.dispatchEvent(new Event("input", { bubbles: true }));
+        setTimeout(() => document.querySelector(".composer button").click(), 100); })()`,
+    });
+    await sleep(Number(process.env.CHAT_WAIT ?? 45000));
+  }
   const { data } = await call("Page.captureScreenshot", { format: "png" });
   writeFileSync(join(out, `${s.name}.png`), Buffer.from(data, "base64"));
   console.log("saved", s.name);

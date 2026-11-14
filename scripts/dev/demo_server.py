@@ -79,7 +79,7 @@ def make_registry(world: FakeArrWorld) -> dict[str, type[Collector]]:
     registry["image_updates"] = replay("image_updates", IMAGE_UPDATES)
 
     class DemoArr(ArrCollector):
-        def __init__(self, cfg, env):  # type: ignore[no-untyped-def]
+        def __init__(self, cfg, env, **kw):  # type: ignore[no-untyped-def]
             super().__init__(cfg, env, transport=world.transport())
 
     registry["arr"] = DemoArr

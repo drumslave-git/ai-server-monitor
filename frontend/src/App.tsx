@@ -75,7 +75,7 @@ export function App() {
         ) : page === "arr" ? (
           <ArrPage />
         ) : page === "chat" ? (
-          <ChatPage params={params} />
+          <ChatPage />
         ) : page === "settings" ? (
           <SettingsPage />
         ) : (

@@ -62,7 +62,17 @@ function toTurns(doc: SessionDoc): Turn[] {
   return turns;
 }
 
-export function ChatPage({ params }: { params: string[] }) {
+const chatRoute = () => location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).slice(1);
+
+export function ChatPage() {
+  // The page follows the hash itself: starting a conversation rewrites it (replaceState)
+  // without a hashchange event, so App's route would be stale.
+  const [params, setParams] = useState(chatRoute);
+  useEffect(() => {
+    const onHash = () => setParams(chatRoute());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   const now = useNow(30_000);
   const sessions = usePoll(() => api.get<SessionList>("/api/chat/sessions?limit=50"), 60_000);
   const routeId = params[0] && params[0] !== "new" ? params[0] : null;
@@ -144,6 +154,7 @@ export function ChatPage({ params }: { params: string[] }) {
           if (type === "session") {
             sessionId.current = data.session_id;
             history.replaceState(null, "", `#/chat/${data.session_id}`);
+            setParams([data.session_id]);
           } else if (type === "tool_call") {
             // Whatever was streamed before a tool call was the model thinking aloud, not the answer.
             patchLast((t) => {
