@@ -1,14 +1,13 @@
 # SERVER DIGEST — TCloud, Ubuntu 26.04.1 LTS, kernel 7.0.0-43-generic, up 21h44m — generated 2026-11-14 19:15 UTC
 
 ## Rule-based flags
-[WARN] Disk / filling up — 88% used, 28.4GB free
-[WARN] Disk /mnt/disks/disk14TB filling up — 87% used, 1.8TB free
+[WARN] Disk / 88% full — 28.4GB free of 244GB
+[WARN] Disk /mnt/disks/disk14TB 87% full — 1.8TB free of 14.0TB
 [WARN] Unit logrotate.service failed — result: exit-code
 [WARN] Unit snap.remmina.ssh-agent.service failed — result: exit-code
 [WARN] Container homeassistant logging many errors — 60 error lines in the last check
 [INFO] 130 zombie processes — parents are not reaping their children
-[INFO] Container docker-model-runner-dashboard-dashboard-1 exited with an error — Exited (143) 3 months ago, exit code 143
-[INFO] Container llm-tg-bot-nextjs-app exited with an error — Exited (143) 2 months ago, exit code 143
+[INFO] 142GB of unused Docker images — disk / is 88% full; 'docker image prune -a' would free the unused images
 
 ## Data sources
 working: system, docker, gpu, systemd, journal, apt
@@ -39,7 +38,6 @@ restarts: snap.remmina.ssh-agent.service 5 total
 37 running of 41 containers
 Top CPU: grafana-stack-cadvisor-1 30%, grafana-stack-prometheus-1 3.4%, grafana-stack-process-exporter-1 2.5%, ai-server-monitor 1.7%, hub-spotify-dashboard-hub-spotify-dashboard-1 1.1%
 Top RAM: ollama 3.9GB, grafana-stack-cadvisor-1 2.0GB, comfyui 1.9GB, grafana-stack-prometheus-1 1.5GB, open-webui 1.1GB
-Exited with error: docker-model-runner-dashboard-dashboard-1, llm-tg-bot-nextjs-app
 Log errors: homeassistant 60 lines, e.g. "2026-11-14 21:14:47.363+02:00 WARNING (MainThread) [custom_components.govee.light] update failed for 8F:DD:D0:C9:07:05:9C:AC: API-Error 429:"
 Docker disk: images 207GB (142GB unused), volumes 2.7GB, build cache 975MB
 

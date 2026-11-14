@@ -169,7 +169,7 @@ class LLMSettings(_Model):
     json = JSON-in-text fallback for models without tool calling; none = no tools."""
     max_context_tokens: int = Field(default=8192, ge=1024)
     """Context window to plan prompts for. For Ollama, also raise OLLAMA_CONTEXT_LENGTH."""
-    max_output_tokens: int = Field(default=1500, ge=64)
+    max_output_tokens: int = Field(default=4096, ge=64)
     """Maximum tokens per answer/report."""
     temperature: float = Field(default=0.2, ge=0, le=2)
     timeout: Duration = timedelta(minutes=3)
@@ -226,6 +226,9 @@ class ReportSettings(_Model):
     check) count as an error burst."""
     gpu_temp_warn_c: float = Field(default=85, ge=30)
     """A GPU hotter than this is a warning."""
+    unused_images_note_gb: float = Field(default=20, ge=0)
+    """Suggest pruning when this many GB of Docker images are unused while the disk holding
+    Docker data is above the disk warning level."""
 
 
 class StorageSettings(_Model):

@@ -28,10 +28,12 @@ _LIST_KEYS = {
     "systemd": ("failed", "restarting"),
     "gpu": ("gpus",),
     "apt": ("packages",),
+    "image_updates": ("images",),
 }
 _DICT_KEYS = {
     "system": ("cpu", "memory", "processes"),
     "docker": ("summary", "engine", "disk_usage"),
+    "image_updates": ("summary",),
 }
 
 

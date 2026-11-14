@@ -8,8 +8,10 @@ cannot take the digest down.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from ..config import ReportSettings
 from .models import SEVERITY_RANK, Flag, fmt_bytes, fmt_pct, num
@@ -74,11 +76,11 @@ def disks(c: Context) -> list[Flag]:
         mount = fs.get("mount", "?")
         pct = fs.get("percent")
         if pct is not None:
-            detail = f"{fmt_pct(num(pct))} used, {fmt_bytes(fs.get('avail'))} free"
+            detail = f"{fmt_bytes(fs.get('avail'))} free of {fmt_bytes(fs.get('total'))}"
             if num(pct) >= c.cfg.disk_crit_percent:
-                flags.append(Flag("crit", f"Disk {mount} almost full", detail))
+                flags.append(Flag("crit", f"Disk {mount} {num(pct):.0f}% full", detail))
             elif num(pct) >= c.cfg.disk_warn_percent:
-                flags.append(Flag("warn", f"Disk {mount} filling up", detail))
+                flags.append(Flag("warn", f"Disk {mount} {num(pct):.0f}% full", detail))
         inodes = fs.get("inodes_percent")
         if inodes is not None and num(inodes) >= c.cfg.disk_warn_percent:
             sev = "crit" if num(inodes) >= c.cfg.disk_crit_percent else "warn"
@@ -248,6 +250,50 @@ def failed_units(c: Context) -> list[Flag]:
     return _fold(flags, "failed units")
 
 
+NORMAL_EXIT_CODES = (0, 130, 143)
+"""Clean exit, SIGINT and SIGTERM: someone stopped the container, nothing failed."""
+
+_AGO_UNITS = {
+    "second": 1,
+    "minute": 60,
+    "hour": 3600,
+    "day": 86400,
+    "week": 7 * 86400,
+    "month": 30 * 86400,
+    "year": 365 * 86400,
+}
+_AGO = re.compile(
+    r"(\d+|an?|about an?|less than an?)\s+(second|minute|hour|day|week|month|year)s?\s+ago", re.I
+)
+
+
+def exited_ago_s(status: str | None) -> float | None:
+    """Seconds since a container exited, from Docker's status text ('Exited (1) 3 days ago')."""
+    match = _AGO.search(status or "")
+    if not match:
+        return None
+    count = match.group(1).lower()
+    n = int(count) if count.isdigit() else 1
+    return n * _AGO_UNITS[match.group(2).lower()]
+
+
+def recent_error_exits(containers: list[dict[str, Any]], window_s: float) -> list[dict[str, Any]]:
+    """Exited containers worth mentioning: a real error code (not a normal stop) within the
+    trend window. Old failures of long-stopped containers are not news."""
+    out: list[dict[str, Any]] = []
+    for ct in containers:
+        if ct.get("state") != "exited":
+            continue
+        code = ct.get("exit_code")
+        if code is None or code in NORMAL_EXIT_CODES:
+            continue
+        age = exited_ago_s(ct.get("status"))
+        if age is not None and age > window_s:
+            continue
+        out.append(ct)
+    return out
+
+
 def docker_health(c: Context) -> list[Flag]:
     dk = c.snap.data("docker")
     flags: list[Flag] = []
@@ -256,13 +302,12 @@ def docker_health(c: Context) -> list[Flag]:
         flags.append(Flag("warn", f"Container {name} is unhealthy", "failing its health check"))
     for name in summary.get("oom_killed") or []:
         flags.append(Flag("crit", f"Container {name} was OOM-killed", "ran out of memory"))
-    by_name = {ct.get("name"): ct for ct in dk.get("containers") or []}
-    for name in summary.get("exited_with_error") or []:
-        ct = by_name.get(name) or {}
+    window = c.cfg.trend_window.total_seconds()
+    for ct in recent_error_exits(dk.get("containers") or [], window):
         flags.append(
             Flag(
                 "info",
-                f"Container {name} exited with an error",
+                f"Container {ct.get('name')} exited with an error",
                 f"{ct.get('status') or ''}, exit code {ct.get('exit_code')}",
             )
         )
@@ -280,6 +325,44 @@ def docker_health(c: Context) -> list[Flag]:
     for w in warnings[:2]:
         flags.append(Flag("info", "Docker engine warning", str(w)[:200]))
     return _fold(flags, "container problems")
+
+
+def image_updates(c: Context) -> list[Flag]:
+    data = c.snap.data("image_updates")
+    flagged = [i for i in data.get("images") or [] if i.get("status") == "update_available"]
+    if not flagged:
+        return []
+    names = ", ".join(str(i.get("image")) for i in flagged[:4])
+    return [Flag("info", f"{len(flagged)} container images have updates", names)]
+
+
+def docker_data_fs(filesystems: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The filesystem holding /var/lib/docker (longest mount point that contains it)."""
+    best = None
+    for fs in filesystems:
+        mount = str(fs.get("mount") or "")
+        inside = mount == "/" or "/var/lib/docker".startswith(mount.rstrip("/") + "/")
+        if inside and (best is None or len(mount) > len(str(best.get("mount")))):
+            best = fs
+    return best
+
+
+def unused_images(c: Context) -> list[Flag]:
+    du = c.snap.data("docker").get("disk_usage") or {}
+    unused = num(du.get("images_unused_bytes"))
+    fs = docker_data_fs(c.snap.data("system").get("filesystems") or [])
+    if fs is None or unused < c.cfg.unused_images_note_gb * 1e9:
+        return []
+    if num(fs.get("percent")) < c.cfg.disk_warn_percent:
+        return []
+    return [
+        Flag(
+            "info",
+            f"{fmt_bytes(unused)} of unused Docker images",
+            f"disk {fs.get('mount')} is {num(fs.get('percent')):.0f}% full; "
+            "'docker image prune -a' would free the unused images",
+        )
+    ]
 
 
 def journal(c: Context) -> list[Flag]:
@@ -351,6 +434,8 @@ RULES: tuple[Rule, ...] = (
     restart_loops,
     failed_units,
     docker_health,
+    image_updates,
+    unused_images,
     journal,
     updates,
 )

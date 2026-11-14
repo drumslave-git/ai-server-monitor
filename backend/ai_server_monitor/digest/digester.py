@@ -25,7 +25,7 @@ from .models import (
     fmt_rate,
     num,
 )
-from .rules import Context, evaluate
+from .rules import Context, evaluate, recent_error_exits
 from .snapshot import Snapshot
 from .trends import JournalSummary, Trends, WindowObserver, compute_trends, summarize_windows
 
@@ -234,7 +234,9 @@ def _pick_sample(samples: list[str]) -> str:
     return (useful or cleaned or [""])[0][:140]
 
 
-def _containers_section(snap: Snapshot, trends: Trends, top_n: int) -> Section | None:
+def _containers_section(
+    snap: Snapshot, trends: Trends, top_n: int, window_s: float
+) -> Section | None:
     dk = snap.data("docker")
     if not dk:
         return None
@@ -284,8 +286,9 @@ def _containers_section(snap: Snapshot, trends: Trends, top_n: int) -> Section |
         lines.append("Restarted since last check: " + ", ".join(summary["restarted_recently"][:6]))
     if summary.get("oom_killed"):
         lines.append("OOM-killed: " + ", ".join(summary["oom_killed"][:6]))
-    if summary.get("exited_with_error"):
-        lines.append("Exited with error: " + ", ".join(summary["exited_with_error"][:6]))
+    exits = recent_error_exits(containers, window_s)
+    if exits:
+        lines.append("Exited with error: " + ", ".join(str(c.get("name")) for c in exits[:6]))
     noisy = _top(containers, "log_errors", 3, minimum=0)
     for c in noisy:
         sample = _pick_sample(c.get("log_error_samples") or [])
@@ -364,28 +367,6 @@ def _journal_section(j: JournalSummary | None, label: str) -> Section | None:
     return Section("journal", "System journal", 50, lines)
 
 
-def _find_image_updates(data: dict[str, Any]) -> list[str]:
-    """Names of images with updates. Read defensively: the collector's shape is not ours."""
-    for key in ("updates", "outdated", "images", "containers", "items"):
-        value = data.get(key)
-        if not isinstance(value, list):
-            continue
-        names: list[str] = []
-        for item in value:
-            if isinstance(item, str):
-                names.append(item)
-            elif isinstance(item, dict):
-                flagged = any(
-                    item.get(k) for k in ("update_available", "outdated", "has_update", "update")
-                )
-                if key in ("updates", "outdated") or flagged:
-                    names.append(
-                        str(item.get("name") or item.get("image") or item.get("container") or "?")
-                    )
-        return names
-    return []
-
-
 def _updates_section(snap: Snapshot) -> Section | None:
     apt = snap.data("apt")
     img = snap.data("image_updates")
@@ -409,11 +390,16 @@ def _updates_section(snap: Snapshot) -> Section | None:
                 + (" …" if len(pkgs) > 8 or apt.get("truncated") else "")
             )
     if img:
-        names = _find_image_updates(img)
-        if names:
-            lines.append(f"container images with updates: {len(names)} — {', '.join(names[:6])}")
+        total = (img.get("summary") or {}).get("total", len(img.get("images") or []))
+        updates = [i for i in img.get("images") or [] if i.get("status") == "update_available"]
+        if updates:
+            shown = ", ".join(
+                f"{i.get('image')} ({', '.join(map(str, (i.get('containers') or [])[:3]))})"
+                for i in updates[:6]
+            )
+            lines.append(f"container images with newer builds: {len(updates)} of {total} — {shown}")
         else:
-            lines.append("container images: all up to date")
+            lines.append(f"container images: no newer builds found ({total} checked)")
     if not lines:
         return None
     return Section("updates", "Pending updates", 40, lines)
@@ -520,7 +506,7 @@ async def build_digest(
             _resources_section(snap),
             _disks_section(snap, trends),
             _systemd_section(snap, trends),
-            _containers_section(snap, trends, cfg.digest_top_n),
+            _containers_section(snap, trends, cfg.digest_top_n, window_s),
             _process_section(snap, cfg.digest_top_n),
             _gpu_section(snap),
             _journal_section(journal, label),

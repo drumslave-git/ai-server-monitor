@@ -113,8 +113,8 @@ async def test_threshold_rules(db: Database) -> None:
     )
     d = await digest_of(db, snapshot(system=entry(system)))
     found = titles(d)
-    assert ("crit", "Disk / almost full") in found
-    assert ("warn", "Disk /data filling up") in found
+    assert ("crit", "Disk / 96% full") in found
+    assert ("warn", "Disk /data 87% full") in found
     assert ("crit", "Disk /inodes out of inodes") in found
     assert ("crit", "Memory almost exhausted") in found
     assert ("warn", "Heavy swap use") in found
@@ -127,7 +127,7 @@ async def test_thresholds_come_from_settings(db: Database) -> None:
     snap = snapshot()  # disk at 20%
     assert not (await digest_of(db, snap)).flags
     d = await digest_of(db, snap, disk_warn_percent=10, disk_crit_percent=15)
-    assert titles(d) == [("crit", "Disk / almost full")]
+    assert titles(d) == [("crit", "Disk / 20% full")]
 
 
 async def test_services_containers_and_updates(db: Database) -> None:
@@ -216,26 +216,103 @@ async def test_odd_collector_data_never_raises(db: Database) -> None:
         "system": entry({"cpu": None, "memory": {"percent": "x"}, "filesystems": [None, {}, 5]}),
         "docker": entry({"containers": [{"name": None}, "str"], "summary": None}),
         "systemd": entry({"failed": [None], "restarting": "no"}),
-        "image_updates": entry({"updates": [{"image": "nginx"}, "redis", 7]}),
+        "image_updates": entry(
+            {
+                "summary": None,
+                "images": [
+                    7,
+                    {"status": "update_available", "image": "nginx", "containers": ["w"]},
+                ],
+            }
+        ),
         "apt": entry({"packages": "oops", "upgradable_count": None}),
     }
     d = await digest_of(db, snap)  # must not raise
-    assert "container images with updates" in d.text
+    assert "newer builds: 1 of" in d.text and "nginx (w)" in d.text
 
 
-async def test_image_updates_read_defensively(db: Database) -> None:
+async def test_image_updates_from_the_m3_collector(db: Database) -> None:
     snap = snapshot(
         image_updates=entry(
             {
+                "summary": {"total": 3, "up_to_date": 1, "update_available": 2, "unknown": 0},
+                "updates_available": [
+                    "ghcr.io/ggml-org/llama.cpp:server-cuda",
+                    "lscr.io/linuxserver/sonarr:latest",
+                ],
                 "images": [
-                    {"name": "a", "update_available": True},
-                    {"name": "b", "update_available": False},
-                ]
+                    {
+                        "image": "ghcr.io/ggml-org/llama.cpp:server-cuda",
+                        "containers": ["llamacpp-embedding"],
+                        "status": "update_available",
+                        "reason": None,
+                    },
+                    {
+                        "image": "lscr.io/linuxserver/sonarr:latest",
+                        "containers": ["sonarr"],
+                        "status": "update_available",
+                        "reason": None,
+                    },
+                    {"image": "traefik:latest", "containers": ["traefik"], "status": "up_to_date"},
+                ],
             }
         )
     )
     d = await digest_of(db, snap)
-    assert "container images with updates: 1 — a" in d.text
+    assert ("info", "2 container images have updates") in titles(d)
+    assert (
+        "container images with newer builds: 2 of 3 — ghcr.io/ggml-org/llama.cpp:server-cuda "
+        "(llamacpp-embedding), lscr.io/linuxserver/sonarr:latest (sonarr)"
+    ) in d.text
+    ok = await digest_of(
+        db,
+        snapshot(image_updates=entry({"summary": {"total": 4}, "images": []})),
+    )
+    assert "no newer builds found (4 checked)" in ok.text and not ok.flags
+
+
+async def test_old_or_normal_container_exits_are_not_flagged(db: Database) -> None:
+    def ct(name: str, code: int | None, status: str) -> dict[str, Any]:
+        return {"name": name, "state": "exited", "exit_code": code, "status": status}
+
+    containers = [
+        ct("sigterm-old", 143, "Exited (143) 3 months ago"),
+        ct("clean", 0, "Exited (0) 2 hours ago"),
+        ct("sigterm-new", 143, "Exited (143) 2 hours ago"),
+        ct("crash-old", 1, "Exited (1) 2 months ago"),
+        ct("crash-new", 1, "Exited (1) 3 hours ago"),
+        ct("crash-hour", 2, "Exited (2) About an hour ago"),
+        ct("killed", 137, "Exited (137) 5 days ago"),
+    ]
+    summary = {"exited_with_error": [c["name"] for c in containers if c["exit_code"]]}
+    d = await digest_of(db, snapshot(docker=entry({"summary": summary, "containers": containers})))
+    flagged = {t.split()[1] for s, t in titles(d) if "exited with an error" in t}
+    assert flagged == {"crash-new", "crash-hour", "killed"}
+    assert "Exited with error: crash-new, crash-hour, killed" in d.text
+    assert "sigterm" not in d.text and "crash-old" not in d.text
+
+
+async def test_unused_images_note_only_when_the_docker_disk_is_full(db: Database) -> None:
+    docker = entry(
+        {"summary": {}, "containers": [], "disk_usage": {"images_unused_bytes": 142 * GB}}
+    )
+    full = healthy_system(
+        filesystems=[
+            {"mount": "/", "total": 244 * GB, "used": 214 * GB, "avail": 30 * GB, "percent": 88.0},
+            {
+                "mount": "/mnt/big",
+                "total": 14000 * GB,
+                "used": 1 * GB,
+                "avail": 13999 * GB,
+                "percent": 1.0,
+            },
+        ]
+    )
+    d = await digest_of(db, snapshot(system=entry(full), docker=docker))
+    assert ("info", "142GB of unused Docker images") in titles(d)
+    assert any("docker image prune" in f.detail for f in d.flags)
+    roomy = await digest_of(db, snapshot(docker=docker))  # root disk only 20% full
+    assert not any("unused Docker images" in f.title for f in roomy.flags)
 
 
 # --------------------------------------------------------------------------- trends

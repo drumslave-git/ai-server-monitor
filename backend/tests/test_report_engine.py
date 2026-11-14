@@ -134,7 +134,7 @@ async def test_bad_format_falls_back_to_rule_flags(db: Database, make: Any) -> N
     row = await h.engine.store.get(outcome.report_id or 0)
     assert row is not None and row["status"] == "ok" and row["parsed"] is False
     assert row["health"] == "crit" and row["score"] < 50
-    assert row["findings"][0]["title"] == "Disk / almost full"
+    assert row["findings"][0]["title"] == "Disk / 97% full"
     assert row["markdown"] == "The server is fine, I think."
 
 
