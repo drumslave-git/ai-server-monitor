@@ -115,6 +115,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/metrics/recent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recent Metrics
+         * @description The last ~120 metrics.tick payloads per source (system, gpu), oldest first.
+         */
+        get: operations["recent_metrics_api_metrics_recent_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/reports": {
         parameters: {
             query?: never;
@@ -1992,6 +2012,30 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    recent_metrics_api_metrics_recent_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: {
+                            [key: string]: unknown;
+                        }[];
                     };
                 };
             };

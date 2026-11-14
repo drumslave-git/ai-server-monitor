@@ -357,7 +357,9 @@ function AttentionPanel({ systemd, apt, images }: { systemd: Data; apt: Data; im
               {failed.map((u: Data) => (
                 <li key={u.name}>
                   <Dot level="warn" />
-                  <span className="mono">{u.name}</span> <span className="muted">{u.result}</span>
+                  <span className="grow">
+                    <span className="mono">{u.name}</span> <span className="muted">{u.result}</span>
+                  </span>
                 </li>
               ))}
             </ul>
@@ -390,8 +392,10 @@ function AttentionPanel({ systemd, apt, images }: { systemd: Data; apt: Data; im
             <ul className="plain">
               {imageUpdates.slice(0, 5).map((i: Data) => (
                 <li key={i.image}>
-                  <span className="mono">{i.image}</span>
-                  <span className="muted"> {(i.containers ?? []).join(", ")}</span>
+                  <span className="grow">
+                    <span className="mono">{i.image}</span>
+                    <span className="muted"> {(i.containers ?? []).join(", ")}</span>
+                  </span>
                 </li>
               ))}
               {imageUpdates.length > 5 && <li className="muted">and {imageUpdates.length - 5} more</li>}
@@ -405,6 +409,18 @@ function AttentionPanel({ systemd, apt, images }: { systemd: Data; apt: Data; im
 
 // --------------------------------------------------------------------------- collectors
 
+const SOURCE_LABELS: Record<string, string> = {
+  system: "System",
+  docker: "Docker",
+  gpu: "GPU",
+  systemd: "systemd",
+  journal: "Journal",
+  apt: "apt",
+  image_updates: "Image updates",
+  prometheus: "Prometheus",
+  arr: "*arr",
+};
+
 function SourcesPanel({ collectors, now }: { collectors: Collectors; now: number }) {
   const rows = Object.entries(collectors) as [string, CollectorEntry][];
   const level = (c: CollectorEntry): Level =>
@@ -414,7 +430,7 @@ function SourcesPanel({ collectors, now }: { collectors: Collectors; now: number
       <ul className="sources">
         {rows.map(([name, c]) => (
           <li key={name} title={c.error ?? c.reason ?? undefined}>
-            <Badge level={level(c)}>{name.replace(/_/g, " ")}</Badge>
+            <Badge level={level(c)}>{SOURCE_LABELS[name] ?? name.replace(/_/g, " ")}</Badge>
             <span className="muted small">
               {c.state !== "active" ? c.state : c.ok === false ? "failing" : ago(c.last_ts, now)}
             </span>

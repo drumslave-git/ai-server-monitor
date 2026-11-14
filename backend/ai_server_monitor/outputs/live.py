@@ -7,12 +7,14 @@ changes (ok <-> failing, error text changes), not on every run.
 
 from __future__ import annotations
 
+from collections import deque
 from typing import Any
 
 from ..collectors.base import CollectorResult
 from ..events import EventBus
 
 TICK_SOURCES = ("system", "gpu")
+RECENT_TICKS = 120
 
 
 def _round(value: Any, digits: int = 1) -> float | None:
@@ -57,10 +59,15 @@ class LiveFeed:
     def __init__(self, bus: EventBus):
         self.bus = bus
         self._last: dict[str, tuple[bool, str | None]] = {}
+        self.recent: dict[str, deque[dict[str, Any]]] = {
+            source: deque(maxlen=RECENT_TICKS) for source in TICK_SOURCES
+        }
+        """The latest ticks per source, so a freshly opened page can draw its charts at once."""
 
     def on_result(self, result: CollectorResult) -> None:
         tick = tick_payload(result)
         if tick is not None:
+            self.recent[tick["source"]].append(tick)
             self.bus.publish("metrics.tick", tick)
         state = (result.ok, result.error)
         if self._last.get(result.name) != state:

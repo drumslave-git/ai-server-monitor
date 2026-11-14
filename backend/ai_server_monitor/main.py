@@ -202,6 +202,11 @@ def create_app(
             resources=api_models.Resources.model_validate(resource_summary(Snapshot(raw, now))),
         )
 
+    @app.get("/api/metrics/recent")
+    async def recent_metrics(request: Request) -> dict[str, list[dict[str, Any]]]:
+        """The last ~120 metrics.tick payloads per source (system, gpu), oldest first."""
+        return {k: list(v) for k, v in get_ctx(request).live.recent.items()}
+
     @app.get("/api/stream")
     async def stream(request: Request, types: str | None = None) -> StreamingResponse:
         """Server-sent events: report.started/token/done/failed, metrics.tick,

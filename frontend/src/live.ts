@@ -45,8 +45,23 @@ function notifyState() {
   stateListeners.forEach((l) => l());
 }
 
+function seedHistory() {
+  fetch("/api/metrics/recent")
+    .then((r) => r.json())
+    .then((data: { system?: SystemTick[]; gpu?: GpuTick[] }) => {
+      // Ticks that arrived on the stream meanwhile are newer; keep them after the seed.
+      history.system.unshift(...(data.system ?? []).filter((t) => !history.system.some((h) => h.ts === t.ts)));
+      history.gpu.unshift(...(data.gpu ?? []).filter((t) => !history.gpu.some((h) => h.ts === t.ts)));
+      history.system.splice(0, Math.max(0, history.system.length - HISTORY));
+      history.gpu.splice(0, Math.max(0, history.gpu.length - HISTORY));
+      notifyState();
+    })
+    .catch(() => undefined);
+}
+
 function ensureSource() {
   if (source || typeof EventSource === "undefined") return;
+  seedHistory();
   source = new EventSource("/api/stream");
   source.onopen = () => {
     connected = true;

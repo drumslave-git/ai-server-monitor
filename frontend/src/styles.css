@@ -102,8 +102,8 @@ pre { margin: 0; font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wra
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; min-height: 20px; }
 .panel-aside { font-size: 12px; display: flex; align-items: center; gap: 8px; }
 .empty { color: var(--muted); }
-.grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
-.grid-live { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; }
+.grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: stretch; }
+.grid-live { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: stretch; }
 
 /* ---- status marks */
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--dot-off); }
@@ -130,10 +130,9 @@ pre { margin: 0; font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wra
 .health-actions { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
 .health-actions .btn { text-align: center; }
 .findings { list-style: none; margin: 20px 0 0; padding: 16px 0 0; border-top: 1px solid var(--border); display: grid; gap: 8px; }
-.findings li { display: grid; grid-template-columns: auto auto 1fr; gap: 8px 12px; align-items: baseline; }
-.findings .dot { align-self: center; }
-.finding-title { font-weight: 500; }
-.finding-detail { min-width: 0; overflow-wrap: anywhere; }
+.findings li { position: relative; padding-left: 20px; overflow-wrap: anywhere; }
+.findings .dot { position: absolute; left: 0; top: 7px; }
+.finding-title { font-weight: 500; margin-right: 8px; }
 
 /* ---- live metrics */
 .live { display: grid; gap: 4px; }
@@ -161,19 +160,19 @@ pre { margin: 0; font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wra
 
 /* ---- lists */
 .toplists { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
-.toplist ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.toplist ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .toplist li { display: flex; justify-content: space-between; gap: 8px; }
 .top-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.top-value { color: var(--muted); }
+.top-value { color: var(--muted); white-space: nowrap; }
 .facts { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 16px 16px; margin: 0; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
 .plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.plain li { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.plain li { display: flex; align-items: baseline; gap: 8px; }
+.grow { min-width: 0; overflow-wrap: anywhere; }
 .plain .dot { align-self: center; }
 .sources { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px 24px; }
 .sources li { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 28px; }
-.sources .badge { text-transform: capitalize; }
 
 /* ---- reports */
 .reports .split { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 24px; align-items: start; }
@@ -354,9 +353,8 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .ring { width: 72px; height: 72px; }
   .ring-number { font-size: 22px; }
   .health-status { font-size: 16px; line-height: 24px; }
-  .findings li { grid-template-columns: auto 1fr; }
-  .findings .finding-detail { grid-column: 2; }
-  .live-row { grid-template-columns: 72px minmax(0, 1fr) 96px; gap: 12px; }
+  .finding-title { display: block; margin: 0; }
+  .live-row { grid-template-columns: 88px minmax(0, 1fr) 88px; gap: 12px; }
   .live-value small { display: none; }
   .disks li { grid-template-columns: minmax(0, 1fr) 64px 56px; gap: 8px; }
   .toplists { grid-template-columns: minmax(0, 1fr); }

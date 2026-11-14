@@ -2,14 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import { api, type Report, type ReportList, type ReportSummary } from "../api";
 import { ago, clock } from "../fmt";
 import { useStream } from "../live";
-import { Badge, Dot, Empty, healthLevel, healthWord, Markdown, PageHead, Panel, ScoreRing, severityLevel, useNow, usePoll } from "../ui";
+import { Dot, Empty, healthLevel, healthWord, Markdown, PageHead, Panel, ScoreRing, severityLevel, useNow, usePoll } from "../ui";
 
 type Live = { text: string; active: boolean; error: string | null };
 
 export function ReportsPage({ params }: { params: string[] }) {
   const now = useNow();
   const list = usePoll(() => api.get<ReportList>("/api/reports?limit=50"), 30_000);
-  const selected = params[0] ? Number(params[0]) : null;
+  const items = list.data?.items ?? [];
+  // On wide screens the newest report is open by default; on phones the list comes first.
+  const wide = typeof matchMedia === "function" && matchMedia("(min-width: 821px)").matches;
+  const selected = params[0] ? Number(params[0]) : wide && items.length ? items[0].id : null;
   const [live, setLive] = useState<Live>({ text: "", active: false, error: null });
   const [runError, setRunError] = useState<string | null>(null);
 
@@ -35,8 +38,7 @@ export function ReportsPage({ params }: { params: string[] }) {
     }
   };
 
-  const items = list.data?.items ?? [];
-  const showDetail = selected !== null;
+  const showDetail = selected !== null && (params[0] !== undefined || wide);
 
   return (
     <div className={`reports ${showDetail ? "has-detail" : ""}`}>
@@ -99,7 +101,7 @@ function LivePanel({ text }: { text: string }) {
   }, [text]);
   return (
     <Panel title={<><span className="pulse-dot" aria-hidden /> Writing a report</>} className="live-report">
-      {text ? <pre ref={box}>{text}</pre> : <p className="muted">Waiting for the first words…</p>}
+      {text ? <pre ref={box}>{text}</pre> : <p className="muted">Waiting for the model. Reasoning models think for a few seconds before the first words.</p>}
     </Panel>
   );
 }
@@ -149,7 +151,7 @@ function Detail({ id }: { id: number }) {
         <ul className="findings">
           {report.findings.map((f, i) => (
             <li key={i}>
-              <Badge level={severityLevel(f.severity)}>{f.severity}</Badge>
+              <Dot level={severityLevel(f.severity)} />
               <span className="finding-title">{f.title}</span>
               {f.detail && <span className="muted finding-detail">{f.detail}</span>}
             </li>

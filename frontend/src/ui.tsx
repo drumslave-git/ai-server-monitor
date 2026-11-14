@@ -127,9 +127,10 @@ export function Spark({
   const top = max ?? Math.max(...points, 1);
   const low = Math.min(min, ...points);
   const span = top - low || 1;
-  const step = width / Math.max(values.length - 1, 1);
+  const inset = 3; // keeps the end marker inside the box
+  const step = (width - 2 * inset) / Math.max(values.length - 1, 1);
   const coords = values
-    .map((v, i) => (v === null ? null : [i * step, height - 3 - ((v - low) / span) * (height - 6)]))
+    .map((v, i) => (v === null ? null : [inset + i * step, height - 3 - ((v - low) / span) * (height - 6)]))
     .filter((p): p is number[] => p !== null);
   const path = coords.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
   const [lx, ly] = coords[coords.length - 1];

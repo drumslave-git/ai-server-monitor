@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from ai_server_monitor.collectors.base import CollectorResult
 from ai_server_monitor.config import Bootstrap, Settings
@@ -232,3 +233,15 @@ def test_unfiltered_stream_carries_ticks_and_status_changes(
     tick = frames[-1]["data"]
     assert tick["source"] == "system" and tick["cpu"] == 12.3
     assert frames[0].get("retry") == "3000"
+
+
+def test_recent_ticks_are_served_for_a_page_that_just_opened(
+    bootstrap: Bootstrap, settings: Settings
+) -> None:
+    app = create_app(bootstrap, collector_registry={}, seed_settings=settings)
+    with TestClient(app) as client:
+        assert client.get("/api/metrics/recent").json() == {"system": [], "gpu": []}
+        for _ in range(130):
+            app.state.ctx.live.on_result(system_result())
+        ticks = client.get("/api/metrics/recent").json()["system"]
+    assert len(ticks) == 120 and ticks[-1]["cpu"] == 12.3  # bounded, newest last
