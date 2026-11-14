@@ -33,6 +33,17 @@ Update: `docker compose pull && docker compose up -d`. Pin a version by changing
 tag (`ghcr.io/drumslave-git/ai-server-monitor:0.3.0`; tags `X.Y.Z`, `X.Y`, `latest`, amd64).
 If the GHCR package is private, `docker login ghcr.io` with a token that has `read:packages`.
 
+## Troubleshooting
+
+Every collector's status and error is on the **Overview** page; a collector that can't
+work on your host never stops the service. Disable it under Settings → Collectors if you
+don't need it.
+
+- **systemd: "D-Bus … closed the connection"** — the host's system bus dropped the
+  container's connection. On Ubuntu this is usually D-Bus AppArmor mediation blocking the
+  container's `docker-default` AppArmor profile. Check with
+  `journalctl -b | grep -iE 'apparmor="DENIED".*dbus'`.
+
 ## Development
 
 ```bash

@@ -72,6 +72,59 @@ ALL = (OkCollector, FailingCollector, MissingAutoCollector, MissingExplicitColle
 REGISTRY = {c.name: c for c in ALL}
 
 
+class CrashingCheckCollector(Collector):
+    """Like the D-Bus EOFError seen on a real host: check() raises something unexpected."""
+
+    name = "systemd"
+
+    async def check(self) -> None:
+        raise EOFError
+
+    async def collect(self) -> dict[str, Any]:
+        raise EOFError
+
+
+class BrokenInitCollector(Collector):
+    name = "docker"
+
+    def __init__(self, cfg: Any, env: HostEnv):
+        raise ValueError("unsupported docker url: ftp://x")
+
+    async def collect(self) -> dict[str, Any]:  # pragma: no cover
+        raise AssertionError
+
+
+class HangingCheckCollector(Collector):
+    name = "journal"
+    timeout = timedelta(milliseconds=50)
+
+    async def check(self) -> None:
+        await asyncio.sleep(5)
+
+    async def collect(self) -> dict[str, Any]:
+        return {}
+
+
+async def test_setup_survives_any_collector_failure(db: Database) -> None:
+    settings = Settings(collectors={"journal": {"enabled": "auto"}})
+    scheduler = Scheduler()
+    registry = {c.name: c for c in (CrashingCheckCollector, BrokenInitCollector,
+                                    HangingCheckCollector, OkCollector)}  # fmt: skip
+    manager = CollectorManager(settings, db, scheduler, registry=registry, env=HostEnv())
+    await manager.setup()  # must not raise
+
+    status = manager.status()
+    assert status["systemd"]["state"] == "active"  # explicitly enabled: keeps retrying
+    assert status["systemd"]["reason"] == "check failed: EOFError"
+    assert status["docker"]["state"] == "unavailable"
+    assert "unsupported docker url" in (status["docker"]["reason"] or "")
+    assert status["journal"]["state"] == "unavailable"  # auto + hung check
+    assert status["system"]["state"] == "active"
+    result = await manager.run("systemd")  # and running it reports instead of crashing
+    assert not result.ok and result.error == "EOFError"
+    await manager.close()
+
+
 async def test_manager_lifecycle(db: Database) -> None:
     settings = Settings(collectors={"gpu": {"enabled": "auto"}, "apt": {"enabled": False}})
     scheduler = Scheduler()

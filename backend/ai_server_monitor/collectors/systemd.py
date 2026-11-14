@@ -56,7 +56,18 @@ class DbusSystemdBus:
         from dbus_fast import Message, MessageType
 
         bus = await self._connected()
-        reply = await bus.call(Message(destination=SYSTEMD, **kwargs))
+        try:
+            reply = await bus.call(Message(destination=SYSTEMD, **kwargs))
+        except (EOFError, OSError) as exc:
+            # The bus accepted the connection but then dropped it. On hosts with D-Bus
+            # AppArmor mediation (e.g. Ubuntu) the container's AppArmor profile is the
+            # usual cause; see the README troubleshooting section.
+            self._bus = None
+            raise CollectorUnavailable(
+                f"D-Bus at {self.address} closed the connection "
+                f"({type(exc).__name__}: {exc or 'EOF'}). Host D-Bus policy or the "
+                "container's AppArmor profile may block system bus access."
+            ) from exc
         if reply.message_type == MessageType.ERROR:
             raise DbusError(f"{reply.error_name}: {reply.body}")
         return list(reply.body)

@@ -49,18 +49,31 @@ class CollectorManager:
             if cfg.enabled is False:
                 self.states[name] = "disabled"
                 continue
-            collector = cls(cfg, self.env)
+            # Nothing a single collector does may stop the service from starting.
             try:
-                await collector.check()
-            except CollectorUnavailable as exc:
-                self.reasons[name] = str(exc)
+                collector = cls(cfg, self.env)
+            except Exception as exc:
+                self.states[name] = "unavailable"
+                self.reasons[name] = f"cannot start: {exc}"
+                log.warning("collector %s cannot start: %s", name, exc)
+                continue
+            try:
+                async with asyncio.timeout(collector.timeout.total_seconds()):
+                    await collector.check()
+            except Exception as exc:
+                reason = (
+                    str(exc)
+                    if isinstance(exc, CollectorUnavailable)
+                    else f"check failed: {type(exc).__name__}: {exc}".rstrip(": ")
+                )
+                self.reasons[name] = reason
                 if cfg.enabled == "auto":
                     self.states[name] = "unavailable"
-                    log.info("collector %s unavailable: %s", name, exc)
-                    await collector.close()
+                    log.info("collector %s unavailable: %s", name, reason)
+                    await self._close_quietly(collector)
                     continue
                 # Explicitly enabled: keep trying, it will report the error each run.
-                log.warning("collector %s enabled but unavailable: %s", name, exc)
+                log.warning("collector %s enabled but unavailable: %s", name, reason)
             self.collectors[name] = collector
             self.states[name] = "active"
             self.scheduler.add(f"collect:{name}", self._job(name), cfg.interval)
@@ -89,7 +102,9 @@ class CollectorManager:
             )
             log.warning("collector %s timed out", name)
         except Exception as exc:
-            result = CollectorResult(name, ts, ok=False, error=f"{type(exc).__name__}: {exc}")
+            result = CollectorResult(
+                name, ts, ok=False, error=f"{type(exc).__name__}: {exc}".rstrip(": ")
+            )
             log.warning("collector %s failed: %s", name, exc, exc_info=log.isEnabledFor(10))
         result.duration_s = round(time.perf_counter() - started, 3)
         self.latest[name] = result
@@ -122,9 +137,13 @@ class CollectorManager:
             }
         return out
 
+    @staticmethod
+    async def _close_quietly(collector: Collector) -> None:
+        try:
+            await collector.close()
+        except Exception:
+            log.exception("closing collector %s", collector.name)
+
     async def close(self) -> None:
         for collector in self.collectors.values():
-            try:
-                await collector.close()
-            except Exception:
-                log.exception("closing collector %s", collector.name)
+            await self._close_quietly(collector)
