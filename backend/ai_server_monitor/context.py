@@ -20,6 +20,7 @@ from .db import Database
 from .digest import WindowObserver
 from .events import EventBus
 from .llm import LLMClient, ToolModeResolver
+from .outputs.live import LiveFeed
 from .report.engine import ReportEngine
 from .scheduler import Scheduler
 from .settings_store import SettingsStore
@@ -54,6 +55,7 @@ class AppContext:
         # Survive settings changes (subscribers and journal history stay valid):
         self.events = EventBus()
         self.observer = WindowObserver()
+        self.live = LiveFeed(self.events)
         # Built in start() / apply_settings():
         self.settings = Settings()
         self.scheduler = Scheduler()
@@ -114,6 +116,7 @@ class AppContext:
             timeout=timedelta(seconds=s.llm.timeout.total_seconds() * 2 + 30),
         )
         await self.collectors.setup()
+        self.collectors.on_result = self.live.on_result
         self.reports = self._build_reports()
         self.scheduler.add("digest_observe", self.reports.observe, OBSERVE_INTERVAL)
         self.scheduler.add(

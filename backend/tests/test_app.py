@@ -208,3 +208,33 @@ def test_unconfigured_llm_report_run_records_a_skip(bootstrap: Bootstrap) -> Non
         listing = _wait_for(lambda: (r := client.get("/api/reports").json())["total"] and r)
     item = listing["items"][0]
     assert item["status"] == "skipped" and "not configured" in item["error"]
+
+
+def test_status_before_any_report_and_with_unconfigured_llm(bootstrap: Bootstrap) -> None:
+    app = create_app(bootstrap, collector_registry={"system": StubSystem})
+    with TestClient(app) as client:
+        client.portal.call(app.state.ctx.collectors.run, "system")  # type: ignore[union-attr]
+        first = client.get("/api/status").json()
+        assert client.post("/api/reports/run").status_code == 202
+        _wait_for(lambda: client.get("/api/reports").json()["total"])
+        second = client.get("/api/status").json()
+    assert first["report"] is None and first["last_attempt"] is None
+    assert first["llm_configured"] is False and first["version"]
+    assert first["collectors"]["system"]["state"] == "active"
+    assert first["resources"]["cpu_percent"] == 12.5 and first["resources"]["gpu"] is None
+    assert first["next_report"]["interval_s"] == 300
+    assert second["report"] is None  # a skip is not a report ...
+    assert second["last_attempt"]["status"] == "skipped"  # ... but it is visible
+    assert "not configured" in second["last_attempt"]["error"]
+
+
+def test_settings_responses_are_typed_and_still_mask_secrets(bootstrap: Bootstrap) -> None:
+    app = create_app(bootstrap, collector_registry={})
+    with TestClient(app) as client:
+        doc = client.get("/api/settings").json()
+        assert set(doc) == {"values", "schema", "sections"}
+        values = doc["values"]
+        values["llm"]["api_key"] = "sk-secret"
+        saved = client.put("/api/settings", json=values).json()
+        assert saved["values"]["llm"]["api_key"] == SECRET_MASK
+        assert client.get("/api/settings").json()["values"]["llm"]["api_key"] == SECRET_MASK

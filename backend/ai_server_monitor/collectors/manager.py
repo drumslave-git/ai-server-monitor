@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -40,6 +41,8 @@ class CollectorManager:
         self.reasons: dict[str, str] = {}
         self.latest: dict[str, CollectorResult] = {}
         self._last_persist: dict[str, float] = {}
+        self.on_result: Callable[[CollectorResult], None] | None = None
+        """Called (synchronously, errors ignored) after every collector run."""
 
     async def setup(self) -> None:
         """Instantiate enabled collectors, check availability, register scheduler jobs."""
@@ -108,6 +111,11 @@ class CollectorManager:
             log.warning("collector %s failed: %s", name, exc, exc_info=log.isEnabledFor(10))
         result.duration_s = round(time.perf_counter() - started, 3)
         self.latest[name] = result
+        if self.on_result is not None:
+            try:
+                self.on_result(result)
+            except Exception:
+                log.exception("on_result hook failed")
         await self._maybe_persist(collector, result)
         return result
 

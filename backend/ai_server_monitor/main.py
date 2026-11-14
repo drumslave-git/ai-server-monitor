@@ -9,17 +9,21 @@ from typing import Annotated, Any, Literal
 
 import httpx
 from fastapi import Body, FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
-from . import __version__
+from . import __version__, api_models
 from .collectors import Collector
 from .config import Bootstrap, LLMSettings, Settings, settings_json_schema
 from .context import AppContext
+from .digest import collectors_snapshot
+from .digest.snapshot import Snapshot
 from .llm import LLMClient, LLMConnectionError, LLMError
 from .llm.text import strip_reasoning
+from .outputs.sse import SSE_HEADERS, event_stream, parse_types
 from .settings_store import SettingsStore, merge_secrets
+from .status import resource_summary
 
 JsonBody = Annotated[dict[str, Any], Body()]
 
@@ -138,20 +142,66 @@ def create_app(
 
     # ------------------------------------------------------------------ reports
 
+    @app.get("/api/status")
+    async def status(request: Request) -> api_models.StatusResponse:
+        """Dashboard header in one call: latest report, collector states, key numbers."""
+        ctx = get_ctx(request)
+        now = time.time()
+        latest = await ctx.reports.store.latest(status="ok")
+        newest = await ctx.reports.store.latest(status=None)
+        attempt = None
+        if newest is not None and newest["status"] != "ok":
+            attempt = {"ts": newest["ts"], "status": newest["status"], "error": newest["error"]}
+        job = ctx.scheduler.jobs.get("report")
+        raw = collectors_snapshot(ctx.collectors)
+        return api_models.StatusResponse(
+            version=__version__,
+            uptime_s=round(now - ctx.started_at, 1),
+            now=now,
+            report=api_models.LatestReport.model_validate(latest) if latest else None,
+            last_attempt=attempt,
+            next_report=api_models.NextReport(
+                running=bool(job and job.running),
+                next_run=job.next_run if job else None,
+                interval_s=ctx.settings.report.interval.total_seconds(),
+            ),
+            llm_configured=ctx.settings.llm.configured,
+            collectors={
+                name: api_models.CollectorState.model_validate(
+                    {k: v for k, v in entry.items() if k != "result"}
+                )
+                for name, entry in raw.items()
+            },
+            resources=api_models.Resources.model_validate(resource_summary(Snapshot(raw, now))),
+        )
+
+    @app.get("/api/stream")
+    async def stream(request: Request, types: str | None = None) -> StreamingResponse:
+        """Server-sent events: report.started/token/done/failed, metrics.tick,
+        collector.status. `?types=report,metrics` limits what is sent (prefix match)."""
+        ctx = get_ctx(request)
+        return StreamingResponse(
+            event_stream(ctx.events, parse_types(types)),
+            media_type="text/event-stream",
+            headers=SSE_HEADERS,
+        )
+
     @app.get("/api/reports")
     async def list_reports(
         request: Request,
         limit: Annotated[int, Query(ge=1, le=200)] = 50,
         offset: Annotated[int, Query(ge=0)] = 0,
         status: Annotated[Literal["ok", "failed", "skipped"] | None, Query()] = None,
-    ) -> dict[str, Any]:
+    ) -> api_models.ReportList:
         """Newest first, without the Markdown body (fetch one report for that)."""
         items, total = await get_ctx(request).reports.store.page(
             limit=limit, offset=offset, status=status
         )
-        return {"items": items, "total": total, "limit": limit, "offset": offset}
+        return api_models.ReportList.model_validate(
+            {"items": items, "total": total, "limit": limit, "offset": offset}
+        )
 
-    @app.get("/api/reports/digest")
+    @app.get("/api/reports/digest", response_model=api_models.Digest)
     async def current_digest(
         request: Request, format: Annotated[Literal["json", "text"], Query()] = "json"
     ) -> Any:
@@ -162,32 +212,34 @@ def create_app(
         return digest.to_dict()
 
     @app.post("/api/reports/run", status_code=202)
-    async def run_report(request: Request) -> dict[str, Any]:
+    async def run_report(request: Request) -> api_models.RunStarted:
         """Write a report now (ignores skip_if_unchanged). 409 if one is running."""
         if not get_ctx(request).run_report_now():
             raise HTTPException(status_code=409, detail="A report is already being written.")
-        return {"status": "started"}
+        return api_models.RunStarted()
 
     @app.get("/api/reports/{report_id}")
-    async def get_report(report_id: int, request: Request) -> dict[str, Any]:
+    async def get_report(report_id: int, request: Request) -> api_models.Report:
         report = await get_ctx(request).reports.store.get(report_id)
         if report is None:
             raise HTTPException(status_code=404, detail=f"no report {report_id}")
-        return report
+        return api_models.Report.model_validate(report)
 
     # ------------------------------------------------------------------ settings
 
     @app.get("/api/settings")
-    async def get_settings(request: Request) -> dict[str, Any]:
+    async def get_settings(request: Request) -> api_models.SettingsResponse:
         """Current values (secrets masked), the JSON schema for the form, section titles."""
-        return {
-            "values": get_ctx(request).settings.public_dict(),
-            "schema": settings_json_schema(),
-            "sections": SECTION_TITLES,
-        }
+        return api_models.SettingsResponse.model_validate(
+            {
+                "values": get_ctx(request).settings.public_dict(),
+                "schema": settings_json_schema(),
+                "sections": SECTION_TITLES,
+            }
+        )
 
     @app.put("/api/settings")
-    async def put_settings(request: Request, body: JsonBody) -> dict[str, Any]:
+    async def put_settings(request: Request, body: JsonBody) -> api_models.SettingsValues:
         """Replace all settings. Secrets sent back as the mask keep their stored value.
         Applied immediately (collectors and LLM client are restarted)."""
         ctx = get_ctx(request)
@@ -196,7 +248,7 @@ def create_app(
         except ValidationError as exc:
             raise _validation_error(exc) from exc
         await ctx.apply_settings(new)
-        return {"values": ctx.settings.public_dict()}
+        return api_models.SettingsValues.model_validate({"values": ctx.settings.public_dict()})
 
     @app.post("/api/settings/test-llm")
     async def test_llm(request: Request, body: JsonBody) -> dict[str, Any]:

@@ -1,5 +1,17 @@
 """Minimal in-process pub/sub.
 
+Event types published today (exposed to browsers by GET /api/stream):
+
+    report.started | report.token | report.done | report.failed   (report engine)
+    metrics.tick                                                    (system/gpu collectors)
+    collector.status                                                (collector state changes)
+
+Reserved for the action layer (M9), which should publish them on this bus:
+
+    approval.pending   a write action is waiting for a decision
+    approval.decided   an approval was approved/rejected/expired
+    action.result      an action finished (executed/failed/dry_run)
+
 `publish` never blocks and never fails: every subscriber has a bounded queue, and when it
 is full the oldest event is dropped (a slow consumer loses history, never stalls the
 publisher). Consumers use `async for event in subscription`.
@@ -51,7 +63,7 @@ class Subscription:
                     return
 
     async def get(self) -> Event:
-        """Next event; raises asyncio.CancelledError-free `StopAsyncIteration` when closed."""
+        """Next event. Raises StopAsyncIteration once the subscription is closed."""
         event = await self._queue.get()
         if event is None:
             raise StopAsyncIteration

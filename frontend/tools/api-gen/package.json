@@ -1,0 +1,9 @@
+{
+  "name": "api-gen",
+  "private": true,
+  "description": "Generates src/api-types.ts from the backend OpenAPI schema. Separate from the app because openapi-typescript needs the TypeScript 5 compiler API, which the app's TypeScript 7 no longer ships.",
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}

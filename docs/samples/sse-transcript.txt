@@ -1,0 +1,77 @@
+$ curl -N 'http://127.0.0.1:PORT/api/stream'      # (fake streaming LLM, canned report)
+HTTP 200  content-type: text/event-stream; charset=utf-8  cache-control: no-cache, no-transform
+
+retry: 3000
+
+id: 3
+event: metrics.tick
+data: {"ts":100.0,"source":"system","cpu":12.3,"mem":40.0,"swap":1.0,"load":0.5,"net_rx_bps":110,"net_tx_bps":55}
+
+$ curl -X POST .../api/reports/run  ->  202
+id: 4
+event: report.started
+data: {"ts":1794685458.9643636,"digest_tokens":48}
+
+id: 5
+event: report.token
+data: {"ts":1794685458.9660664,"text":"```json\n{\"health\": \"warn\", \"score\": 74, \"summary\": \"Two disks are over 85"}
+
+id: 6
+event: report.token
+data: {"ts":1794685458.966077,"text":"% full and two systemd units have failed; everything else looks healthy.\""}
+
+id: 7
+event: report.token
+data: {"ts":1794685458.9660838,"text":", \"findings\": [\n  {\"severity\": \"warn\", \"title\": \"Disk / filling up\", \"det"}
+
+id: 8
+event: report.token
+data: {"ts":1794685458.9660885,"text":"ail\": \"88% used, 28.4GB free.\"},\n  {\"severity\": \"warn\", \"title\": \"Failed "}
+
+id: 9
+event: report.token
+data: {"ts":1794685458.9660926,"text":"units\", \"detail\": \"logrotate.service and snap.remmina.ssh-agent.service f"}
+
+id: 10
+event: report.token
+data: {"ts":1794685458.9660964,"text":"ailed with exit-code.\"},\n  {\"severity\": \"info\", \"title\": \"130 zombie proc"}
+
+id: 11
+event: report.token
+data: {"ts":1794685458.9661002,"text":"esses\", \"detail\": \"Parents are not reaping them.\"}\n]}\n```\n\n## Overview\nTh"}
+
+id: 12
+event: report.token
+data: {"ts":1794685458.9661047,"text":"e server is up and mostly healthy, but needs attention soon: the root dis"}
+
+id: 13
+event: report.token
+data: {"ts":1794685458.966109,"text":"k is 88% full\nand two services have failed.\n\n## Findings\n- **Disk / filli"}
+
+id: 14
+event: report.token
+data: {"ts":1794685458.966113,"text":"ng up** \u2014 88% used, 28.4GB free.\n- **Failed units** \u2014 `logrotate.service`"}
+
+id: 15
+event: report.token
+data: {"ts":1794685458.9661167,"text":" and `snap.remmina.ssh-agent.service` (exit-code).\n- 130 zombie processes"}
+
+id: 16
+event: report.token
+data: {"ts":1794685458.9661205,"text":" (info).\n\n## Resources\nCPU 8.9% busy, load 0.49 on 12 threads. Memory 8.8"}
+
+id: 17
+event: report.token
+data: {"ts":1794685458.9661245,"text":"% used. GPU idle (RTX 3090, 25\u00b0C).\n\n## Changes\nNo previous report.\n\n## Re"}
+
+id: 18
+event: report.token
+data: {"ts":1794685458.966128,"text":"commendations\nFree space on `/`, check `journalctl -u logrotate.service`."}
+
+id: 19
+event: report.token
+data: {"ts":1794685458.9661322,"text":"\n"}
+
+id: 20
+event: report.done
+data: {"ts":1794685458.9643636,"id":1,"health":"warn","score":74,"summary":"Two disks are over 85% full and two systemd units have failed; everything else looks healthy.","findings":[{"severity":"warn","title":"Disk / filling up","detail":"88% used, 28.4GB free."},{"severity":"warn","title":"Failed units","detail":"logrotate.service and snap.remmina.ssh-agent.service failed with exit-code."},{"severity":"info","title":"130 zombie processes","detail":"Parents are not reaping them."}],"parsed":true,"truncated":false}

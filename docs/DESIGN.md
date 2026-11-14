@@ -181,15 +181,23 @@ There are no config files.
 
 ## API (backend ↔ SPA)
 
-- `GET /api/status` — current health + latest snapshot summary.
-- `GET /api/stream` — SSE: report tokens, findings, approvals, action results, metric ticks.
+- `GET /api/status` — dashboard header in one call: latest successful report (health, score,
+  summary, findings), the newest failed/skipped attempt, next report time, collector states and
+  key resource numbers (typed: `StatusResponse`).
+- `GET /api/stream` — SSE over the in-process event bus; `?types=report,metrics` filters by
+  prefix. Events: `report.started|token|done|failed`, `metrics.tick` (compact cpu/mem/load/net
+  or per-GPU numbers after each system/gpu collect), `collector.status` (ok/failing changes).
+  Every frame has an `id:`; `retry: 3000` is sent first; a `: keepalive` comment every 15 s;
+  each client has a bounded queue (a slow client loses its oldest events, publishers never
+  wait). There is no replay on reconnect: clients re-fetch state via `/api/status`. The action
+  layer (M9) should publish `approval.pending`, `approval.decided`, `action.result`.
 - `GET /api/reports` (paginated, newest first, no Markdown), `GET /api/reports/{id}`;
   `POST /api/reports/run` (202; 409 if one is running); `GET /api/reports/digest` (the digest
   the next report would be written from, `?format=text` for plain text).
 - `POST /api/chat` (SSE response), `GET /api/chat/sessions`.
 - `GET /api/actions`, `GET /api/approvals`, `POST /api/approvals/{id}` (approve/reject).
 - `GET /api/arr/overview`.
-- `GET /api/config` (secrets redacted).
+- There is no separate `/api/config`: `GET /api/settings` already returns the settings with secrets masked.
 - `GET /metrics`, `GET /healthz`.
 
 ## Security notes
@@ -225,9 +233,11 @@ backend/
     tools/             # tool registry + read tools
     arr/               # API clients (radarr, sonarr, whisparr, prowlarr, qbit) + automations
     actions/           # policy, limits, approvals, audit
-    outputs/           # sse, telegram, metrics
+    outputs/           # sse (+ live metric ticks); telegram, metrics later
   tests/
 frontend/              # React + Vite SPA (schema-driven settings form, overview)
+                       #   src/api-types.ts is generated: `npm run gen:api` (backend OpenAPI schema
+                       #   -> openapi-typescript; tools/api-gen pins TypeScript 5 for the generator)
 docker/                # Dockerfile, compose example
 docs/
 ```

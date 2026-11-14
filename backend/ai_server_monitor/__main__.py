@@ -30,6 +30,8 @@ def main() -> None:
         log_config=None,
         proxy_headers=True,
         forwarded_allow_ips="*",
+        # Long-lived SSE streams must not hold up a restart.
+        timeout_graceful_shutdown=5,
     )
 
 
