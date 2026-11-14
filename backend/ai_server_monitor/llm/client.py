@@ -12,7 +12,7 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -105,8 +105,19 @@ class LLMStats:
     last_error: str | None = None
     last_success: float | None = None
     by_error: dict[str, int] = field(default_factory=dict)
+    on_success: Callable[[Usage, float], None] | None = None
+    """Optional hooks (metrics); exceptions in them are ignored."""
+    on_error: Callable[[Exception], None] | None = None
+
+    def _notify(self, hook: Callable[..., None] | None, *args: Any) -> None:
+        if hook is not None:
+            try:
+                hook(*args)
+            except Exception:
+                log.exception("LLM stats hook failed")
 
     def record_success(self, usage: Usage, latency_s: float) -> None:
+        self._notify(self.on_success, usage, latency_s)
         self.requests += 1
         self.prompt_tokens += usage.prompt_tokens
         self.completion_tokens += usage.completion_tokens
@@ -120,6 +131,7 @@ class LLMStats:
         self.last_error = f"{type(exc).__name__}: {exc}"
         key = type(exc).__name__
         self.by_error[key] = self.by_error.get(key, 0) + 1
+        self._notify(self.on_error, exc)
 
 
 def _messages_text(messages: Sequence[Message]) -> str:

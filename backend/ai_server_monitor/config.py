@@ -322,6 +322,9 @@ class TelegramSettings(_Model):
 class MetricsSettings(_Model):
     enabled: bool = True
     """Expose Prometheus metrics at /metrics."""
+    bearer_token: Secret = SecretStr("")
+    """If set, scrapers must send "Authorization: Bearer <token>" (Prometheus: authorization
+    in the scrape config). Empty = open to anyone who can reach the port."""
 
 
 class OutputsSettings(_Model):

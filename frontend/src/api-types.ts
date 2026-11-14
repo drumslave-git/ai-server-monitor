@@ -759,6 +759,14 @@ export interface components {
         /** MetricsSettings */
         MetricsSettings: {
             /**
+             * Bearer Token
+             * Format: password
+             * @description If set, scrapers must send "Authorization: Bearer <token>" (Prometheus: authorization
+             *     in the scrape config). Empty = open to anyone who can reach the port.
+             * @default
+             */
+            bearer_token: string;
+            /**
              * Enabled
              * @description Expose Prometheus metrics at /metrics.
              * @default true
@@ -778,6 +786,7 @@ export interface components {
         OutputsSettings: {
             /**
              * @default {
+             *       "bearer_token": "",
              *       "enabled": true
              *     }
              */
@@ -1259,6 +1268,7 @@ export interface components {
             /**
              * @default {
              *       "metrics": {
+             *         "bearer_token": "",
              *         "enabled": true
              *       },
              *       "telegram": {

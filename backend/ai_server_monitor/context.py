@@ -15,12 +15,14 @@ from datetime import timedelta
 import httpx
 
 from .collectors import Collector, CollectorManager, HostEnv
+from .collectors.base import CollectorResult
 from .config import Bootstrap, Settings
 from .db import Database
 from .digest import WindowObserver
 from .events import EventBus
 from .llm import LLMClient, ToolModeResolver
 from .outputs.live import LiveFeed
+from .outputs.metrics import MetricsHub
 from .report.engine import ReportEngine
 from .scheduler import Scheduler
 from .settings_store import SettingsStore
@@ -56,6 +58,8 @@ class AppContext:
         self.events = EventBus()
         self.observer = WindowObserver()
         self.live = LiveFeed(self.events)
+        self.metrics = MetricsHub()
+        self._metrics_task: asyncio.Task[None] | None = None
         # Built in start() / apply_settings():
         self.settings = Settings()
         self.scheduler = Scheduler()
@@ -70,6 +74,7 @@ class AppContext:
 
     async def start(self) -> None:
         await self.db.connect()
+        self._start_metrics_consumer()
         if self._seed is not None:
             await self.store.save(self._seed)
         self.settings = await self.store.load()
@@ -79,6 +84,10 @@ class AppContext:
     async def stop(self) -> None:
         await self._stop_services()
         self.events.close()
+        if self._metrics_task is not None:
+            self._metrics_task.cancel()
+            await asyncio.gather(self._metrics_task, return_exceptions=True)
+            self._metrics_task = None
         await self.db.close()
         log.info("stopped")
 
@@ -116,7 +125,10 @@ class AppContext:
             timeout=timedelta(seconds=s.llm.timeout.total_seconds() * 2 + 30),
         )
         await self.collectors.setup()
-        self.collectors.on_result = self.live.on_result
+        self.metrics.reset_collectors()
+        self.llm.stats.on_success = self.metrics.on_llm_success
+        self.llm.stats.on_error = self.metrics.on_llm_error
+        self.collectors.on_result = self._on_collector_result
         self.reports = self._build_reports()
         self.scheduler.add("digest_observe", self.reports.observe, OBSERVE_INTERVAL)
         self.scheduler.add(
@@ -126,6 +138,20 @@ class AppContext:
             initial_delay=REPORT_INITIAL_DELAY,
         )
         await self.scheduler.start()
+
+    def _on_collector_result(self, result: CollectorResult) -> None:
+        self.metrics.on_collector_result(result)
+        self.live.on_result(result)
+
+    def _start_metrics_consumer(self) -> None:
+        """Count report outcomes from the event bus (subscribed before anything can publish)."""
+        sub = self.events.subscribe("report.done", "report.failed")
+
+        async def consume() -> None:
+            async for event in sub:
+                self.metrics.on_report_event(event.type, event.data)
+
+        self._metrics_task = asyncio.create_task(consume(), name="metrics-consumer")
 
     def _build_reports(self) -> ReportEngine:
         return ReportEngine(

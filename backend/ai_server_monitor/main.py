@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -9,7 +10,7 @@ from typing import Annotated, Any, Literal
 
 import httpx
 from fastapi import Body, FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
@@ -21,6 +22,7 @@ from .digest import collectors_snapshot
 from .digest.snapshot import Snapshot
 from .llm import LLMClient, LLMConnectionError, LLMError
 from .llm.text import strip_reasoning
+from .outputs.metrics import CONTENT_TYPE, report_families
 from .outputs.sse import SSE_HEADERS, event_stream, parse_types
 from .settings_store import SettingsStore, merge_secrets
 from .status import resource_summary
@@ -118,6 +120,26 @@ def create_app(
             "jobs": ctx.scheduler.status(),
             "collectors": ctx.collectors.status(),
         }
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics(request: Request) -> Response:
+        """Prometheus scrape endpoint (Settings → Outputs → metrics)."""
+        ctx = get_ctx(request)
+        cfg = ctx.settings.outputs.metrics
+        if not cfg.enabled:
+            raise HTTPException(status_code=404, detail="metrics are disabled")
+        token = cfg.bearer_token.get_secret_value()
+        if token and not hmac.compare_digest(
+            request.headers.get("authorization", ""), f"Bearer {token}"
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="bearer token required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        latest = await ctx.reports.store.latest()
+        text = await ctx.metrics.render(report_families(latest, __version__))
+        return Response(text, headers={"content-type": CONTENT_TYPE})
 
     # ------------------------------------------------------------------ collectors
 

@@ -198,7 +198,15 @@ There are no config files.
 - `GET /api/actions`, `GET /api/approvals`, `POST /api/approvals/{id}` (approve/reject).
 - `GET /api/arr/overview`.
 - There is no separate `/api/config`: `GET /api/settings` already returns the settings with secrets masked.
-- `GET /metrics`, `GET /healthz`.
+- `GET /metrics` (Prometheus text format, hand-rolled in `outputs/metrics.py`; on/off and an
+  optional scrape bearer token in Settings → Outputs → metrics), `GET /healthz`. Series (prefix
+  `asm_`): `health_score`, `health_status{status}`, `findings{severity}`,
+  `report_last_success_timestamp_seconds`, `report_generation_seconds`, `reports_total{result}`,
+  `collector_up|duration_seconds|errors_total|last_success_timestamp_seconds{collector}`,
+  `llm_request_duration_seconds` (histogram), `llm_requests_total{result}`,
+  `llm_tokens_total{direction}`, `llm_errors_total{type}`, `build_info{version}`. Other modules
+  add series with `MetricsHub.add_provider` (the action layer lists its names in `metrics.py`).
+  An example Grafana dashboard is in `docs/grafana-dashboard.json`.
 
 ## Security notes
 

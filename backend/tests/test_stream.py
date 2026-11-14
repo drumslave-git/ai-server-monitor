@@ -204,9 +204,9 @@ def test_report_tokens_arrive_end_to_end_over_a_real_connection(
         assert status["last_attempt"] is None and status["llm_configured"] is True
 
         deadline = time.time() + 5  # the disconnect is noticed by the server
-        while app.state.ctx.events.subscriber_count and time.time() < deadline:
+        while app.state.ctx.events.subscriber_count > 1 and time.time() < deadline:
             time.sleep(0.05)
-        assert app.state.ctx.events.subscriber_count == 0
+        assert app.state.ctx.events.subscriber_count == 1  # only the metrics consumer is left
 
 
 def test_unfiltered_stream_carries_ticks_and_status_changes(
