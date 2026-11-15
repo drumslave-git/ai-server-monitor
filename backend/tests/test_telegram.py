@@ -304,6 +304,60 @@ def test_decisions_made_elsewhere_are_reflected_in_the_message(bootstrap: Bootst
         assert HASH_A in world.torrents
 
 
+def stored_messages(client: TestClient, app: Any) -> int:
+    row = client.portal.call(  # type: ignore[union-attr]
+        app.state.ctx.db.fetchone, "SELECT COUNT(*) FROM telegram_approval_messages"
+    )
+    return int(row[0])
+
+
+def _request_approval(client: TestClient, app: Any, tg: FakeTelegram) -> dict[str, Any]:
+    record = client.portal.call(  # type: ignore[union-attr]
+        app.state.ctx.actions.request, "qbit_delete_torrent", {"hash": HASH_A}, "scheduler"
+    )
+    wait_for(lambda: stored_messages(client, app) == 1)  # sent and remembered
+    return record
+
+
+def test_approval_messages_are_edited_after_a_restart(bootstrap: Bootstrap) -> None:
+    tg, world = FakeTelegram(), FakeArrWorld()
+    world.torrents = {HASH_A: torrent(HASH_A, "x", "stalledDL")}
+    first = make_app(bootstrap, tg, world=world)
+    with TestClient(first) as client:
+        record = _request_approval(client, first, tg)
+    del first  # the restart: a new app, a new bot, the same database
+    second = make_app(bootstrap, tg, world=world)
+    with TestClient(second) as client:
+        assert not tg.of("editMessageText")  # still pending: nothing to catch up
+        client.post(f"/api/approvals/{record['id']}", json={"decision": "reject"})
+        edit = wait_for(lambda: tg.of("editMessageText"))[0]
+        assert "rejected by ui" in edit["text"] and edit["message_id"] == 1001
+        wait_for(lambda: stored_messages(client, second) == 0)
+
+
+def test_approvals_decided_while_the_bot_was_down_are_edited_on_start(
+    bootstrap: Bootstrap,
+) -> None:
+    import sqlite3
+
+    tg, world = FakeTelegram(), FakeArrWorld()
+    world.torrents = {HASH_A: torrent(HASH_A, "x", "stalledDL")}
+    first = make_app(bootstrap, tg, world=world)
+    with TestClient(first) as client:
+        record = _request_approval(client, first, tg)
+    conn = sqlite3.connect(bootstrap.db_path)
+    conn.execute("UPDATE actions SET status = 'expired' WHERE id = ?", (record["id"],))
+    conn.commit()
+    conn.close()
+    second = make_app(bootstrap, tg, world=world)
+    with TestClient(second) as client:
+        edit = wait_for(lambda: tg.of("editMessageText"))[0]
+        assert "expired" in edit["text"] and edit["message_id"] == 1001
+        assert edit["reply_markup"] == {"inline_keyboard": []}
+        wait_for(lambda: stored_messages(client, second) == 0)
+    assert TOKEN not in json.dumps(tg.calls[1:])  # the token is only ever in the URL
+
+
 # --------------------------------------------------------------------------- reports
 
 
@@ -350,6 +404,23 @@ def test_every_nth_report_is_sent_in_full_and_alerts_can_be_switched_off(
     texts = tg.texts()
     assert len(texts) == 2 and "<b>Report 2</b>" in texts[0] and "<b>Report 4</b>" in texts[1]
     assert "Health changed" not in texts[0]  # alerts are off: no extra messages for changes
+
+
+def test_the_every_nth_counter_survives_a_restart(bootstrap: Bootstrap) -> None:
+    tg = FakeTelegram()
+    for i in (1, 2, 3, 4):
+        app = make_app(bootstrap, tg, telegram={"report_every": 2, "alerts": False})
+        with TestClient(app) as client:
+            ctx = app.state.ctx
+            client.portal.call(
+                functools.partial(
+                    ctx.reports.store.add, ts=float(i), status="ok", markdown=f"## Report {i}"
+                )
+            )
+            client.portal.call(ctx.telegram.on_event, "report.done", report_event(i, "ok"))
+        # a fresh bot every time: only the database carries the count
+    texts = tg.texts()
+    assert len(texts) == 2 and "<b>Report 2</b>" in texts[0] and "<b>Report 4</b>" in texts[1]
 
 
 def test_commands_status_help_approvals_and_report(bootstrap: Bootstrap) -> None:

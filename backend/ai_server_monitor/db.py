@@ -25,6 +25,7 @@ _PRUNABLE: dict[str, str] = {
     "collector_samples": "ts",
     "reports": "ts",
     "chat_sessions": "updated",  # messages go via ON DELETE CASCADE
+    "telegram_approval_messages": "created_ts",
 }
 
 

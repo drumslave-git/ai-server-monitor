@@ -36,6 +36,9 @@ API_URL = "https://api.telegram.org"
 MESSAGE_LIMIT = 4096
 POLL_TIMEOUT = 25
 BACKOFF_MAX = 60.0
+KV_REPORT_COUNT = "telegram.report_count"
+KV_LAST_HEALTH = "telegram.last_health"
+KV_REPORT_REQUESTS = "telegram.report_requests"
 TYPING_EVERY = 4.0
 HELP = (
     "<b>AI Server Monitor</b>\n"
@@ -200,10 +203,6 @@ class TelegramBot:
         self._tasks: set[asyncio.Task[None]] = set()
         self._runners: list[asyncio.Task[None]] = []
         self._offset = 0
-        self._report_count = 0
-        self._last_health: str | None = None
-        self._report_requests: set[int] = set()
-        self._approval_messages: dict[int, list[tuple[int, int]]] = {}
         self._stopping = False
 
     # ------------------------------------------------------------------ lifecycle
@@ -211,12 +210,11 @@ class TelegramBot:
     async def start(self) -> None:
         if not self.allowed:
             log.warning("telegram: no allowed chat IDs are set, so the bot ignores everyone")
-        latest = await self.app.reports.store.latest(status="ok")
-        self._last_health = latest["health"] if latest else None
         self._runners = [
             asyncio.create_task(self._poll_loop(), name="telegram-poll"),
             asyncio.create_task(self._event_loop(), name="telegram-events"),
         ]
+        self._spawn(self._catch_up())
         log.info("telegram: bot started (%d allowed chat(s))", len(self.allowed))
 
     async def stop(self) -> None:
@@ -309,7 +307,7 @@ class TelegramBot:
             await self.send(chat_id, await self._status_text(), markdown=False)
         elif command == "report":
             if self.app.run_report_now():
-                self._report_requests.add(chat_id)
+                await self._add_report_request(chat_id)
                 await self.send(chat_id, "Writing a report, it will arrive here.", markdown=False)
             else:
                 await self.send(chat_id, "A report is already being written.", markdown=False)
@@ -427,14 +425,39 @@ class TelegramBot:
         elif kind in ("approval.decided", "approval.expired"):
             await self._reflect_decision(data)
 
+    async def _last_health(self) -> str | None:
+        stored = await self.app.db.kv_get(KV_LAST_HEALTH)
+        if stored is not None:
+            return str(stored)
+        latest = await self.app.reports.store.latest(status="ok")
+        return latest["health"] if latest else None
+
+    async def _take_report_requests(self) -> set[int]:
+        """The chats that asked for /report and are still waiting (older asks are dropped)."""
+        stored = await self.app.db.kv_get(KV_REPORT_REQUESTS)
+        if stored is None:
+            return set()
+        await self.app.db.kv_set(KV_REPORT_REQUESTS, None)
+        max_age = self.app.settings.report.interval.total_seconds()
+        if time.time() - float(stored.get("ts", 0)) > max_age:
+            return set()
+        return {int(c) for c in stored.get("chats", [])}
+
+    async def _add_report_request(self, chat_id: int) -> None:
+        stored = await self.app.db.kv_get(KV_REPORT_REQUESTS) or {}
+        chats = {int(c) for c in stored.get("chats", [])} | {chat_id}
+        await self.app.db.kv_set(KV_REPORT_REQUESTS, {"ts": time.time(), "chats": sorted(chats)})
+
     async def _on_report(self, data: dict[str, Any]) -> None:
-        self._report_count += 1
+        count = int(await self.app.db.kv_get(KV_REPORT_COUNT, 0)) + 1
+        await self.app.db.kv_set(KV_REPORT_COUNT, count)
         health = data.get("health")
-        previous, self._last_health = self._last_health, health
+        previous = await self._last_health()
+        await self.app.db.kv_set(KV_LAST_HEALTH, health)
         changed = previous is not None and health != previous and self.cfg.alerts
         every = self.cfg.report_every
-        full_for_all = every > 0 and self._report_count % every == 0
-        requesters, self._report_requests = self._report_requests, set()
+        full_for_all = every > 0 and count % every == 0
+        requesters = await self._take_report_requests()
         report = await self.app.reports.store.get(int(data["id"])) if data.get("id") else None
         markdown = (report or {}).get("markdown") or data.get("summary") or ""
         header = ""
@@ -494,7 +517,11 @@ class TelegramBot:
             reply_markup=self._keyboard(int(record["id"])),
         )
         message_id = sent[-1]["message_id"]
-        self._approval_messages.setdefault(int(record["id"]), []).append((chat_id, message_id))
+        await self.app.db.execute(
+            "INSERT OR REPLACE INTO telegram_approval_messages "
+            "(approval_id, chat_id, message_id, created_ts) VALUES (?, ?, ?, ?)",
+            (int(record["id"]), chat_id, int(message_id), time.time()),
+        )
 
     async def _on_callback(self, query: dict[str, Any]) -> None:
         message = query.get("message") or {}
@@ -566,22 +593,52 @@ class TelegramBot:
         """Replace the buttons of every message for this approval with the outcome."""
         record = await self.app.actions.get(action_id)
         text = self._approval_text(record, expiry=False) + "\n\n<b>" + html.escape(note) + "</b>"
-        for chat_id, message_id in self._approval_messages.get(action_id, []):
+        known = await self._stored_messages(action_id)
+        for chat_id, message_id in known:
             await self._edit(chat_id, message_id, text)
-        if (
-            only
-            and only[1]
-            and (only[0], only[1]) not in self._approval_messages.get(action_id, [])
-        ):
+        if only and only[1] and (only[0], only[1]) not in known:
             await self._edit(only[0], only[1], text)
+        await self.app.db.execute(
+            "DELETE FROM telegram_approval_messages WHERE approval_id = ?", (action_id,)
+        )
+
+    async def _stored_messages(self, action_id: int) -> list[tuple[int, int]]:
+        rows = await self.app.db.fetchall(
+            "SELECT chat_id, message_id FROM telegram_approval_messages WHERE approval_id = ?",
+            (action_id,),
+        )
+        return [(int(r["chat_id"]), int(r["message_id"])) for r in rows]
 
     async def _reflect_decision(self, data: dict[str, Any]) -> None:
         action_id = int(data["id"])
-        if action_id not in self._approval_messages:
+        if not await self._stored_messages(action_id):
             return
         decided_by = str(data.get("decided_by") or "")
         decision = data.get("decision") or data.get("status")
         await self._reflect(action_id, f"{decision} by {decided_by} ({data.get('status')})")
+
+    async def _catch_up(self) -> None:
+        """Edit messages of approvals that were decided or expired while the bot was down."""
+        try:
+            rows = await self.app.db.fetchall(
+                "SELECT DISTINCT approval_id FROM telegram_approval_messages"
+            )
+            for row in rows:
+                action_id = int(row["approval_id"])
+                try:
+                    record = await self.app.actions.get(action_id)
+                except NotFound:
+                    await self.app.db.execute(
+                        "DELETE FROM telegram_approval_messages WHERE approval_id = ?",
+                        (action_id,),
+                    )
+                    continue
+                if record["status"] == "pending":
+                    continue
+                by = f" by {record['decided_by']}" if record.get("decided_by") else ""
+                await self._reflect(action_id, f"{record['status']}{by}")
+        except Exception:
+            log.exception("telegram: could not catch up on approval messages")
 
 
 def _alert_body(data: dict[str, Any]) -> str:

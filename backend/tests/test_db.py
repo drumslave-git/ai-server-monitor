@@ -49,9 +49,21 @@ async def test_prune_respects_retention_and_keeps_actions(db: Database) -> None:
         (old,),
     )
 
+    for ts in (old, recent):
+        await db.execute(
+            "INSERT INTO telegram_approval_messages (approval_id, chat_id, message_id, created_ts) "
+            "VALUES (?, 1, 2, ?)",
+            (int(ts), ts),
+        )
+
     deleted = await db.prune(timedelta(days=30), now=now)
 
-    assert deleted == {"collector_samples": 1, "reports": 1, "chat_sessions": 1}
+    assert deleted == {
+        "collector_samples": 1,
+        "reports": 1,
+        "chat_sessions": 1,
+        "telegram_approval_messages": 1,
+    }
     assert (await db.fetchone("SELECT COUNT(*) FROM collector_samples"))[0] == 1
     assert (await db.fetchone("SELECT COUNT(*) FROM chat_messages"))[0] == 0  # cascade
     assert (await db.fetchone("SELECT COUNT(*) FROM actions"))[0] == 2  # audit log kept
@@ -73,3 +85,27 @@ async def test_transaction_rollback(db: Database) -> None:
         pass
     assert (await db.fetchone("SELECT COUNT(*) FROM reports"))[0] == 0
     assert await db.ping()
+
+
+async def test_database_at_schema_4_migrates_to_5(tmp_path: Path) -> None:
+    import sqlite3
+
+    path = tmp_path / "v4.db"
+    conn = sqlite3.connect(path)
+    for _, _, sql in load_migrations()[:4]:
+        conn.executescript(sql)
+    conn.execute("PRAGMA user_version = 4")
+    conn.execute("INSERT INTO kv (key, value, updated) VALUES ('keep', '1', 1)")
+    conn.commit()
+    conn.close()
+
+    db = Database(path)
+    await db.connect()
+    try:
+        assert await db.schema_version() == 5
+        info = await db.fetchall("PRAGMA table_info(telegram_approval_messages)")
+        cols = {r["name"] for r in info}
+        assert cols == {"approval_id", "chat_id", "message_id", "created_ts"}
+        assert await db.kv_get("keep") == 1
+    finally:
+        await db.close()
