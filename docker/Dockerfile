@@ -14,6 +14,10 @@ RUN npm run build
 # ---------------------------------------------------------------- runtime
 FROM python:3.13-slim AS runtime
 
+# Git commit this image was built from (shown next to the version in the UI).
+ARG BUILD_COMMIT=unknown
+ENV ASM_BUILD_COMMIT=$BUILD_COMMIT
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import os
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -50,6 +51,12 @@ SECTION_TITLES = {
     "arr": "*arr & downloads",
     "mcp": "MCP servers",
 }
+
+
+def _build_commit() -> str | None:
+    """Short git commit the image was built from, None for dev runs / unknown builds."""
+    raw = os.environ.get("ASM_BUILD_COMMIT", "").strip()
+    return None if not raw or raw == "unknown" else raw[:7]
 
 
 def get_ctx(request: Request) -> AppContext:
@@ -121,6 +128,7 @@ def create_app(
         llm = ctx.settings.llm
         return {
             "version": __version__,
+            "commit": _build_commit(),
             "uptime_s": round(time.time() - ctx.started_at, 1),
             "schema_version": await ctx.db.schema_version(),
             "host_root": str(ctx.host_env.root),

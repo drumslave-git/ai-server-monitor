@@ -26,6 +26,23 @@ function parseHash(): string[] {
   return location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
 }
 
+function Version() {
+  const [info, setInfo] = useState<{ version: string; commit: string | null } | null>(null);
+  useEffect(() => {
+    api.get<{ version: string; commit?: string | null }>("/api/info").then(
+      (i) => setInfo({ version: i.version, commit: i.commit ?? null }),
+      () => undefined,
+    );
+  }, []);
+  if (!info) return null;
+  return (
+    <span className="app-version" title={`Server version${info.commit ? ` (commit ${info.commit})` : ""}`}>
+      v{info.version}
+      {info.commit ? ` · ${info.commit}` : ""}
+    </span>
+  );
+}
+
 export function App() {
   const [route, setRoute] = useState(parseHash);
   const connected = useConnected();
@@ -60,6 +77,7 @@ export function App() {
           <span className={`live-dot ${connected ? "on" : ""}`} title={connected ? "Live" : "Reconnecting"} />
           <span>AI Server Monitor</span>
         </div>
+        <Version />
         <nav aria-label="Main">
           {PAGES.map(({ key, title, icon: Icon }) => (
             <a key={key} href={`#/${key}`} className={page === key ? "active" : undefined} aria-current={page === key ? "page" : undefined}>

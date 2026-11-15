@@ -82,6 +82,7 @@ jobs:
           context: .
           file: docker/Dockerfile
           platforms: linux/amd64
+          build-args: BUILD_COMMIT=${{ github.sha }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
