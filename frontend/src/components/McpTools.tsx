@@ -69,17 +69,17 @@ export function McpToolPicker({ tools, value, onChange }: {
                     </span>
                     {t.description && <div className="details">{t.description}</div>}
                   </td>
-                  <td>
+                  <td data-label="Policy">
                     <select aria-label={`Policy of ${t.name}`} disabled={!on} value={String(o?.policy ?? "inherit")} onChange={(e) => setOverride(t.name, "policy", e.target.value)}>
                       {POLICIES.map((p) => <option key={p} value={p}>{p}</option>)}
                     </select>
                   </td>
-                  <td>
+                  <td data-label="Treat as">
                     <select aria-label={`Treat ${t.name} as`} disabled={!on} value={String(o?.kind ?? "auto")} onChange={(e) => setOverride(t.name, "kind", e.target.value)}>
                       {KINDS.map((k) => <option key={k} value={k}>{k === "auto" ? `auto (${t.read_only ? "read" : "write"})` : k}</option>)}
                     </select>
                   </td>
-                  <td>{t.schema_tokens}</td>
+                  <td data-label="Tokens">{t.schema_tokens}</td>
                 </tr>
               );
             })}

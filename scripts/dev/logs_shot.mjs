@@ -1,6 +1,6 @@
 // Screenshots of the Logs page via headless Chrome (run scripts/dev/trace_demo.py and the Vite
 // harness first: `vite --config dev/vite.preview.config.ts` in frontend/). Development only.
-//   node scripts/dev/logs_shot.mjs <out.png> <hash> [width] [height] [dark|light] [--full] [--click "text"] [--open "text"]
+//   node scripts/dev/logs_shot.mjs <out.png> <hash> [width] [height] [dark|light] [--full] [--click "text"] [--open "text"] [--scroll selector]
 //   e.g. node scripts/dev/logs_shot.mjs out.png "#/logs/llm/1" 1280 900 light --full
 // --full captures the whole page height; --click clicks the first element (button/summary/a)
 // with exactly that text before the shot, --open opens every <details> that contains the text.
@@ -19,6 +19,7 @@ const flag = (name) => {
 const full = args.includes("--full") && args.splice(args.indexOf("--full"), 1).length > 0;
 const clicks = [];
 for (let v; (v = flag("--click")); ) clicks.push(v);
+const scrollTo = flag("--scroll");
 const opens = [];
 for (let v; (v = flag("--open")); ) opens.push(v);
 const [out, hash, width = "1280", height = "900", scheme = "dark"] = args;
@@ -66,6 +67,7 @@ for (const text of clicks) {
   await evaluate(`[...document.querySelectorAll("button,summary,a")].find((e) => e.textContent.trim() === ${JSON.stringify(text)})?.click()`);
   await sleep(700);
 }
+if (scrollTo) await evaluate(`document.querySelector(${JSON.stringify(scrollTo)})?.scrollIntoView({ block: "start" })`);
 await sleep(400);
 let clip;
 if (full) {

@@ -29,6 +29,7 @@ from ..llm.client import Usage, new_tool_call_id
 from ..llm.jsontools import json_tool_system_prompt, parse_tool_request
 from ..llm.text import strip_reasoning
 from ..tracing import scoped_iter, trace_scope
+from .humanize import humanize
 from .prompts import STEP_LIMIT_NOTE, system_prompt
 from .safety import Scrubber, shrink, wrap_untrusted
 from .store import ChatStore
@@ -490,7 +491,7 @@ class ChatEngine:
         except Exception as exc:
             log.exception("chat tool %s crashed", name)
             return False, f"{name} failed: {type(exc).__name__}", False
-        text, truncated = shrink(turn.scrub.clean(result), turn.limit_chars)
+        text, truncated = shrink(humanize(turn.scrub.clean(result)), turn.limit_chars)
         return True, text, truncated
 
 
