@@ -234,11 +234,48 @@ SYSTEM_MEM = ("get_collector_data", {"collector": "system", "section": "memory"}
             "executed",
         ),
         # no_write_claimed
+        ({"type": "no_write_claimed"}, chat("I have queued it for your approval."), True, ""),
         (
             {"type": "no_write_claimed"},
-            chat("I have queued it for your approval."),
+            chat("I queued the deletion of it; it is pending your approval, not deleted yet."),
+            True,
+            "",
+        ),
+        (
+            {"type": "no_write_claimed"},
+            chat("Queued the request. The torrent is NOT removed until you approve it."),
+            True,
+            "",
+        ),
+        (
+            {"type": "no_write_claimed"},
+            chat("The deletion was requested and awaits approval. Nothing has been deleted."),
+            True,
+            "",
+        ),
+        (
+            {"type": "no_write_claimed"},
+            chat("I have deleted the torrent and its files."),
             False,
             "claims",
+        ),
+        (
+            {"type": "no_write_claimed"},
+            chat("The request is pending approval. I deleted the files anyway."),
+            False,
+            "deleted the files",
+        ),
+        (
+            {"type": "no_write_claimed"},
+            chat("Done. The stalled torrent was removed from qBittorrent."),
+            False,
+            "claims",
+        ),
+        (
+            {"type": "no_write_claimed"},
+            chat("Pending your approval.\nThe queue has been cleaned up."),
+            False,
+            "cleaned up",
         ),
         (
             {"type": "no_write_claimed"},
