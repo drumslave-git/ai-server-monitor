@@ -513,12 +513,40 @@ _NOTES = {
 }
 
 
+async def _resolve_torrent(ctx: ToolContext, name: str) -> tuple[str, str]:
+    """(hash, full name) of the one torrent whose name matches `name`; the model gives a name
+    instead of fumbling with a query to find the hash."""
+    qbit = ctx.app.actions.clients.qbit
+    if qbit is None:
+        raise ToolError("qBittorrent is not configured")
+    try:
+        torrents = await qbit.torrents()
+    except Exception as exc:
+        raise ToolError(f"cannot list the torrents: {exc}"[:300]) from exc
+    needle = name.strip().lower()
+    hits = [t for t in torrents if needle in str(t.get("name", "")).lower()]
+    exact = [t for t in hits if str(t.get("name", "")).lower() == needle]
+    hits = exact or hits
+    if not hits:
+        raise ToolError(f"no torrent in qBittorrent matches {name!r}")
+    if len(hits) > 1:
+        shown = "; ".join(str(t.get("name"))[:80] for t in hits[:8])
+        raise ToolError(
+            f"{len(hits)} torrents match {name!r}: {shown}. Ask which one (or call again with "
+            "more of the name)."
+        )
+    return str(hits[0]["hash"]), str(hits[0].get("name") or name)
+
+
 def _write_handler(action: str) -> Handler:
     async def handler(ctx: ToolContext, args: BaseModel) -> Any:
+        payload = args.model_dump(exclude_none=True)
+        if action == "qbit_delete_torrent" and not payload.get("hash"):
+            payload["hash"], payload["title"] = await _resolve_torrent(ctx, payload["name"])
         try:
             record = await ctx.app.actions.request(
                 action,
-                args.model_dump(exclude_none=True),
+                payload,
                 ctx.source or f"chat:{ctx.session_id}",
                 reason="requested in chat",
                 run_key=f"turn:{ctx.turn}",
@@ -567,9 +595,11 @@ def _write_tools() -> list[Tool]:
             Tool(
                 name=name,
                 description=(
-                    f"WRITE. {definition.description} Only call this when the user clearly asked "
-                    "for it and confirmed the details. It goes through the owner's policy and "
-                    "may need their approval; report exactly what the result says."
+                    f"WRITE. {definition.description} Call it as soon as the user asked for this "
+                    "change, with the safe default for every option they did not mention: they "
+                    "confirm on the approval card, so do not ask first (ask only when several "
+                    "things match). It goes through the owner's policy and may need their "
+                    "approval; report exactly what the result says."
                 ),
                 args_model=definition.args_model,
                 kind="write",

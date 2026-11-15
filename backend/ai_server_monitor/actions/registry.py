@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..apiaccess import (
     ACTION_DESCRIPTION,
@@ -41,10 +41,18 @@ class _Args(BaseModel):
 
 
 class QbitDeleteArgs(_Args):
-    hash: str = Field(pattern=TORRENT_HASH)
-    """Torrent hash (v1: 40 hex chars, v2: 64)."""
+    hash: str | None = Field(default=None, pattern=TORRENT_HASH)
+    """Torrent hash (v1: 40 hex chars, v2: 64). Or give `name` instead."""
+    name: str | None = Field(default=None, max_length=300)
+    """The torrent's name (or a distinctive part of it): the chat looks the hash up itself."""
     delete_files: bool = False
-    """Also delete the downloaded files from disk."""
+    """Also delete the downloaded files from disk. Default: keep them."""
+
+    @model_validator(mode="after")
+    def _identified(self) -> QbitDeleteArgs:
+        if not self.hash and not (self.name or "").strip():
+            raise ValueError("give the torrent's name or its hash")
+        return self
 
 
 class ArrRemoveQueueArgs(_Args):
@@ -212,6 +220,8 @@ def _search_summary(items: list[Any]) -> str:
 async def _qbit_delete(clients: Clients, args: QbitDeleteArgs) -> dict[str, Any]:
     if clients.qbit is None:
         raise ActionError("qBittorrent is not configured")
+    if not args.hash:
+        raise ActionError("the torrent's hash is missing (the chat resolves it from the name)")
     found = await clients.qbit.torrents(hashes=args.hash)
     if not found:
         raise ActionError("torrent not found in qBittorrent (already removed?)")
@@ -291,10 +301,14 @@ async def _prowlarr_test(clients: Clients, args: ProwlarrTestArgs) -> dict[str, 
 _ACTIONS = (
     ActionDef(
         name="qbit_delete_torrent",
-        description="Remove a torrent from qBittorrent, optionally with its files.",
+        description=(
+            "Remove a torrent from qBittorrent by `name` (a distinctive part is enough) or "
+            "`hash`. The files are KEPT unless delete_files=true: do not ask about that, the "
+            "owner confirms on the approval card."
+        ),
         args_model=QbitDeleteArgs,
         policy_key=lambda a: "stalled_cleanup",
-        target=lambda a: f"qbittorrent: {a.title or a.hash[:12]}",
+        target=lambda a: f"qbittorrent: {a.title or a.name or (a.hash or '')[:12]}",
         check=_check_qbit,
         execute=_qbit_delete,
         summary=lambda items: f"remove {_plural(len(items), 'torrent')} from qBittorrent",

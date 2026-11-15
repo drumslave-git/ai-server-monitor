@@ -93,6 +93,7 @@ async def test_approve_policy_walks_request_pending_approve_executed(
     assert pending["args"] == {
         "title": "Stuck.Movie.2026",
         "hash": HASH_A,
+        "name": None,
         "delete_files": True,
     }
     assert world.requests == []  # nothing was sent to qBittorrent yet

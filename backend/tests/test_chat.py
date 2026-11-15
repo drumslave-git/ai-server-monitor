@@ -14,7 +14,7 @@ from ai_server_monitor.collectors.base import Collector
 from ai_server_monitor.config import Bootstrap, Settings
 from ai_server_monitor.main import create_app
 
-from .arrfakes import FakeArrWorld, arr_settings
+from .arrfakes import HASH_A, FakeArrWorld, arr_settings, torrent
 from .conftest import LLM_URL
 
 SECRET = "sk-live-0123456789abcdef"
@@ -393,6 +393,57 @@ def test_write_tools_follow_policy_and_configuration(bootstrap: Bootstrap) -> No
     assert "arr_add_media" not in offered  # policy off: not offered at all
     assert {"qbit_delete_torrent", "arr_search", "arr_lookup", "get_arr_overview"} <= offered
     assert "promql_query" not in offered  # Prometheus not configured
+
+
+def test_delete_torrent_by_name_files_an_approval_with_files_kept(bootstrap: Bootstrap) -> None:
+    world = FakeArrWorld()
+    world.torrents[HASH_A] = torrent(HASH_A, "Northern.Tides.S01E01.2160p.WEB-DL", "stalledDL")
+    llm = FakeLLM(
+        call("qbit_delete_torrent", {"name": "northern.tides.s01e01"}),
+        say("I filed the removal; it is pending your approval, nothing is deleted yet."),
+    )
+    app = make_app(bootstrap, llm, world=world, actions={"stalled_cleanup": {"policy": "approve"}})
+    with TestClient(app) as client:
+        events = ask(client, "Delete the stalled torrent Northern.Tides.S01E01.2160p.WEB-DL")
+        result = next(e for e in events if e["type"] == "tool_result")
+        assert result["ok"] is True and "pending" in result["preview"]
+        (approval,) = client.get("/api/approvals").json()["items"]
+        assert approval["action"] == "qbit_delete_torrent"
+        assert approval["args"]["hash"] == HASH_A and approval["args"]["delete_files"] is False
+        assert "Northern.Tides.S01E01" in approval["target"]
+        assert HASH_A in world.torrents  # nothing deleted before the owner approves
+    description = next(
+        t["function"]["description"]
+        for t in llm.requests[0]["tools"]
+        if t["function"]["name"] == "qbit_delete_torrent"
+    )
+    assert "do not ask first" in description and "approval card" in description
+    assert "files are KEPT" in description and "confirmed the details" not in description
+
+
+def test_delete_torrent_by_name_asks_which_when_several_match(bootstrap: Bootstrap) -> None:
+    world = FakeArrWorld()
+    world.torrents[HASH_A] = torrent(HASH_A, "Northern.Tides.S01E01.2160p")
+    world.torrents["b" * 40] = torrent("b" * 40, "Northern.Tides.S01E02.2160p")
+    llm = FakeLLM(
+        call("qbit_delete_torrent", {"name": "Northern.Tides"}), say("Which episode do you mean?")
+    )
+    app = make_app(bootstrap, llm, world=world, actions={"stalled_cleanup": {"policy": "approve"}})
+    with TestClient(app) as client:
+        events = ask(client, "delete Northern.Tides")
+        result = next(e for e in events if e["type"] == "tool_result")
+        assert result["ok"] is False and "2 torrents match" in result["preview"]
+        assert "S01E01" in result["preview"] and "S01E02" in result["preview"]
+        assert client.get("/api/approvals").json()["items"] == []
+
+
+def test_delete_torrent_needs_a_name_or_a_hash() -> None:
+    from ai_server_monitor.actions.registry import QbitDeleteArgs
+
+    with pytest.raises(ValueError, match="name or its hash"):
+        QbitDeleteArgs.model_validate({})
+    assert QbitDeleteArgs.model_validate({"name": "x"}).delete_files is False
+    assert QbitDeleteArgs.model_validate({"hash": HASH_A}).name is None
 
 
 # --------------------------------------------------------------------------- JSON fallback
