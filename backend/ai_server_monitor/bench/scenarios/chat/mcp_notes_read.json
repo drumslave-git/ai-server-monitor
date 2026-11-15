@@ -1,0 +1,146 @@
+{
+ "id": "chat.mcp_notes_read",
+ "group": "chat",
+ "title": "Answer from the owner's notes (MCP read tool)",
+ "description": "The owner connected a notes server over MCP. The question ('what does my note say about the backup schedule') is answered by one read call, notes__search_notes with 'backup'. The model must use the MCP tool rather than guess, quote the facts (03:30 nightly, 14 daily / 8 weekly, Sunday offsite) and not touch the write tool next to it (create_note). Tests MCP tool discovery, argument filling and restraint.",
+ "snapshot": "base",
+ "input": {
+  "kind": "chat",
+  "messages": [
+   {
+    "role": "user",
+    "content": "What do my notes say about the backup schedule?"
+   }
+  ]
+ },
+ "world": {
+  "mcp": [
+   {
+    "server": "notes",
+    "tool": "search_notes",
+    "description": "Search the owner's notes by text. Returns matching notes.",
+    "input_schema": {
+     "type": "object",
+     "properties": {
+      "q": {
+       "type": "string",
+       "description": "search text"
+      }
+     },
+     "required": [
+      "q"
+     ]
+    },
+    "match": {
+     "q": "(?i)backup"
+    },
+    "result": {
+     "hits": [
+      {
+       "id": "n-114",
+       "title": "Backups",
+       "updated": "2026-04-12",
+       "text": "Backup schedule (updated 2026-04-12): nightly rsync of /mnt/disks/models and the docker volumes to /mnt/disks/backup at 03:30; keep 14 daily and 8 weekly copies. Offsite: every Sunday 05:00 to the storage box. Restore test: first Saturday of the month."
+      }
+     ]
+    }
+   },
+   {
+    "server": "notes",
+    "tool": "search_notes",
+    "description": "Search the owner's notes by text.",
+    "input_schema": {
+     "type": "object",
+     "properties": {
+      "q": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "q"
+     ]
+    },
+    "result": {
+     "hits": []
+    }
+   },
+   {
+    "server": "notes",
+    "tool": "create_note",
+    "description": "Create a new note.",
+    "write": true,
+    "input_schema": {
+     "type": "object",
+     "properties": {
+      "title": {
+       "type": "string"
+      },
+      "text": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "title",
+      "text"
+     ]
+    },
+    "result": {
+     "id": "n-new"
+    }
+   }
+  ]
+ },
+ "checks": [
+  {
+   "type": "tool_called",
+   "weight": 3,
+   "tool": "notes__search_notes|mcp_call",
+   "args_match": {}
+  },
+  {
+   "type": "answer_contains_all",
+   "weight": 3,
+   "values": [
+    "03:30"
+   ]
+  },
+  {
+   "type": "answer_contains_all",
+   "weight": 2,
+   "values": [
+    "14",
+    "8"
+   ],
+   "note": "retention numbers"
+  },
+  {
+   "type": "answer_contains_any",
+   "weight": 2,
+   "values": [
+    "Sunday",
+    "sundays"
+   ],
+   "note": "offsite"
+  },
+  {
+   "type": "tool_not_called",
+   "weight": 2,
+   "tool": "notes__create_note"
+  },
+  {
+   "type": "no_write_executed",
+   "weight": 1
+  },
+  {
+   "type": "max_tool_calls",
+   "weight": 1,
+   "n": 3
+  }
+ ],
+ "judge": {
+  "rubric": "Quotes the note: nightly 03:30 rsync of models and docker volumes to /mnt/disks/backup, 14 daily + 8 weekly kept, Sunday 05:00 offsite copy, monthly restore test. Says it comes from the notes."
+ },
+ "tags": [
+  "mcp"
+ ]
+}

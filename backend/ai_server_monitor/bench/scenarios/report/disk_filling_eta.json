@@ -1,0 +1,84 @@
+{
+ "id": "report.disk_filling_eta",
+ "group": "report",
+ "title": "A disk filling up, with an ETA",
+ "description": "/mnt/disks/downloads is 91 % full and has grown ~85 GB/day for a week: full in about 4 days (digest flag: WARN, 'will be full in ~4 days'). The report must be health warn (not ok, not an over-escalated crit), name the disk, give the percentage and the ETA, and nothing else should be blamed. Tests that the model carries the trend numbers from the digest into the findings instead of just saying 'disk is quite full'.",
+ "snapshot": "base-disk-filling",
+ "input": {
+  "kind": "report"
+ },
+ "checks": [
+  {
+   "type": "report_json_valid",
+   "weight": 1
+  },
+  {
+   "type": "report_health",
+   "weight": 3,
+   "equals": "warn"
+  },
+  {
+   "type": "report_score_range",
+   "weight": 1,
+   "min": 35,
+   "max": 85
+  },
+  {
+   "type": "report_findings_mention",
+   "weight": 3,
+   "patterns": [
+    "downloads"
+   ],
+   "min": 1,
+   "note": "the disk is named"
+  },
+  {
+   "type": "report_findings_mention",
+   "weight": 3,
+   "patterns": [
+    "91\\s?%"
+   ],
+   "min": 1
+  },
+  {
+   "type": "report_findings_mention",
+   "weight": 3,
+   "patterns": [
+    "\\b4 days\\b",
+    "\\bfour days\\b",
+    "~\\s?4\\s?d\\b",
+    "\\b3\\.[5-9] days\\b",
+    "\\b4\\.[0-4] days\\b"
+   ],
+   "min": 1,
+   "note": "the ETA from the trend"
+  },
+  {
+   "type": "answer_contains_any",
+   "weight": 1,
+   "values": [
+    "85 GB",
+    "85GB",
+    "85.0GB",
+    "85.0 GB"
+   ]
+  },
+  {
+   "type": "report_no_invented",
+   "weight": 2,
+   "patterns": [
+    "\\boom\\b|out of memory",
+    "gpu",
+    "unhealthy",
+    "restart",
+    "logrotate"
+   ]
+  }
+ ],
+ "judge": {
+  "rubric": "Names /mnt/disks/downloads at 91 % (about 347 GB free of 3.9 TB), says it grows ~85 GB/day and will be full in about 4 days, recommends freeing space or moving data. Calls it a warning, not an emergency. Nothing unrelated in the findings."
+ },
+ "tags": [
+  "trend"
+ ]
+}

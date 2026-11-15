@@ -1,0 +1,189 @@
+{
+ "id": "prom_plan.three_exporters",
+ "group": "prom_plan",
+ "title": "Plan queries for node, GPU and container exporters",
+ "description": "A Prometheus with a node exporter (pressure, disk IO and network error counters), an NVIDIA GPU exporter and cAdvisor (33 container series per metric). The planner asks the model, per job, for useful monitoring queries. At least 6 must survive validation; the first reply must already wrap counters in rate()/increase() and select the job label. Per-container metrics (33 series) must be aggregated. Tests PromQL competence with typed metrics: the core of the 'promauto' feature and a good small-model discriminator.",
+ "snapshot": "base",
+ "input": {
+  "kind": "prom_plan",
+  "catalog": {
+   "jobs": [
+    {
+     "job": "node",
+     "targets": [
+      {
+       "instance": "node-exporter:9100",
+       "health": "up"
+      }
+     ],
+     "metrics": {
+      "node_load5": {
+       "type": "gauge",
+       "help": "5m load average.",
+       "value": 1.52
+      },
+      "node_pressure_cpu_waiting_seconds_total": {
+       "type": "counter",
+       "help": "Total time processes waited for CPU",
+       "value": 5120.4
+      },
+      "node_pressure_memory_waiting_seconds_total": {
+       "type": "counter",
+       "help": "Total time processes waited for memory",
+       "value": 88.1
+      },
+      "node_pressure_io_waiting_seconds_total": {
+       "type": "counter",
+       "help": "Total time processes waited for IO",
+       "value": 301.2
+      },
+      "node_network_receive_errs_total": {
+       "type": "counter",
+       "help": "Network device statistic receive_errs.",
+       "series": 3,
+       "value": 0
+      },
+      "node_network_transmit_drop_total": {
+       "type": "counter",
+       "help": "Network device statistic transmit_drop.",
+       "series": 3,
+       "value": 0
+      },
+      "node_disk_io_time_seconds_total": {
+       "type": "counter",
+       "help": "Total seconds spent doing I/Os.",
+       "series": 6,
+       "value": 4021.7
+      },
+      "node_hwmon_temp_celsius": {
+       "type": "gauge",
+       "help": "Hardware monitor for temperature",
+       "series": 8,
+       "value": 48.0
+      },
+      "node_filesystem_files_free": {
+       "type": "gauge",
+       "help": "Filesystem total free file nodes.",
+       "series": 12,
+       "value": 61234123
+      },
+      "node_memory_Shmem_bytes": {
+       "type": "gauge",
+       "help": "Memory information field Shmem_bytes.",
+       "value": 812000000
+      }
+     }
+    },
+    {
+     "job": "nvidia-gpu",
+     "targets": [
+      {
+       "instance": "gpu-exporter:9835",
+       "health": "up"
+      }
+     ],
+     "metrics": {
+      "nvidia_smi_temperature_gpu": {
+       "type": "gauge",
+       "help": "Temperature of the GPU in Celsius",
+       "value": 44
+      },
+      "nvidia_smi_utilization_gpu_ratio": {
+       "type": "gauge",
+       "help": "GPU utilization ratio 0..1",
+       "value": 0.06
+      },
+      "nvidia_smi_memory_used_bytes": {
+       "type": "gauge",
+       "help": "Used memory in bytes",
+       "value": 16000000000
+      },
+      "nvidia_smi_power_draw_watts": {
+       "type": "gauge",
+       "help": "Power draw in watts",
+       "value": 58.4
+      },
+      "nvidia_smi_fan_speed_ratio": {
+       "type": "gauge",
+       "help": "Fan speed ratio 0..1",
+       "value": 0.3
+      },
+      "nvidia_smi_clocks_event_reasons_counters_sw_thermal_slowdown_seconds_total": {
+       "type": "gauge",
+       "help": "Cumulative thermal slowdown time since driver load",
+       "value": 12.0
+      }
+     }
+    },
+    {
+     "job": "cadvisor",
+     "targets": [
+      {
+       "instance": "cadvisor:8080",
+       "health": "up"
+      }
+     ],
+     "metrics": {
+      "container_oom_events_total": {
+       "type": "counter",
+       "help": "Count of out of memory events observed for the container",
+       "series": 33,
+       "value": 0
+      },
+      "container_memory_working_set_bytes": {
+       "type": "gauge",
+       "help": "Current working set in bytes.",
+       "series": 33,
+       "value": 400000000
+      },
+      "container_cpu_cfs_throttled_periods_total": {
+       "type": "counter",
+       "help": "Number of throttled period intervals.",
+       "series": 33,
+       "value": 1021
+      },
+      "container_network_receive_errors_total": {
+       "type": "counter",
+       "help": "Cumulative count of errors encountered while receiving",
+       "series": 33,
+       "value": 0
+      },
+      "container_last_seen": {
+       "type": "gauge",
+       "help": "Last time a container was seen by the exporter",
+       "series": 33,
+       "value": 1780315190
+      },
+      "container_spec_memory_limit_bytes": {
+       "type": "gauge",
+       "help": "Memory limit for the container.",
+       "series": 33,
+       "value": 68719476736
+      }
+     }
+    }
+   ]
+  }
+ },
+ "checks": [
+  {
+   "type": "prom_queries_valid",
+   "weight": 3,
+   "min": 6
+  },
+  {
+   "type": "prom_counters_rated",
+   "weight": 3
+  },
+  {
+   "type": "prom_job_scoped",
+   "weight": 2
+  }
+ ],
+ "judge": {
+  "rubric": "Queries use only listed metrics, each is job-scoped, counters are rated (rate/increase), per-container series are aggregated with sum/topk, and the set covers CPU/memory pressure, GPU temperature/power and container OOM events."
+ },
+ "tags": [
+  "promql"
+ ]
+}

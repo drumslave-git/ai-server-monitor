@@ -1,0 +1,95 @@
+{
+ "id": "chat.logrotate_fails",
+ "group": "chat",
+ "title": "Why does logrotate fail? Look, then name the error",
+ "description": "systemd reports logrotate.service failed. The cause is in the journal and in one config file: 'maxsizee' (typo) on line 7 of /etc/logrotate.d/loki. The model has to look (systemctl status / journalctl), not guess, then name the file and the bad option, and must not tell the owner to run commands it could run itself. Tests host tools and diagnosis from raw command output.",
+ "snapshot": "base-restart-loop",
+ "input": {
+  "kind": "chat",
+  "messages": [
+   {
+    "role": "user",
+    "content": "logrotate keeps failing on the server. Why?"
+   }
+  ]
+ },
+ "world": {
+  "commands": [
+   {
+    "match": "journalctl.*logrotate",
+    "output": "-- Journal begins at Mon 2026-05-18 07:31:02 UTC, ends at Mon 2026-06-01 12:00:41 UTC --\nJun 01 06:25:01 atlas-lab systemd[1]: Starting logrotate.service - Rotate log files...\nJun 01 06:25:01 atlas-lab logrotate[88213]: error: /etc/logrotate.d/loki:7 unknown option 'maxsizee' -- ignoring line\nJun 01 06:25:01 atlas-lab logrotate[88213]: error: found error in file loki, skipping\nJun 01 06:25:01 atlas-lab systemd[1]: logrotate.service: Main process exited, code=exited, status=1/FAILURE\nJun 01 06:25:01 atlas-lab systemd[1]: logrotate.service: Failed with result 'exit-code'.\nJun 01 06:25:01 atlas-lab systemd[1]: Failed to start logrotate.service - Rotate log files.\n"
+   },
+   {
+    "match": "systemctl\\s+status.*logrotate",
+    "exit_code": 3,
+    "output": "x logrotate.service - Rotate log files\n     Loaded: loaded (/usr/lib/systemd/system/logrotate.service; static)\n     Active: failed (Result: exit-code) since Mon 2026-06-01 06:25:01 UTC; 5h 35min ago\nTriggeredBy: * logrotate.timer\n       Docs: man:logrotate(8)\n             man:logrotate.conf(5)\n    Process: 88213 ExecStart=/usr/sbin/logrotate /etc/logrotate.conf (code=exited, status=1/FAILURE)\n   Main PID: 88213 (code=exited, status=1/FAILURE)\n\nJun 01 06:25:01 atlas-lab logrotate[88213]: error: found error in file loki, skipping\nJun 01 06:25:01 atlas-lab systemd[1]: logrotate.service: Failed with result 'exit-code'.\nJun 01 06:25:01 atlas-lab systemd[1]: Failed to start logrotate.service - Rotate log files.\n"
+   },
+   {
+    "match": "logrotate\\.d/loki|cat .*loki",
+    "output": "/var/lib/docker/containers/*/*-json.log {\n    weekly\n    rotate 4\n    compress\n    missingok\n    maxsizee 200M\n    copytruncate\n}\n"
+   },
+   {
+    "match": "ls .*logrotate\\.d",
+    "output": "apt\ndpkg\nloki\nrsyslog\nufw\n"
+   },
+   {
+    "match": "cat /etc/logrotate\\.conf",
+    "output": "weekly\nrotate 4\ncreate\ninclude /etc/logrotate.d\n"
+   }
+  ]
+ },
+ "checks": [
+  {
+   "type": "tool_called",
+   "weight": 2,
+   "tool": "run_command",
+   "args_match": {
+    "cmd": "logrotate"
+   }
+  },
+  {
+   "type": "answer_contains_all",
+   "weight": 3,
+   "values": [
+    "maxsizee"
+   ],
+   "note": "the bad option"
+  },
+  {
+   "type": "answer_contains_all",
+   "weight": 2,
+   "values": [
+    "loki"
+   ],
+   "note": "the config file"
+  },
+  {
+   "type": "answer_contains_any",
+   "weight": 1,
+   "values": [
+    "line 7",
+    ":7",
+    "7th line"
+   ]
+  },
+  {
+   "type": "answer_not_contains",
+   "weight": 2,
+   "patterns": [
+    "\\b(you|you'll) (can|could|should|need to|may want to|might want to) (run|execute|type)\\b"
+   ]
+  },
+  {
+   "type": "max_tool_calls",
+   "weight": 1,
+   "n": 6
+  }
+ ],
+ "judge": {
+  "rubric": "States that logrotate fails because /etc/logrotate.d/loki line 7 has an unknown option 'maxsizee' (typo for maxsize), so logrotate skips the file and exits 1. Suggests the fix. Based on the command output, not guesses."
+ },
+ "tags": [
+  "tools",
+  "host"
+ ]
+}

@@ -1,0 +1,68 @@
+{
+ "id": "chat.gpu_vram_process",
+ "group": "chat",
+ "title": "GPU load now and who holds the VRAM",
+ "description": "Two sub-questions from the gpu collector: utilisation right now (6 %) and the process with the most VRAM (ollama, 9.2 GiB of 15.1 GiB used on a 24 GiB RTX 4090). Tests a straightforward slice read, reading a process list from nested data and presenting memory in readable units.",
+ "snapshot": "base",
+ "input": {
+  "kind": "chat",
+  "messages": [
+   {
+    "role": "user",
+    "content": "How busy is the GPU right now, and which process uses the most VRAM?"
+   }
+  ]
+ },
+ "checks": [
+  {
+   "type": "tool_called",
+   "weight": 2,
+   "tool": "get_collector_data|get_status|run_command"
+  },
+  {
+   "type": "answer_contains_all",
+   "weight": 3,
+   "values": [
+    "ollama"
+   ]
+  },
+  {
+   "type": "answer_contains_any",
+   "weight": 2,
+   "values": [
+    "6%",
+    "6 %",
+    "6 percent"
+   ],
+   "note": "utilisation"
+  },
+  {
+   "type": "answer_contains_any",
+   "weight": 2,
+   "values": [
+    "9.2 GiB",
+    "9.2GiB",
+    "9.2 GB",
+    "9.2GB",
+    "9.9 GB",
+    "9.9GB",
+    "9.9 GiB"
+   ],
+   "note": "VRAM of ollama"
+  },
+  {
+   "type": "answer_not_contains",
+   "weight": 1,
+   "patterns": [
+    "\\b(you|you'll) (can|could|should|need to|may want to|might want to) (run|execute|type)\\b",
+    "nvidia-smi"
+   ]
+  }
+ ],
+ "judge": {
+  "rubric": "GPU (RTX 4090) is nearly idle at ~6 % utilisation; ollama holds the most VRAM (~9.2 GiB), followed by python3.11 (ComfyUI, ~4.7 GiB); total 15.1 of 24 GiB used."
+ },
+ "tags": [
+  "tools"
+ ]
+}

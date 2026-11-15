@@ -1,0 +1,480 @@
+{
+ "id": "chat.missing_movies",
+ "group": "chat",
+ "title": "Which movies are missing? Radarr and Whisparr",
+ "description": "The owner asks which movies are missing from the library. The answer needs both Radarr (6 titles) and Whisparr (4 titles): the api_call group 'movies' (or two calls) with the wanted/missing endpoint. A count is not an answer (the system prompt says to NAME the items). Tests tool choice, service-group use and that the model lists items from BOTH instances instead of stopping after the first.",
+ "snapshot": "base",
+ "patch": {
+  "collectors": {
+   "arr": {
+    "data": {
+     "apps": [
+      {
+       "type": "radarr",
+       "name": "radarr",
+       "ok": true,
+       "version": "5.26.2.10099",
+       "health": [],
+       "queue": {
+        "total": 1,
+        "listed": 1,
+        "problems": 0,
+        "by_state": {
+         "downloading": 1
+        },
+        "items": [
+         {
+          "id": 700001,
+          "download_id": "FF6F557116446713C4595558E2C0F0CC2703B349",
+          "title": "Lighthouse.at.the.Edge.2024.1080p.WEB-DL",
+          "status": "downloading",
+          "tracked_status": "ok",
+          "tracked_state": "downloading",
+          "error": null,
+          "messages": [],
+          "size": 9400000000,
+          "size_left": 3100000000,
+          "protocol": "torrent",
+          "indexer": "NordTorrents (Prowlarr)",
+          "download_client": "qbittorrent",
+          "added": "2026-05-30T08:12:41Z",
+          "problem": false
+         }
+        ]
+       },
+       "wanted": {
+        "missing": 6,
+        "cutoff_unmet": 58
+       }
+      },
+      {
+       "type": "sonarr",
+       "name": "sonarr",
+       "ok": true,
+       "version": "4.0.15.2941",
+       "health": [],
+       "queue": {
+        "total": 2,
+        "listed": 2,
+        "problems": 0,
+        "by_state": {
+         "downloading": 2
+        },
+        "items": [
+         {
+          "id": 700002,
+          "download_id": "ED2E2CB3295B5C3A99DEFB9006C48B20002D07CD",
+          "title": "Harbor.Lights.S02E05.1080p.WEB-DL",
+          "status": "downloading",
+          "tracked_status": "ok",
+          "tracked_state": "downloading",
+          "error": null,
+          "messages": [],
+          "size": 2100000000,
+          "size_left": 400000000,
+          "protocol": "torrent",
+          "indexer": "OpenLibraryTV (Prowlarr)",
+          "download_client": "qbittorrent",
+          "added": "2026-05-30T08:12:41Z",
+          "problem": false
+         },
+         {
+          "id": 700003,
+          "download_id": "6B26412BB1EBB3DE5AF430CC055EED2192628E02",
+          "title": "Harbor.Lights.S02E06.1080p.WEB-DL",
+          "status": "downloading",
+          "tracked_status": "ok",
+          "tracked_state": "downloading",
+          "error": null,
+          "messages": [],
+          "size": 2200000000,
+          "size_left": 2200000000,
+          "protocol": "torrent",
+          "indexer": "OpenLibraryTV (Prowlarr)",
+          "download_client": "qbittorrent",
+          "added": "2026-05-30T08:12:41Z",
+          "problem": false
+         }
+        ]
+       },
+       "wanted": {
+        "missing": 112,
+        "cutoff_unmet": 207
+       }
+      },
+      {
+       "type": "whisparr",
+       "name": "whisparr",
+       "ok": true,
+       "version": "3.0.2.1024",
+       "health": [],
+       "queue": {
+        "total": 1,
+        "listed": 1,
+        "problems": 0,
+        "by_state": {
+         "downloading": 1
+        },
+        "items": [
+         {
+          "id": 700004,
+          "download_id": "E79AC8961C27AFA482311497713699052A150738",
+          "title": "Studio.Aurora.24.05.28.Night.Shift.1080p",
+          "status": "downloading",
+          "tracked_status": "ok",
+          "tracked_state": "downloading",
+          "error": null,
+          "messages": [],
+          "size": 1400000000,
+          "size_left": 600000000,
+          "protocol": "torrent",
+          "indexer": "PixelBay (Prowlarr)",
+          "download_client": "qbittorrent",
+          "added": "2026-05-30T08:12:41Z",
+          "problem": false
+         }
+        ]
+       },
+       "wanted": {
+        "missing": 4,
+        "cutoff_unmet": 40
+       }
+      }
+     ],
+     "summary": {
+      "instances": 5,
+      "unreachable": [],
+      "queue_total": 4,
+      "queue_problems": 0,
+      "health_issues": 0,
+      "wanted_missing": 122,
+      "wanted_cutoff_unmet": 305,
+      "indexers_failing": 0,
+      "stalled_candidates": 0
+     }
+    }
+   }
+  }
+ },
+ "input": {
+  "kind": "chat",
+  "messages": [
+   {
+    "role": "user",
+    "content": "Which movies are missing from my library? List the titles."
+   }
+  ]
+ },
+ "world": {
+  "api": [
+   {
+    "service": "radarr",
+    "path": "wanted/missing",
+    "response": {
+     "page": 1,
+     "pageSize": 50,
+     "sortKey": "movieMetadata.sortTitle",
+     "sortDirection": "ascending",
+     "totalRecords": 6,
+     "records": [
+      {
+       "id": 100,
+       "title": "Copper Skies",
+       "year": 2023,
+       "monitored": true,
+       "hasFile": false,
+       "movieFileId": 0,
+       "status": "released",
+       "added": "2026-03-10T10:00:00Z"
+      },
+      {
+       "id": 101,
+       "title": "The Last Cartographer",
+       "year": 2022,
+       "monitored": true,
+       "hasFile": false,
+       "movieFileId": 0,
+       "status": "released",
+       "added": "2026-03-11T10:00:00Z"
+      },
+      {
+       "id": 102,
+       "title": "Midnight Ferry",
+       "year": 2024,
+       "monitored": true,
+       "hasFile": false,
+       "movieFileId": 0,
+       "status": "released",
+       "added": "2026-03-12T10:00:00Z"
+      },
+      {
+       "id": 103,
+       "title": "Saltwater Hearts",
+       "year": 2021,
+       "monitored": true,
+       "hasFile": false,
+       "movieFileId": 0,
+       "status": "released",
+       "added": "2026-03-13T10:00:00Z"
+      },
+      {
+       "id": 104,
+       "title": "Orbit Kitchen",
+       "year": 2025,
+       "monitored": true,
+       "hasFile": false,
+       "movieFileId": 0,
+       "status": "released",
+       "added": "2026-03-14T10:00:00Z"
+      },
+      {
+       "id": 105,
+       "title": "Paper Lanterns",
+       "year": 2019,
+       "monitored": true,
+       "hasFile": false,
+       "movieFileId": 0,
+       "status": "released",
+       "added": "2026-03-15T10:00:00Z"
+      }
+     ]
+    }
+   },
+   {
+    "service": "whisparr",
+    "path": "wanted/missing",
+    "response": {
+     "page": 1,
+     "pageSize": 50,
+     "sortKey": "movieMetadata.sortTitle",
+     "sortDirection": "ascending",
+     "totalRecords": 4,
+     "records": [
+      {
+       "id": 200,
+       "title": "Velvet Room Sessions",
+       "year": 2023,
+       "monitored": true,
+       "hasFile": false,
+       "movieFileId": 0,
+       "status": "released",
+       "added": "2026-03-10T10:00:00Z"
+      },
+      {
+       "id": 201,
+       "title": "Summer Villa Diaries",
+       "year": 2022,
+       "monitored": true,
+       "hasFile": false,
+       "movieFileId": 0,
+       "status": "released",
+       "added": "2026-03-11T10:00:00Z"
+      },
+      {
+       "id": 202,
+       "title": "Neon Alley Nights",
+       "year": 2024,
+       "monitored": true,
+       "hasFile": false,
+       "movieFileId": 0,
+       "status": "released",
+       "added": "2026-03-12T10:00:00Z"
+      },
+      {
+       "id": 203,
+       "title": "Studio Aurora: Night Shift",
+       "year": 2024,
+       "monitored": true,
+       "hasFile": false,
+       "movieFileId": 0,
+       "status": "released",
+       "added": "2026-03-13T10:00:00Z"
+      }
+     ]
+    }
+   },
+   {
+    "service": "radarr",
+    "path": "/api/v3/movie(\\?|$)",
+    "response": [
+     {
+      "id": 100,
+      "title": "Copper Skies",
+      "year": 2023,
+      "monitored": true,
+      "hasFile": false,
+      "movieFileId": 0,
+      "status": "released",
+      "added": "2026-03-10T10:00:00Z"
+     },
+     {
+      "id": 101,
+      "title": "The Last Cartographer",
+      "year": 2022,
+      "monitored": true,
+      "hasFile": false,
+      "movieFileId": 0,
+      "status": "released",
+      "added": "2026-03-11T10:00:00Z"
+     },
+     {
+      "id": 102,
+      "title": "Midnight Ferry",
+      "year": 2024,
+      "monitored": true,
+      "hasFile": false,
+      "movieFileId": 0,
+      "status": "released",
+      "added": "2026-03-12T10:00:00Z"
+     },
+     {
+      "id": 103,
+      "title": "Saltwater Hearts",
+      "year": 2021,
+      "monitored": true,
+      "hasFile": false,
+      "movieFileId": 0,
+      "status": "released",
+      "added": "2026-03-13T10:00:00Z"
+     },
+     {
+      "id": 104,
+      "title": "Orbit Kitchen",
+      "year": 2025,
+      "monitored": true,
+      "hasFile": false,
+      "movieFileId": 0,
+      "status": "released",
+      "added": "2026-03-14T10:00:00Z"
+     },
+     {
+      "id": 105,
+      "title": "Paper Lanterns",
+      "year": 2019,
+      "monitored": true,
+      "hasFile": false,
+      "movieFileId": 0,
+      "status": "released",
+      "added": "2026-03-15T10:00:00Z"
+     }
+    ]
+   },
+   {
+    "service": "whisparr",
+    "path": "/api/v3/movie(\\?|$)",
+    "response": [
+     {
+      "id": 200,
+      "title": "Velvet Room Sessions",
+      "year": 2023,
+      "monitored": true,
+      "hasFile": false,
+      "movieFileId": 0,
+      "status": "released",
+      "added": "2026-03-10T10:00:00Z"
+     },
+     {
+      "id": 201,
+      "title": "Summer Villa Diaries",
+      "year": 2022,
+      "monitored": true,
+      "hasFile": false,
+      "movieFileId": 0,
+      "status": "released",
+      "added": "2026-03-11T10:00:00Z"
+     },
+     {
+      "id": 202,
+      "title": "Neon Alley Nights",
+      "year": 2024,
+      "monitored": true,
+      "hasFile": false,
+      "movieFileId": 0,
+      "status": "released",
+      "added": "2026-03-12T10:00:00Z"
+     },
+     {
+      "id": 203,
+      "title": "Studio Aurora: Night Shift",
+      "year": 2024,
+      "monitored": true,
+      "hasFile": false,
+      "movieFileId": 0,
+      "status": "released",
+      "added": "2026-03-13T10:00:00Z"
+     }
+    ]
+   }
+  ]
+ },
+ "checks": [
+  {
+   "type": "tool_called",
+   "weight": 2,
+   "tool": "api_call",
+   "args_match": {
+    "path": "wanted/missing|/movie"
+   }
+  },
+  {
+   "type": "answer_contains_any",
+   "weight": 2,
+   "values": [
+    "Copper Skies",
+    "The Last Cartographer",
+    "Midnight Ferry",
+    "Saltwater Hearts",
+    "Orbit Kitchen",
+    "Paper Lanterns"
+   ],
+   "note": "a Radarr title"
+  },
+  {
+   "type": "answer_contains_any",
+   "weight": 2,
+   "values": [
+    "Velvet Room Sessions",
+    "Summer Villa Diaries",
+    "Neon Alley Nights",
+    "Studio Aurora: Night Shift"
+   ],
+   "note": "a Whisparr title"
+  },
+  {
+   "type": "answer_contains_all",
+   "weight": 3,
+   "values": [
+    "Copper Skies",
+    "The Last Cartographer",
+    "Midnight Ferry",
+    "Saltwater Hearts",
+    "Orbit Kitchen",
+    "Paper Lanterns",
+    "Velvet Room Sessions",
+    "Summer Villa Diaries",
+    "Neon Alley Nights",
+    "Studio Aurora: Night Shift"
+   ],
+   "note": "the complete list"
+  },
+  {
+   "type": "answer_not_contains",
+   "weight": 1,
+   "patterns": [
+    "\\b(you|you'll) (can|could|should|need to|may want to|might want to) (run|execute|type)\\b"
+   ]
+  },
+  {
+   "type": "max_tool_calls",
+   "weight": 1,
+   "n": 6
+  }
+ ],
+ "judge": {
+  "rubric": "Lists all 10 titles, grouped by instance (6 Radarr movies, 4 Whisparr titles) with years if shown, says how many there are in total, and does not ask the owner to run anything."
+ },
+ "tags": [
+  "tools",
+  "api"
+ ]
+}

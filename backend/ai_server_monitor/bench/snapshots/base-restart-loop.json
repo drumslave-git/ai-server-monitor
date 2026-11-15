@@ -1,0 +1,2451 @@
+{
+ "name": "base-restart-loop",
+ "now": 1780315200.0,
+ "description": "logrotate.service failed + `esphome` container restart loop (14 restarts in 24 h).",
+ "collectors": {
+  "system": {
+   "ok": true,
+   "state": "ok",
+   "age_s": 4,
+   "data": {
+    "hostname": "atlas-lab",
+    "kernel": "6.8.0-60-generic",
+    "uptime_s": 1227600,
+    "cpu": {
+     "percent": 11.3,
+     "iowait_percent": 0.4,
+     "steal_percent": 0.0,
+     "cores_logical": 16,
+     "cores_physical": 8,
+     "load": [
+      1.38,
+      1.52,
+      1.47
+     ],
+     "load_per_core": 0.09,
+     "freq_mhz": 3900
+    },
+    "memory": {
+     "total": 68719476736,
+     "available": 44560285696,
+     "used": 23407571763,
+     "percent": 35.2,
+     "cached": 20937965568,
+     "swap_total": 8589934592,
+     "swap_used": 0,
+     "swap_percent": 0.0
+    },
+    "filesystems": [
+     {
+      "device": "/dev/nvme0n1p2",
+      "mount": "/",
+      "fstype": "ext4",
+      "total": 962000000000,
+      "used": 367484000000,
+      "avail": 594516000000,
+      "percent": 38.2,
+      "inodes_percent": 4.1
+     },
+     {
+      "device": "/dev/nvme0n1p1",
+      "mount": "/boot/efi",
+      "fstype": "vfat",
+      "total": 1124995072,
+      "used": 6749970,
+      "avail": 1118245102,
+      "percent": 0.6,
+      "inodes_percent": null
+     },
+     {
+      "device": "/dev/nvme1n1p1",
+      "mount": "/mnt/disks/models",
+      "fstype": "ext4",
+      "total": 1930000000000,
+      "used": 1011320000000,
+      "avail": 918680000000,
+      "percent": 52.4,
+      "inodes_percent": 0.3
+     },
+     {
+      "device": "/dev/sdb1",
+      "mount": "/mnt/disks/media",
+      "fstype": "ext4",
+      "total": 13500000000000,
+      "used": 8235000000000,
+      "avail": 5265000000000,
+      "percent": 61.0,
+      "inodes_percent": 1.2
+     },
+     {
+      "device": "/dev/sdc1",
+      "mount": "/mnt/disks/downloads",
+      "fstype": "ext4",
+      "total": 3860000000000,
+      "used": 1709980000000,
+      "avail": 2150020000000,
+      "percent": 44.3,
+      "inodes_percent": 2.2
+     },
+     {
+      "device": "/dev/sdd1",
+      "mount": "/mnt/disks/backup",
+      "fstype": "ext4",
+      "total": 7720000000000,
+      "used": 2555320000000,
+      "avail": 5164680000000,
+      "percent": 33.1,
+      "inodes_percent": 0.6
+     }
+    ],
+    "disks": [
+     {
+      "name": "nvme0n1",
+      "read_bps": 0.0,
+      "write_bps": 412000.0,
+      "busy_percent": 0.8
+     },
+     {
+      "name": "nvme1n1",
+      "read_bps": 120000.0,
+      "write_bps": 0.0,
+      "busy_percent": 0.3
+     },
+     {
+      "name": "sdb",
+      "read_bps": 0.0,
+      "write_bps": 0.0,
+      "busy_percent": 0.0
+     },
+     {
+      "name": "sdc",
+      "read_bps": 0.0,
+      "write_bps": 3900000.0,
+      "busy_percent": 4.6
+     },
+     {
+      "name": "sdd",
+      "read_bps": 0.0,
+      "write_bps": 0.0,
+      "busy_percent": 0.0
+     }
+    ],
+    "network": [
+     {
+      "name": "enp6s0",
+      "rx_bps": 214000.0,
+      "tx_bps": 61000.0,
+      "rx_bytes": 9841223004112,
+      "tx_bytes": 1104882771300,
+      "errors": 0,
+      "dropped": 0
+     }
+    ],
+    "temperatures": [
+     {
+      "sensor": "k10temp",
+      "label": "Tctl",
+      "current": 49.5,
+      "high": null,
+      "critical": null
+     },
+     {
+      "sensor": "nvme",
+      "label": "Composite",
+      "current": 41.0,
+      "high": 84.8,
+      "critical": 89.8
+     },
+     {
+      "sensor": "nvme",
+      "label": "Composite",
+      "current": 38.0,
+      "high": 84.8,
+      "critical": 89.8
+     },
+     {
+      "sensor": "drivetemp",
+      "label": "sdb",
+      "current": 36.0,
+      "high": 60.0,
+      "critical": 70.0
+     }
+    ],
+    "processes": {
+     "total": 468,
+     "by_status": {
+      "sleeping": 399,
+      "idle": 66,
+      "running": 2,
+      "zombie": 1
+     },
+     "zombies": 1,
+     "top_cpu": [
+      {
+       "pid": 6710,
+       "name": "cadvisor",
+       "user": "root",
+       "cpu_percent": 6.5,
+       "rss": 545259520,
+       "mem_percent": 0.8,
+       "threads": 40,
+       "cmd": "/usr/bin/cadvisor -logtostderr",
+       "container_id": "b3db78e9006c"
+      },
+      {
+       "pid": 6102,
+       "name": "qbittorrent-nox",
+       "user": "abc",
+       "cpu_percent": 4.2,
+       "rss": 1405091840,
+       "mem_percent": 2.0,
+       "threads": 32,
+       "cmd": "/usr/bin/qbittorrent-nox --webui-port=8080",
+       "container_id": "30062d8e6041"
+      },
+      {
+       "pid": 5210,
+       "name": "prometheus",
+       "user": "nobody",
+       "cpu_percent": 3.1,
+       "rss": 1709178880,
+       "mem_percent": 2.5,
+       "threads": 40,
+       "cmd": "/bin/prometheus --config.file=/etc/prometheus/prometheus.yml",
+       "container_id": "8df48b5b1834"
+      },
+      {
+       "pid": 4800,
+       "name": "hass",
+       "user": "root",
+       "cpu_percent": 2.8,
+       "rss": 880803840,
+       "mem_percent": 1.3,
+       "threads": 20,
+       "cmd": "python3 -m homeassistant --config /config",
+       "container_id": "e6f3e7364f6b"
+      },
+      {
+       "pid": 3877,
+       "name": "ollama",
+       "user": "root",
+       "cpu_percent": 2.1,
+       "rss": 1981808640,
+       "mem_percent": 2.9,
+       "threads": 27,
+       "cmd": "/usr/bin/ollama serve",
+       "container_id": "8e81d5ee76b5"
+      },
+      {
+       "pid": 5901,
+       "name": "jellyfin",
+       "user": "abc",
+       "cpu_percent": 1.9,
+       "rss": 1142947840,
+       "mem_percent": 1.7,
+       "threads": 41,
+       "cmd": "/jellyfin/jellyfin --datadir /config",
+       "container_id": "41b963c16722"
+      },
+      {
+       "pid": 7344,
+       "name": "llama-server",
+       "user": "root",
+       "cpu_percent": 1.4,
+       "rss": 1237319680,
+       "mem_percent": 1.8,
+       "threads": 44,
+       "cmd": "/app/llama-server -m /models/chat.gguf --port 8081",
+       "container_id": "ece1688ce40a"
+      },
+      {
+       "pid": 4120,
+       "name": "python3.11",
+       "user": "root",
+       "cpu_percent": 0.8,
+       "rss": 3271557120,
+       "mem_percent": 4.8,
+       "threads": 30,
+       "cmd": "python3 main.py --listen --port 8188",
+       "container_id": "d9b6de8abb85"
+      },
+      {
+       "pid": 4412,
+       "name": "python3",
+       "user": "root",
+       "cpu_percent": 0.6,
+       "rss": 1006632960,
+       "mem_percent": 1.5,
+       "threads": 22,
+       "cmd": "python -m open_webui",
+       "container_id": "aa5c94e088a9"
+      },
+      {
+       "pid": 2210,
+       "name": "Xorg",
+       "user": "root",
+       "cpu_percent": 0.2,
+       "rss": 220200960,
+       "mem_percent": 0.3,
+       "threads": 40,
+       "cmd": "/usr/lib/xorg/Xorg vt2 -displayfd 3",
+       "container_id": null
+      }
+     ],
+     "top_memory": [
+      {
+       "pid": 4120,
+       "name": "python3.11",
+       "user": "root",
+       "cpu_percent": 0.8,
+       "rss": 3271557120,
+       "mem_percent": 4.8,
+       "threads": 30,
+       "cmd": "python3 main.py --listen --port 8188",
+       "container_id": "d9b6de8abb85"
+      },
+      {
+       "pid": 3877,
+       "name": "ollama",
+       "user": "root",
+       "cpu_percent": 2.1,
+       "rss": 1981808640,
+       "mem_percent": 2.9,
+       "threads": 27,
+       "cmd": "/usr/bin/ollama serve",
+       "container_id": "8e81d5ee76b5"
+      },
+      {
+       "pid": 5210,
+       "name": "prometheus",
+       "user": "nobody",
+       "cpu_percent": 3.1,
+       "rss": 1709178880,
+       "mem_percent": 2.5,
+       "threads": 40,
+       "cmd": "/bin/prometheus --config.file=/etc/prometheus/prometheus.yml",
+       "container_id": "8df48b5b1834"
+      },
+      {
+       "pid": 6102,
+       "name": "qbittorrent-nox",
+       "user": "abc",
+       "cpu_percent": 4.2,
+       "rss": 1405091840,
+       "mem_percent": 2.0,
+       "threads": 32,
+       "cmd": "/usr/bin/qbittorrent-nox --webui-port=8080",
+       "container_id": "30062d8e6041"
+      },
+      {
+       "pid": 7344,
+       "name": "llama-server",
+       "user": "root",
+       "cpu_percent": 1.4,
+       "rss": 1237319680,
+       "mem_percent": 1.8,
+       "threads": 44,
+       "cmd": "/app/llama-server -m /models/chat.gguf --port 8081",
+       "container_id": "ece1688ce40a"
+      },
+      {
+       "pid": 5901,
+       "name": "jellyfin",
+       "user": "abc",
+       "cpu_percent": 1.9,
+       "rss": 1142947840,
+       "mem_percent": 1.7,
+       "threads": 41,
+       "cmd": "/jellyfin/jellyfin --datadir /config",
+       "container_id": "41b963c16722"
+      },
+      {
+       "pid": 4412,
+       "name": "python3",
+       "user": "root",
+       "cpu_percent": 0.6,
+       "rss": 1006632960,
+       "mem_percent": 1.5,
+       "threads": 22,
+       "cmd": "python -m open_webui",
+       "container_id": "aa5c94e088a9"
+      },
+      {
+       "pid": 4800,
+       "name": "hass",
+       "user": "root",
+       "cpu_percent": 2.8,
+       "rss": 880803840,
+       "mem_percent": 1.3,
+       "threads": 20,
+       "cmd": "python3 -m homeassistant --config /config",
+       "container_id": "e6f3e7364f6b"
+      },
+      {
+       "pid": 6710,
+       "name": "cadvisor",
+       "user": "root",
+       "cpu_percent": 6.5,
+       "rss": 545259520,
+       "mem_percent": 0.8,
+       "threads": 40,
+       "cmd": "/usr/bin/cadvisor -logtostderr",
+       "container_id": "b3db78e9006c"
+      },
+      {
+       "pid": 2210,
+       "name": "Xorg",
+       "user": "root",
+       "cpu_percent": 0.2,
+       "rss": 220200960,
+       "mem_percent": 0.3,
+       "threads": 40,
+       "cmd": "/usr/lib/xorg/Xorg vt2 -displayfd 3",
+       "container_id": null
+      }
+     ]
+    }
+   }
+  },
+  "docker": {
+   "ok": true,
+   "state": "ok",
+   "age_s": 8,
+   "data": {
+    "engine": {
+     "version": "28.3.2",
+     "storage_driver": "overlayfs",
+     "images": 41,
+     "warnings": []
+    },
+    "summary": {
+     "total": 34,
+     "running": 33,
+     "unhealthy": [],
+     "restarting": [
+      "esphome"
+     ],
+     "exited_with_error": [],
+     "restarted_recently": [
+      "esphome"
+     ],
+     "oom_killed": []
+    },
+    "containers": [
+     {
+      "id": "8e81d5ee76b5",
+      "name": "ollama",
+      "image": "ollama/ollama:0.9.6",
+      "image_id": "sha256:df793c7f7a0f725fcbd690ac004241b4dac315d79b2d69ac889d599d77141c13",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "ai",
+      "compose_service": "ollama",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T12:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 2.1,
+      "mem_usage": 10276044800,
+      "mem_limit": 68719476736,
+      "mem_percent": 15.0,
+      "net_rx_bps": 7410.0,
+      "net_tx_bps": 5230.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 1890.0,
+      "pids": 38,
+      "log_lines": 134,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "d9b6de8abb85",
+      "name": "comfyui",
+      "image": "ghcr.io/example-org/comfyui:1.4",
+      "image_id": "sha256:e5fc81fed0ee4b0bec93bd96e2003f9944850ee430b16cc550955ed0ac7ddd1d",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "ai",
+      "compose_service": "comfyui",
+      "health": null,
+      "restart_count": 7,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T04:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.8,
+      "mem_usage": 14050918400,
+      "mem_limit": 68719476736,
+      "mem_percent": 20.4,
+      "net_rx_bps": 3380.0,
+      "net_tx_bps": 2240.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 720.0,
+      "pids": 52,
+      "log_lines": 176,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "aa5c94e088a9",
+      "name": "open-webui",
+      "image": "ghcr.io/open-webui/open-webui:v0.6.18",
+      "image_id": "sha256:b8336af53670fd1c29457292a18d993c5d99896e2c2a654b7546ee1683104aa9",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "ai",
+      "compose_service": "open-webui",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T10:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.6,
+      "mem_usage": 1730150400,
+      "mem_limit": 68719476736,
+      "mem_percent": 2.5,
+      "net_rx_bps": 2760.0,
+      "net_tx_bps": 1780.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 540.0,
+      "pids": 44,
+      "log_lines": 152,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "ece1688ce40a",
+      "name": "llamacpp-chat",
+      "image": "ghcr.io/ggml-org/llama.cpp:server-cuda",
+      "image_id": "sha256:183647d27e7db798aa9b2e8f9fd4e3e29e95b82156f665c5f9d981e7b3710586",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "ai",
+      "compose_service": "llamacpp-chat",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T05:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 1.4,
+      "mem_usage": 3040870400,
+      "mem_limit": 68719476736,
+      "mem_percent": 4.4,
+      "net_rx_bps": 5240.0,
+      "net_tx_bps": 3620.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 1260.0,
+      "pids": 21,
+      "log_lines": 83,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "649df429d251",
+      "name": "llamacpp-embedding",
+      "image": "ghcr.io/ggml-org/llama.cpp:server-cuda",
+      "image_id": "sha256:183647d27e7db798aa9b2e8f9fd4e3e29e95b82156f665c5f9d981e7b3710586",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "ai",
+      "compose_service": "llamacpp-embedding",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T07:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.3,
+      "mem_usage": 1153433600,
+      "mem_limit": 68719476736,
+      "mem_percent": 1.7,
+      "net_rx_bps": 1830.0,
+      "net_tx_bps": 1090.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 270.0,
+      "pids": 16,
+      "log_lines": 68,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "fe0f46693625",
+      "name": "qdrant",
+      "image": "qdrant/qdrant:v1.14.1",
+      "image_id": "sha256:99a5a689e3432ff0042aa89331f0313392122b92d667f04b888c26d1e4314b8e",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "ai",
+      "compose_service": "qdrant",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T10:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.4,
+      "mem_usage": 859832320,
+      "mem_limit": 68719476736,
+      "mem_percent": 1.3,
+      "net_rx_bps": 2140.0,
+      "net_tx_bps": 1320.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 360.0,
+      "pids": 36,
+      "log_lines": 128,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "0fd503d1f63a",
+      "name": "searxng",
+      "image": "searxng/searxng:2025.7.20",
+      "image_id": "sha256:8c3a6cf64c8dbc836fe5b7b93e7ad78dfdb8471c30fcc843c5e4e0fae5ff5621",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "ai",
+      "compose_service": "searxng",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T08:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.2,
+      "mem_usage": 325058560,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.5,
+      "net_rx_bps": 1520.0,
+      "net_tx_bps": 860.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 180.0,
+      "pids": 14,
+      "log_lines": 62,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "83e170b6cd02",
+      "name": "radarr",
+      "image": "lscr.io/linuxserver/radarr:5.26.2",
+      "image_id": "sha256:2562b64408962e254bfaad9ebb93a52a0a0e44b469969c9f10b2c45d702c49da",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "media",
+      "compose_service": "radarr",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T06:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.5,
+      "mem_usage": 429916160,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.6,
+      "net_rx_bps": 2450.0,
+      "net_tx_bps": 1550.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 450.0,
+      "pids": 31,
+      "log_lines": 113,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "e088709662a0",
+      "name": "sonarr",
+      "image": "lscr.io/linuxserver/sonarr:4.0.15",
+      "image_id": "sha256:d117bfda77e7cec9a572592cb11ebcd4cc9050c068acbb0a6d6cf4dd5256f1b7",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "media",
+      "compose_service": "sonarr",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T08:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.7,
+      "mem_usage": 482344960,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.7,
+      "net_rx_bps": 3070.0,
+      "net_tx_bps": 2010.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 630.0,
+      "pids": 33,
+      "log_lines": 119,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "7c21cff9935b",
+      "name": "whisparr",
+      "image": "ghcr.io/example-org/whisparr:3.0.2",
+      "image_id": "sha256:5629279b24e0b93883caca365bfafd9c6042a80e5efa40cd104083669f6451b8",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "media",
+      "compose_service": "whisparr",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T05:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.4,
+      "mem_usage": 398458880,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.6,
+      "net_rx_bps": 2140.0,
+      "net_tx_bps": 1320.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 360.0,
+      "pids": 29,
+      "log_lines": 107,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "f20bb771bf1a",
+      "name": "prowlarr",
+      "image": "lscr.io/linuxserver/prowlarr:1.37.0",
+      "image_id": "sha256:1ac6a45e1dc001d44a38e38787147ca0ccdb91b43a54d38efdbd0bbc29070ec9",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "media",
+      "compose_service": "prowlarr",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T05:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.3,
+      "mem_usage": 346030080,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.5,
+      "net_rx_bps": 1830.0,
+      "net_tx_bps": 1090.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 270.0,
+      "pids": 27,
+      "log_lines": 101,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "30062d8e6041",
+      "name": "qbittorrent",
+      "image": "lscr.io/linuxserver/qbittorrent:5.1.2",
+      "image_id": "sha256:9c3ea2aee0afea1ed0533ee2056713aa6574b2d92e0931838861adcc450b4c84",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "media",
+      "compose_service": "qbittorrent",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T04:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 4.2,
+      "mem_usage": 1447034880,
+      "mem_limit": 68719476736,
+      "mem_percent": 2.1,
+      "net_rx_bps": 13920.0,
+      "net_tx_bps": 10060.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 3780.0,
+      "pids": 48,
+      "log_lines": 164,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "60816bfd1cba",
+      "name": "flaresolverr",
+      "image": "ghcr.io/flaresolverr/flaresolverr:v3.3.21",
+      "image_id": "sha256:5fc703bcbf9497dd261be5bf50755d56da861085e900b7240ca676164be273f4",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "media",
+      "compose_service": "flaresolverr",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T05:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.1,
+      "mem_usage": 283115520,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.4,
+      "net_rx_bps": 1210.0,
+      "net_tx_bps": 630.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 90.0,
+      "pids": 12,
+      "log_lines": 56,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "41b963c16722",
+      "name": "jellyfin",
+      "image": "jellyfin/jellyfin:10.10.7",
+      "image_id": "sha256:cc424461f096c189509d4695eafafeeaed9b1af99ecffea5a2bdce1f7362fcdf",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "media",
+      "compose_service": "jellyfin",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T06:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 1.9,
+      "mem_usage": 1205862400,
+      "mem_limit": 68719476736,
+      "mem_percent": 1.8,
+      "net_rx_bps": 6790.0,
+      "net_tx_bps": 4770.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 1710.0,
+      "pids": 61,
+      "log_lines": 203,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "e4be57b34887",
+      "name": "jellyseerr",
+      "image": "fallenbagel/jellyseerr:2.7.2",
+      "image_id": "sha256:7172289e11a70922f16010d7bc3bd1f7d6db755b636c710bb3a720e0b2448296",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "media",
+      "compose_service": "jellyseerr",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T12:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.1,
+      "mem_usage": 304087040,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.4,
+      "net_rx_bps": 1210.0,
+      "net_tx_bps": 630.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 90.0,
+      "pids": 18,
+      "log_lines": 74,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "20f447d01b6a",
+      "name": "bazarr",
+      "image": "lscr.io/linuxserver/bazarr:1.5.2",
+      "image_id": "sha256:1d3b60b5624ab2c414e8bb20010ef179ac8b919215e48466a95b3d02f9fe0baa",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "media",
+      "compose_service": "bazarr",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T09:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.2,
+      "mem_usage": 356515840,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.5,
+      "net_rx_bps": 1520.0,
+      "net_tx_bps": 860.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 180.0,
+      "pids": 22,
+      "log_lines": 86,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "e6f3e7364f6b",
+      "name": "homeassistant",
+      "image": "ghcr.io/home-assistant/home-assistant:2025.7.3",
+      "image_id": "sha256:1c635a108a691bec243f10ccab446f7e57b170f828cbc3db01dd6d708074e3c8",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "home",
+      "compose_service": "homeassistant",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T05:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 2.8,
+      "mem_usage": 1027604480,
+      "mem_limit": 68719476736,
+      "mem_percent": 1.5,
+      "net_rx_bps": 9580.0,
+      "net_tx_bps": 6840.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 2520.0,
+      "pids": 63,
+      "log_lines": 209,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "498d7ecc46d7",
+      "name": "mosquitto",
+      "image": "eclipse-mosquitto:2.0.21",
+      "image_id": "sha256:69f07a4bd546ef62b62ca51b9198da403c60bc974f72eca92ea37fb94409f7f4",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "home",
+      "compose_service": "mosquitto",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T07:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.0,
+      "mem_usage": 14680064,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.0,
+      "net_rx_bps": 900.0,
+      "net_tx_bps": 400.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 0.0,
+      "pids": 3,
+      "log_lines": 29,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "591d1193060f",
+      "name": "zigbee2mqtt",
+      "image": "koenkk/zigbee2mqtt:2.5.1",
+      "image_id": "sha256:ba8e4771c9e54e1e860612a54e53f38fd3fad589f81211405296b2925912eaf9",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "home",
+      "compose_service": "zigbee2mqtt",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T12:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.4,
+      "mem_usage": 199229440,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.3,
+      "net_rx_bps": 2140.0,
+      "net_tx_bps": 1320.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 360.0,
+      "pids": 26,
+      "log_lines": 98,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "f772c6951790",
+      "name": "esphome",
+      "image": "ghcr.io/esphome/esphome:2025.7.2",
+      "image_id": "sha256:dffcb6d1d859713a021e22e878b54684e2e892a3cad5ebad6ca2b02fa64a6fee",
+      "state": "restarting",
+      "status": "Restarting (1) 18 seconds ago",
+      "compose_project": "home",
+      "compose_service": "esphome",
+      "health": null,
+      "restart_count": 17,
+      "restarts_delta": 14,
+      "restarted_since_last": true,
+      "started_at": "2026-05-19T06:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": 1,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.1,
+      "mem_usage": 251658240,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.4,
+      "net_rx_bps": 1210.0,
+      "net_tx_bps": 630.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 90.0,
+      "pids": 17,
+      "log_lines": 71,
+      "log_errors": 6,
+      "log_error_samples": [
+       "ERROR Could not open configuration file '/config/garage-sensor.yaml'"
+      ]
+     },
+     {
+      "id": "213ef278d00d",
+      "name": "grafana",
+      "image": "grafana/grafana:12.0.2",
+      "image_id": "sha256:4721208efa2562f7048c416016975f58f6916297b071571df08a5db4e21efc8e",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "monitoring",
+      "compose_service": "grafana",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T12:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.5,
+      "mem_usage": 283115520,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.4,
+      "net_rx_bps": 2450.0,
+      "net_tx_bps": 1550.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 450.0,
+      "pids": 24,
+      "log_lines": 92,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "8df48b5b1834",
+      "name": "prometheus",
+      "image": "prom/prometheus:v3.5.0",
+      "image_id": "sha256:32d326226d44e7e706bcc2c34bfdd3ad55791b909015c771e1d250c7eeb07e6d",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "monitoring",
+      "compose_service": "prometheus",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T10:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 3.1,
+      "mem_usage": 1835008000,
+      "mem_limit": 68719476736,
+      "mem_percent": 2.7,
+      "net_rx_bps": 10510.0,
+      "net_tx_bps": 7530.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 2790.0,
+      "pids": 19,
+      "log_lines": 77,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "be6a410f9619",
+      "name": "loki",
+      "image": "grafana/loki:3.5.2",
+      "image_id": "sha256:f3db9d1f68a3a1550c374078240ecae208db75e990fba65709623a898cb3f365",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "monitoring",
+      "compose_service": "loki",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T04:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.9,
+      "mem_usage": 429916160,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.6,
+      "net_rx_bps": 3690.0,
+      "net_tx_bps": 2470.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 810.0,
+      "pids": 25,
+      "log_lines": 95,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "1f57bbd6c946",
+      "name": "promtail",
+      "image": "grafana/promtail:3.5.2",
+      "image_id": "sha256:6557ea47296e025bd1352fceababd74dd8cf664345ab08d2d9d7f15fec8e725a",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "monitoring",
+      "compose_service": "promtail",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T04:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.3,
+      "mem_usage": 99614720,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.1,
+      "net_rx_bps": 1830.0,
+      "net_tx_bps": 1090.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 270.0,
+      "pids": 14,
+      "log_lines": 62,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "545360b1a7b3",
+      "name": "alertmanager",
+      "image": "prom/alertmanager:v0.28.1",
+      "image_id": "sha256:500bc3078ddaa93cd0c1879338083c51d9169ee4b1f27ea9105f4aa69ccf1919",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "monitoring",
+      "compose_service": "alertmanager",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T05:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.0,
+      "mem_usage": 29360128,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.0,
+      "net_rx_bps": 900.0,
+      "net_tx_bps": 400.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 0.0,
+      "pids": 10,
+      "log_lines": 50,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "b3db78e9006c",
+      "name": "cadvisor",
+      "image": "gcr.io/cadvisor/cadvisor:v0.52.1",
+      "image_id": "sha256:218c6e8a2fce71a608c7100ede0eef21ec75130884b13b989cad5ff2ade5a0ab",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "monitoring",
+      "compose_service": "cadvisor",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T08:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 6.5,
+      "mem_usage": 545259520,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.8,
+      "net_rx_bps": 21050.0,
+      "net_tx_bps": 15350.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 5850.0,
+      "pids": 37,
+      "log_lines": 131,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "d1052cf80b3a",
+      "name": "node-exporter",
+      "image": "prom/node-exporter:v1.9.1",
+      "image_id": "sha256:be720cd441358f799dfb6e6e1cbc4794dc0169ad2667545d7f947a3857b17346",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "monitoring",
+      "compose_service": "node-exporter",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T06:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.1,
+      "mem_usage": 25165824,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.0,
+      "net_rx_bps": 1210.0,
+      "net_tx_bps": 630.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 90.0,
+      "pids": 9,
+      "log_lines": 47,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "5d75fc1ce4c6",
+      "name": "gpu-exporter",
+      "image": "utkuozdemir/nvidia_gpu_exporter:1.3.1",
+      "image_id": "sha256:1e9dcb638e9447066673b8b4a656076f192d6394b5047407602c4bdfac894a54",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "monitoring",
+      "compose_service": "gpu-exporter",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T06:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.2,
+      "mem_usage": 23068672,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.0,
+      "net_rx_bps": 1520.0,
+      "net_tx_bps": 860.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 180.0,
+      "pids": 8,
+      "log_lines": 44,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "1a99401981ea",
+      "name": "proxy-manager",
+      "image": "jc21/nginx-proxy-manager:2.12.3",
+      "image_id": "sha256:cc162f33d1bbdc10c5c6b1951fca2f770be45411e66e4e0fdbbba0d5cbe5a961",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "edge",
+      "compose_service": "proxy-manager",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T08:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.2,
+      "mem_usage": 241172480,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.4,
+      "net_rx_bps": 1520.0,
+      "net_tx_bps": 860.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 180.0,
+      "pids": 31,
+      "log_lines": 113,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "0495620ea813",
+      "name": "vaultwarden",
+      "image": "vaultwarden/server:1.34.1",
+      "image_id": "sha256:5bd6a01243b707cf2d837292edb2b14bbc9cbff4b90cc46407474c8f3e0e22ba",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "edge",
+      "compose_service": "vaultwarden",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T12:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.0,
+      "mem_usage": 50331648,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.1,
+      "net_rx_bps": 900.0,
+      "net_tx_bps": 400.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 0.0,
+      "pids": 14,
+      "log_lines": 62,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "3fbaa617cfda",
+      "name": "gitea",
+      "image": "gitea/gitea:1.24.3",
+      "image_id": "sha256:c73a0396336549d4d5e36069b355801bbe90c47eedb2d32e5ac2faa774c46df9",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "dev",
+      "compose_service": "gitea",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T12:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.3,
+      "mem_usage": 377487360,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.5,
+      "net_rx_bps": 1830.0,
+      "net_tx_bps": 1090.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 270.0,
+      "pids": 28,
+      "log_lines": 104,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "63bd0b02fc1a",
+      "name": "gitea-db",
+      "image": "postgres:17-alpine",
+      "image_id": "sha256:9715ff1320b39020eeb512425189b29b298eeacd5b626d4f801dcf462509a3c4",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "dev",
+      "compose_service": "gitea-db",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T12:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.2,
+      "mem_usage": 125829120,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.2,
+      "net_rx_bps": 1520.0,
+      "net_tx_bps": 860.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 180.0,
+      "pids": 12,
+      "log_lines": 56,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "ac24d3cdf5c4",
+      "name": "ai-server-monitor",
+      "image": "ghcr.io/example-org/ai-server-monitor:latest",
+      "image_id": "sha256:cfaa0b8542767a43ce1d46d65d8c76732487cb7ec1244cfb7bf2b60e3e6d83ca",
+      "state": "running",
+      "status": "Up 13 days (healthy)",
+      "compose_project": "monitor",
+      "compose_service": "ai-server-monitor",
+      "health": "healthy",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T09:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 1.5,
+      "mem_usage": 167772160,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.2,
+      "net_rx_bps": 5550.0,
+      "net_tx_bps": 3850.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 1350.0,
+      "pids": 10,
+      "log_lines": 50,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "7d22e4cbbacb",
+      "name": "ai-server-monitor-docker-proxy",
+      "image": "tecnativa/docker-socket-proxy:v0.4.1",
+      "image_id": "sha256:7232ad5a0d7391fc122a88777116fc75632d9d778e951455bbafbdeb32077c73",
+      "state": "running",
+      "status": "Up 13 days",
+      "compose_project": "monitor",
+      "compose_service": "ai-server-monitor-docker-proxy",
+      "health": null,
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-05-19T05:00:00.000000000Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.1,
+      "mem_usage": 29360128,
+      "mem_limit": 68719476736,
+      "mem_percent": 0.0,
+      "net_rx_bps": 1210.0,
+      "net_tx_bps": 630.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 90.0,
+      "pids": 13,
+      "log_lines": 59,
+      "log_errors": 0,
+      "log_error_samples": []
+     }
+    ],
+    "disk_usage": {
+     "images_bytes": 79456894976,
+     "images_unused_bytes": 9663676416,
+     "images_count": 41,
+     "containers_rw_bytes": 2147483648,
+     "volumes_bytes": 44023414784,
+     "volumes_count": 17,
+     "build_cache_bytes": 1073741824,
+     "largest_volumes": [
+      {
+       "name": "ai_open-webui-data",
+       "bytes": 12884901888
+      },
+      {
+       "name": "monitoring_prometheus_data",
+       "bytes": 9663676416
+      },
+      {
+       "name": "monitoring_loki_data",
+       "bytes": 7516192768
+      },
+      {
+       "name": "ai_qdrant_storage",
+       "bytes": 5368709120
+      },
+      {
+       "name": "home_homeassistant_config",
+       "bytes": 3221225472
+      }
+     ],
+     "ts": 1780314500.0
+    }
+   }
+  },
+  "gpu": {
+   "ok": true,
+   "state": "ok",
+   "age_s": 7,
+   "data": {
+    "driver": "560.35.03",
+    "gpus": [
+     {
+      "index": 0,
+      "name": "NVIDIA GeForce RTX 4090",
+      "uuid": "GPU-f939ca84-340e-3b42-5fca-0e44427af6eb",
+      "util_percent": 6,
+      "mem_util_percent": 3,
+      "mem_used": 16213501542,
+      "mem_total": 25769803776,
+      "mem_percent": 62.9,
+      "temperature_c": 44,
+      "fan_percent": 30,
+      "power_w": 58.4,
+      "power_limit_w": 450.0,
+      "processes": [
+       {
+        "pid": 3891,
+        "name": "ollama",
+        "mem_used": 9878424780
+       },
+       {
+        "pid": 4128,
+        "name": "python3.11",
+        "mem_used": 5046586572
+       },
+       {
+        "pid": 7351,
+        "name": "llama-server",
+        "mem_used": 1073741824
+       },
+       {
+        "pid": 2214,
+        "name": "Xorg",
+        "mem_used": 167772160
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "systemd": {
+   "ok": true,
+   "state": "ok",
+   "age_s": 6,
+   "data": {
+    "system_state": "degraded",
+    "units_total": 812,
+    "by_active_state": {
+     "active": 597,
+     "inactive": 214,
+     "failed": 1
+    },
+    "failed": [
+     {
+      "name": "logrotate.service",
+      "description": "Rotate log files",
+      "sub": "failed",
+      "since": 1780297200,
+      "result": "exit-code"
+     }
+    ],
+    "restarting": [],
+    "activating": []
+   }
+  },
+  "journal": {
+   "ok": true,
+   "state": "ok",
+   "age_s": 5,
+   "data": {
+    "window_start": 1780315020.0,
+    "window_end": 1780315080.0,
+    "min_priority": "warning",
+    "entries": 21,
+    "truncated": false,
+    "by_priority": {
+     "warning": 3,
+     "err": 18
+    },
+    "top_sources": [
+     {
+      "source": "logrotate",
+      "count": 6
+     },
+     {
+      "source": "dockerd",
+      "count": 12
+     }
+    ],
+    "top_messages": [
+     {
+      "source": "logrotate",
+      "priority": "err",
+      "count": 6,
+      "sample": "error: /etc/logrotate.d/loki:7 unknown option 'maxsizee' -- ignoring line",
+      "first_ts": 1780297200.0,
+      "last_ts": 1780297203.0
+     },
+     {
+      "source": "dockerd",
+      "priority": "err",
+      "count": 12,
+      "sample": "container esphome exited with code 1, restarting",
+      "first_ts": 1780314800.0,
+      "last_ts": 1780315160.0
+     }
+    ],
+    "notable": {}
+   }
+  },
+  "apt": {
+   "ok": true,
+   "state": "ok",
+   "age_s": 22300,
+   "data": {
+    "distro": "Ubuntu 24.04.2 LTS",
+    "upgradable_count": 4,
+    "security_count": 0,
+    "packages": [
+     {
+      "name": "containerd.io",
+      "current": "1.7.27-1",
+      "candidate": "1.7.28-1",
+      "arch": "amd64",
+      "suites": [
+       "noble-updates"
+      ],
+      "security": false
+     },
+     {
+      "name": "docker-buildx-plugin",
+      "current": "0.24.0-1",
+      "candidate": "0.25.0-1",
+      "arch": "amd64",
+      "suites": [
+       "noble-updates"
+      ],
+      "security": false
+     },
+     {
+      "name": "libssl3t64",
+      "current": "3.0.13-0ubuntu3.5",
+      "candidate": "3.0.13-0ubuntu3.6",
+      "arch": "amd64",
+      "suites": [
+       "noble-updates"
+      ],
+      "security": false
+     },
+     {
+      "name": "tzdata",
+      "current": "2025b-0ubuntu0.24.04.1",
+      "candidate": "2025c-0ubuntu0.24.04.1",
+      "arch": "amd64",
+      "suites": [
+       "noble-updates"
+      ],
+      "security": false
+     }
+    ],
+    "truncated": false,
+    "lists_age_h": 6.2,
+    "reboot_required": false,
+    "reboot_required_pkgs": []
+   }
+  },
+  "arr": {
+   "ok": true,
+   "state": "ok",
+   "age_s": 95,
+   "data": {
+    "summary": {
+     "instances": 5,
+     "unreachable": [],
+     "queue_total": 4,
+     "queue_problems": 0,
+     "health_issues": 0,
+     "wanted_missing": 161,
+     "wanted_cutoff_unmet": 305,
+     "indexers_failing": 0,
+     "stalled_candidates": 0
+    },
+    "findings": [],
+    "apps": [
+     {
+      "type": "radarr",
+      "name": "radarr",
+      "ok": true,
+      "version": "5.26.2.10099",
+      "health": [],
+      "queue": {
+       "total": 1,
+       "listed": 1,
+       "problems": 0,
+       "by_state": {
+        "downloading": 1
+       },
+       "items": [
+        {
+         "id": 700001,
+         "download_id": "FF6F557116446713C4595558E2C0F0CC2703B349",
+         "title": "Lighthouse.at.the.Edge.2024.1080p.WEB-DL",
+         "status": "downloading",
+         "tracked_status": "ok",
+         "tracked_state": "downloading",
+         "error": null,
+         "messages": [],
+         "size": 9400000000,
+         "size_left": 3100000000,
+         "protocol": "torrent",
+         "indexer": "NordTorrents (Prowlarr)",
+         "download_client": "qbittorrent",
+         "added": "2026-05-30T08:12:41Z",
+         "problem": false
+        }
+       ]
+      },
+      "wanted": {
+       "missing": 31,
+       "cutoff_unmet": 58
+      }
+     },
+     {
+      "type": "sonarr",
+      "name": "sonarr",
+      "ok": true,
+      "version": "4.0.15.2941",
+      "health": [],
+      "queue": {
+       "total": 2,
+       "listed": 2,
+       "problems": 0,
+       "by_state": {
+        "downloading": 2
+       },
+       "items": [
+        {
+         "id": 700002,
+         "download_id": "ED2E2CB3295B5C3A99DEFB9006C48B20002D07CD",
+         "title": "Harbor.Lights.S02E05.1080p.WEB-DL",
+         "status": "downloading",
+         "tracked_status": "ok",
+         "tracked_state": "downloading",
+         "error": null,
+         "messages": [],
+         "size": 2100000000,
+         "size_left": 400000000,
+         "protocol": "torrent",
+         "indexer": "OpenLibraryTV (Prowlarr)",
+         "download_client": "qbittorrent",
+         "added": "2026-05-30T08:12:41Z",
+         "problem": false
+        },
+        {
+         "id": 700003,
+         "download_id": "6B26412BB1EBB3DE5AF430CC055EED2192628E02",
+         "title": "Harbor.Lights.S02E06.1080p.WEB-DL",
+         "status": "downloading",
+         "tracked_status": "ok",
+         "tracked_state": "downloading",
+         "error": null,
+         "messages": [],
+         "size": 2200000000,
+         "size_left": 2200000000,
+         "protocol": "torrent",
+         "indexer": "OpenLibraryTV (Prowlarr)",
+         "download_client": "qbittorrent",
+         "added": "2026-05-30T08:12:41Z",
+         "problem": false
+        }
+       ]
+      },
+      "wanted": {
+       "missing": 112,
+       "cutoff_unmet": 207
+      }
+     },
+     {
+      "type": "whisparr",
+      "name": "whisparr",
+      "ok": true,
+      "version": "3.0.2.1024",
+      "health": [],
+      "queue": {
+       "total": 1,
+       "listed": 1,
+       "problems": 0,
+       "by_state": {
+        "downloading": 1
+       },
+       "items": [
+        {
+         "id": 700004,
+         "download_id": "E79AC8961C27AFA482311497713699052A150738",
+         "title": "Studio.Aurora.24.05.28.Night.Shift.1080p",
+         "status": "downloading",
+         "tracked_status": "ok",
+         "tracked_state": "downloading",
+         "error": null,
+         "messages": [],
+         "size": 1400000000,
+         "size_left": 600000000,
+         "protocol": "torrent",
+         "indexer": "PixelBay (Prowlarr)",
+         "download_client": "qbittorrent",
+         "added": "2026-05-30T08:12:41Z",
+         "problem": false
+        }
+       ]
+      },
+      "wanted": {
+       "missing": 18,
+       "cutoff_unmet": 40
+      }
+     }
+    ],
+    "prowlarr": {
+     "type": "prowlarr",
+     "name": "prowlarr",
+     "ok": true,
+     "version": "1.37.0.5076",
+     "health": [],
+     "indexers": [
+      {
+       "id": 10,
+       "name": "FictionTracker",
+       "protocol": "torrent",
+       "enabled": true,
+       "failing": false,
+       "disabled_till": null,
+       "most_recent_failure": null
+      },
+      {
+       "id": 11,
+       "name": "OpenLibraryTV",
+       "protocol": "torrent",
+       "enabled": true,
+       "failing": false,
+       "disabled_till": null,
+       "most_recent_failure": null
+      },
+      {
+       "id": 12,
+       "name": "NordTorrents",
+       "protocol": "torrent",
+       "enabled": true,
+       "failing": false,
+       "disabled_till": null,
+       "most_recent_failure": null
+      },
+      {
+       "id": 13,
+       "name": "PixelBay",
+       "protocol": "torrent",
+       "enabled": true,
+       "failing": false,
+       "disabled_till": null,
+       "most_recent_failure": null
+      },
+      {
+       "id": 14,
+       "name": "ArchiveSwarm",
+       "protocol": "torrent",
+       "enabled": true,
+       "failing": false,
+       "disabled_till": null,
+       "most_recent_failure": null
+      }
+     ],
+     "summary": {
+      "total": 5,
+      "enabled": 5,
+      "failing": 0
+     }
+    },
+    "qbittorrent": {
+     "type": "qbittorrent",
+     "name": "qbittorrent",
+     "ok": true,
+     "version": "v5.1.2",
+     "transfer": {
+      "dl_speed": 8400000,
+      "up_speed": 1250000,
+      "connection_status": "connected"
+     },
+     "summary": {
+      "total": 17,
+      "by_state": {
+       "uploading": 9,
+       "stalledUP": 6,
+       "downloading": 2
+      }
+     },
+     "stalled_after_s": 21600,
+     "stalled_total": 0,
+     "stalled": []
+    }
+   }
+  },
+  "image_updates": {
+   "ok": true,
+   "state": "ok",
+   "age_s": 22300,
+   "data": {
+    "summary": {
+     "total": 33,
+     "up_to_date": 31,
+     "update_available": 2,
+     "unknown": 0
+    },
+    "updates_available": [
+     "ghcr.io/ggml-org/llama.cpp:server-cuda",
+     "postgres:17-alpine"
+    ],
+    "images": [
+     {
+      "image": "ollama/ollama:0.9.6",
+      "containers": [
+       "ollama"
+      ],
+      "image_id": "df793c7f7a0f",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:07c1ff4aca5d157eb9a93fdb6cea0a4512f0197e3c8620a1fb7911adad068775"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:07c1ff4aca5d157eb9a93fdb6cea0a4512f0197e3c8620a1fb7911adad068775"
+     },
+     {
+      "image": "ghcr.io/example-org/comfyui:1.4",
+      "containers": [
+       "comfyui"
+      ],
+      "image_id": "e5fc81fed0ee",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "ghcr.io",
+      "local_digests": [
+       "sha256:f8f1b9e141822002bec7c2d0cc349186c37c059f2d6bfa6c81ed1f38a186e875"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:f8f1b9e141822002bec7c2d0cc349186c37c059f2d6bfa6c81ed1f38a186e875"
+     },
+     {
+      "image": "ghcr.io/open-webui/open-webui:v0.6.18",
+      "containers": [
+       "open-webui"
+      ],
+      "image_id": "b8336af53670",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "ghcr.io",
+      "local_digests": [
+       "sha256:41b377991ff370cc64ffd5374886692f16a2313f404d79b230daae2087c9e8f2"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:41b377991ff370cc64ffd5374886692f16a2313f404d79b230daae2087c9e8f2"
+     },
+     {
+      "image": "ghcr.io/ggml-org/llama.cpp:server-cuda",
+      "containers": [
+       "llamacpp-chat",
+       "llamacpp-embedding"
+      ],
+      "image_id": "183647d27e7d",
+      "status": "update_available",
+      "reason": null,
+      "registry": "ghcr.io",
+      "local_digests": [
+       "sha256:c972eaefcc9011f2a47ad6c167a866fe80cc7dc9eb08685211a22ff7326c966a"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:e97d49176de9996b5e3fbfbe6174ed38eff819c966d8836ece6bb58f99dfa610"
+     },
+     {
+      "image": "qdrant/qdrant:v1.14.1",
+      "containers": [
+       "qdrant"
+      ],
+      "image_id": "99a5a689e343",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:65a3324f0b00b3c983515215cf9a10ef3023df06b9a0884a16b7fa610984ce55"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:65a3324f0b00b3c983515215cf9a10ef3023df06b9a0884a16b7fa610984ce55"
+     },
+     {
+      "image": "searxng/searxng:2025.7.20",
+      "containers": [
+       "searxng"
+      ],
+      "image_id": "8c3a6cf64c8d",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:c7867ac4082a2642670e85d470a35fdb1e527d727c9bd12eaa2952ff7dd1f7c9"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:c7867ac4082a2642670e85d470a35fdb1e527d727c9bd12eaa2952ff7dd1f7c9"
+     },
+     {
+      "image": "lscr.io/linuxserver/radarr:5.26.2",
+      "containers": [
+       "radarr"
+      ],
+      "image_id": "2562b6440896",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "lscr.io",
+      "local_digests": [
+       "sha256:6d8ca040b76076e9ff3cc8649bc35777c80b9688c16a780fdead1f1219ce6129"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:6d8ca040b76076e9ff3cc8649bc35777c80b9688c16a780fdead1f1219ce6129"
+     },
+     {
+      "image": "lscr.io/linuxserver/sonarr:4.0.15",
+      "containers": [
+       "sonarr"
+      ],
+      "image_id": "d117bfda77e7",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "lscr.io",
+      "local_digests": [
+       "sha256:53f020e7203a49982096cc8282d48d481d7c62d88501a0c600702cf509584c3a"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:53f020e7203a49982096cc8282d48d481d7c62d88501a0c600702cf509584c3a"
+     },
+     {
+      "image": "ghcr.io/example-org/whisparr:3.0.2",
+      "containers": [
+       "whisparr"
+      ],
+      "image_id": "5629279b24e0",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "ghcr.io",
+      "local_digests": [
+       "sha256:d4301d646c176f37d36b2dfc799983ba7f58af1ac7bb45f7689ff29056883679"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:d4301d646c176f37d36b2dfc799983ba7f58af1ac7bb45f7689ff29056883679"
+     },
+     {
+      "image": "lscr.io/linuxserver/prowlarr:1.37.0",
+      "containers": [
+       "prowlarr"
+      ],
+      "image_id": "1ac6a45e1dc0",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "lscr.io",
+      "local_digests": [
+       "sha256:cd4de107b67ee79f372b6ad6e75e66975c5719689a391c136b5322b8c02fb0ae"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:cd4de107b67ee79f372b6ad6e75e66975c5719689a391c136b5322b8c02fb0ae"
+     },
+     {
+      "image": "lscr.io/linuxserver/qbittorrent:5.1.2",
+      "containers": [
+       "qbittorrent"
+      ],
+      "image_id": "9c3ea2aee0af",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "lscr.io",
+      "local_digests": [
+       "sha256:8ad0f35e3eede49b4ddb8019ce620dafa95b5a7a216a490d32d8434f3cf26ab5"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:8ad0f35e3eede49b4ddb8019ce620dafa95b5a7a216a490d32d8434f3cf26ab5"
+     },
+     {
+      "image": "ghcr.io/flaresolverr/flaresolverr:v3.3.21",
+      "containers": [
+       "flaresolverr"
+      ],
+      "image_id": "5fc703bcbf94",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "ghcr.io",
+      "local_digests": [
+       "sha256:3479679d7969d7f1d508fd0929c048a698194a0a0fde99bc48cd4f3575d6c870"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:3479679d7969d7f1d508fd0929c048a698194a0a0fde99bc48cd4f3575d6c870"
+     },
+     {
+      "image": "jellyfin/jellyfin:10.10.7",
+      "containers": [
+       "jellyfin"
+      ],
+      "image_id": "cc424461f096",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:9430e70ae0dd78019b30b103023e912d20a55c762562f7ee41bced2a23f8f57a"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:9430e70ae0dd78019b30b103023e912d20a55c762562f7ee41bced2a23f8f57a"
+     },
+     {
+      "image": "fallenbagel/jellyseerr:2.7.2",
+      "containers": [
+       "jellyseerr"
+      ],
+      "image_id": "7172289e11a7",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:ee967c30886322863399914f12b32dc978599be49715a2c33ed69fa710c58e9e"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:ee967c30886322863399914f12b32dc978599be49715a2c33ed69fa710c58e9e"
+     },
+     {
+      "image": "lscr.io/linuxserver/bazarr:1.5.2",
+      "containers": [
+       "bazarr"
+      ],
+      "image_id": "1d3b60b5624a",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "lscr.io",
+      "local_digests": [
+       "sha256:08093ce5584d62ad4f54fba4d776fb72d15a2cd653b64129d25812ca3c3e7c93"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:08093ce5584d62ad4f54fba4d776fb72d15a2cd653b64129d25812ca3c3e7c93"
+     },
+     {
+      "image": "ghcr.io/home-assistant/home-assistant:2025.7.3",
+      "containers": [
+       "homeassistant"
+      ],
+      "image_id": "1c635a108a69",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "ghcr.io",
+      "local_digests": [
+       "sha256:2914a004355c33679b24d42cace8c5dc4d37c7b1e31c9b06133cc91de8a38c15"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:2914a004355c33679b24d42cace8c5dc4d37c7b1e31c9b06133cc91de8a38c15"
+     },
+     {
+      "image": "eclipse-mosquitto:2.0.21",
+      "containers": [
+       "mosquitto"
+      ],
+      "image_id": "69f07a4bd546",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:b102eac5972b3af6ae48d40d1ede914705b328d7a2fe543b643317587b35fb7b"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:b102eac5972b3af6ae48d40d1ede914705b328d7a2fe543b643317587b35fb7b"
+     },
+     {
+      "image": "koenkk/zigbee2mqtt:2.5.1",
+      "containers": [
+       "zigbee2mqtt"
+      ],
+      "image_id": "ba8e4771c9e5",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:08ec86fdd6cab0ac6b0a13150cb10910fb001b301f67bb70252ff567331eb5eb"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:08ec86fdd6cab0ac6b0a13150cb10910fb001b301f67bb70252ff567331eb5eb"
+     },
+     {
+      "image": "ghcr.io/esphome/esphome:2025.7.2",
+      "containers": [
+       "esphome"
+      ],
+      "image_id": "dffcb6d1d859",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "ghcr.io",
+      "local_digests": [
+       "sha256:597c4dedca8fa01fe4285d3312da94cc57597a935a6428fc1363083ade58e9de"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:597c4dedca8fa01fe4285d3312da94cc57597a935a6428fc1363083ade58e9de"
+     },
+     {
+      "image": "grafana/grafana:12.0.2",
+      "containers": [
+       "grafana"
+      ],
+      "image_id": "4721208efa25",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:e570a67978684ba7a83509f1a554efa23515c0462574837c1499bfa7508a1d97"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:e570a67978684ba7a83509f1a554efa23515c0462574837c1499bfa7508a1d97"
+     },
+     {
+      "image": "prom/prometheus:v3.5.0",
+      "containers": [
+       "prometheus"
+      ],
+      "image_id": "32d326226d44",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:4a3a91ebe37dbfc6ff1872f60f5f4067abe9a0d6e8c49dba88779ad5161f75ab"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:4a3a91ebe37dbfc6ff1872f60f5f4067abe9a0d6e8c49dba88779ad5161f75ab"
+     },
+     {
+      "image": "grafana/loki:3.5.2",
+      "containers": [
+       "loki"
+      ],
+      "image_id": "f3db9d1f68a3",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:63f5018d9c735888b508860a81ce82ceb1c6ea4d94c5d3616db8234e8860679c"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:63f5018d9c735888b508860a81ce82ceb1c6ea4d94c5d3616db8234e8860679c"
+     },
+     {
+      "image": "grafana/promtail:3.5.2",
+      "containers": [
+       "promtail"
+      ],
+      "image_id": "6557ea47296e",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:ef0173ccc4a64a9c25df8f00b3cfc1e2ca7a371befb952b1b2f34eddf453ecaa"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:ef0173ccc4a64a9c25df8f00b3cfc1e2ca7a371befb952b1b2f34eddf453ecaa"
+     },
+     {
+      "image": "prom/alertmanager:v0.28.1",
+      "containers": [
+       "alertmanager"
+      ],
+      "image_id": "500bc3078dda",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:4f2a5d17881097e729ad5426d6866d067d6ea240d7a7755929339968280059f4"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:4f2a5d17881097e729ad5426d6866d067d6ea240d7a7755929339968280059f4"
+     },
+     {
+      "image": "gcr.io/cadvisor/cadvisor:v0.52.1",
+      "containers": [
+       "cadvisor"
+      ],
+      "image_id": "218c6e8a2fce",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "gcr.io",
+      "local_digests": [
+       "sha256:703806bbe17f3b02649ca63eec79fe58a78f96d48f1e8b41323f4c7ccae3fae2"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:703806bbe17f3b02649ca63eec79fe58a78f96d48f1e8b41323f4c7ccae3fae2"
+     },
+     {
+      "image": "prom/node-exporter:v1.9.1",
+      "containers": [
+       "node-exporter"
+      ],
+      "image_id": "be720cd44135",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:fbd1330b873cec2f4128067ebb55ad51ad4fb77ca81e87bc5bf41f857917ce5a"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:fbd1330b873cec2f4128067ebb55ad51ad4fb77ca81e87bc5bf41f857917ce5a"
+     },
+     {
+      "image": "utkuozdemir/nvidia_gpu_exporter:1.3.1",
+      "containers": [
+       "gpu-exporter"
+      ],
+      "image_id": "1e9dcb638e94",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:9eb4d2cc7b9dd5b07f7a1cbfe8e279c18a6c298bab05dfa1737092d5646aa02a"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:9eb4d2cc7b9dd5b07f7a1cbfe8e279c18a6c298bab05dfa1737092d5646aa02a"
+     },
+     {
+      "image": "jc21/nginx-proxy-manager:2.12.3",
+      "containers": [
+       "proxy-manager"
+      ],
+      "image_id": "cc162f33d1bb",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:7548c834707390a046947eec7cde9689692dae6729c304060efb565877688cc6"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:7548c834707390a046947eec7cde9689692dae6729c304060efb565877688cc6"
+     },
+     {
+      "image": "vaultwarden/server:1.34.1",
+      "containers": [
+       "vaultwarden"
+      ],
+      "image_id": "5bd6a01243b7",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:b96a850c8bec6986f5ceb459ae8b5749426ef062ad322e6e3854212a3e69bb8a"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:b96a850c8bec6986f5ceb459ae8b5749426ef062ad322e6e3854212a3e69bb8a"
+     },
+     {
+      "image": "gitea/gitea:1.24.3",
+      "containers": [
+       "gitea"
+      ],
+      "image_id": "c73a03963365",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:49e0583939bd58f775236409b1a97bdf906cf9bee03b858221d081419f7395f8"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:49e0583939bd58f775236409b1a97bdf906cf9bee03b858221d081419f7395f8"
+     },
+     {
+      "image": "postgres:17-alpine",
+      "containers": [
+       "gitea-db"
+      ],
+      "image_id": "9715ff1320b3",
+      "status": "update_available",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:ae4f8986a5ed961463d94ab6ca148fc77e69b83650d520dafef1b46a8860fecd"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:f20ecc9aa5f1391b6422d708bd040823362ac9741ed8bc2b0c7404f11857614c"
+     },
+     {
+      "image": "ghcr.io/example-org/ai-server-monitor:latest",
+      "containers": [
+       "ai-server-monitor"
+      ],
+      "image_id": "cfaa0b854276",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "ghcr.io",
+      "local_digests": [
+       "sha256:fa91c71440f5528e5cef4551719856e34101edebc437ad9e01ba82b123b458b0"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:fa91c71440f5528e5cef4551719856e34101edebc437ad9e01ba82b123b458b0"
+     },
+     {
+      "image": "tecnativa/docker-socket-proxy:v0.4.1",
+      "containers": [
+       "ai-server-monitor-docker-proxy"
+      ],
+      "image_id": "7232ad5a0d73",
+      "status": "up_to_date",
+      "reason": null,
+      "registry": "docker.io",
+      "local_digests": [
+       "sha256:d82aad0dd0ed085eb9fb9431b6e9613aa32b940c08333eeb7c2f84ba62624158"
+      ],
+      "cached": false,
+      "remote_digest": "sha256:d82aad0dd0ed085eb9fb9431b6e9613aa32b940c08333eeb7c2f84ba62624158"
+     }
+    ]
+   }
+  },
+  "prometheus": {
+   "ok": true,
+   "state": "ok",
+   "age_s": 8,
+   "data": {
+    "url": "http://prometheus:9090",
+    "summary": {
+     "queries": 0,
+     "failed": []
+    },
+    "queries": []
+   }
+  }
+ },
+ "history": {
+  "docker": [
+   {
+    "hours_ago": 23.9,
+    "data": {
+     "containers": [
+      {
+       "name": "esphome",
+       "restart_count": 3
+      }
+     ]
+    }
+   },
+   {
+    "hours_ago": 1,
+    "data": {
+     "containers": [
+      {
+       "name": "esphome",
+       "restart_count": 15
+      }
+     ]
+    }
+   }
+  ]
+ }
+}

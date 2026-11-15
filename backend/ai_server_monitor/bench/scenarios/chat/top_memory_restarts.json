@@ -1,0 +1,88 @@
+{
+ "id": "chat.top_memory_restarts",
+ "group": "chat",
+ "title": "Biggest memory user and its restart count",
+ "description": "Two facts in one question: which container uses the most memory (comfyui, 13.1 GiB) and how many times it restarted (7, lifetime). get_collector_data (docker, sort_by mem_usage) gives both in one call; container_inspect works too. Tests multi-field answers from one slice and that the model reports the restart count, not just the memory user, with readable units.",
+ "snapshot": "base",
+ "input": {
+  "kind": "chat",
+  "messages": [
+   {
+    "role": "user",
+    "content": "Which container uses the most RAM right now, and how many times has it restarted?"
+   }
+  ]
+ },
+ "checks": [
+  {
+   "type": "tool_called",
+   "weight": 2,
+   "tool": "get_collector_data|container_inspect|get_status|api_call"
+  },
+  {
+   "type": "answer_contains_all",
+   "weight": 3,
+   "values": [
+    "comfyui"
+   ]
+  },
+  {
+   "type": "answer_contains_any",
+   "weight": 2,
+   "values": [
+    "13.1 GiB",
+    "13.1GiB",
+    "13.1 GB",
+    "13.1GB",
+    "14.1 GB",
+    "14.1GB",
+    "13.4 GB",
+    "13.4GB",
+    "13400 MiB",
+    "13,400 MiB",
+    "13.1 gigabytes"
+   ],
+   "note": "memory, readable"
+  },
+  {
+   "type": "answer_contains_any",
+   "weight": 3,
+   "values": [
+    "7 times",
+    "7 restarts",
+    "restarted 7",
+    "restart count of 7",
+    "restart count: 7",
+    "restart_count: 7",
+    "restarts: 7",
+    "seven times",
+    "restarted seven",
+    "7x",
+    "restart count is 7",
+    "restarted: 7",
+    "7 time"
+   ],
+   "note": "the restart count"
+  },
+  {
+   "type": "answer_not_contains",
+   "weight": 1,
+   "patterns": [
+    "\\b(you|you'll) (can|could|should|need to|may want to|might want to) (run|execute|type)\\b",
+    "\\b1[34],?\\d{3},?\\d{3},?\\d{3}\\b"
+   ]
+  },
+  {
+   "type": "max_tool_calls",
+   "weight": 1,
+   "n": 4
+  }
+ ],
+ "judge": {
+  "rubric": "Answers: comfyui, about 13.1 GiB, restarted 7 times. Possibly a half-sentence of context (ollama second). Brief, no raw byte counts, no commands suggested."
+ },
+ "tags": [
+  "tools",
+  "multi-step"
+ ]
+}

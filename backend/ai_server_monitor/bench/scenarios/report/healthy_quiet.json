@@ -1,0 +1,58 @@
+{
+ "id": "report.healthy_quiet",
+ "group": "report",
+ "title": "Healthy server: say so, invent nothing",
+ "description": "A normal, quiet home AI/media server: 33 containers up, disks under 62 %, a few harmless kernel warnings and two image updates (INFO only). The right report is health ok with a high score and no problems. This is the false-alarm test: small models tend to find 'issues' in a healthy digest (restart counts, image updates, kernel noise). A model that cries wolf here would spam the owner every five minutes.",
+ "snapshot": "base",
+ "input": {
+  "kind": "report"
+ },
+ "checks": [
+  {
+   "type": "report_json_valid",
+   "weight": 2
+  },
+  {
+   "type": "report_health",
+   "weight": 3,
+   "equals": "ok"
+  },
+  {
+   "type": "report_score_range",
+   "weight": 2,
+   "min": 85,
+   "max": 100
+  },
+  {
+   "type": "report_no_invented",
+   "weight": 3,
+   "patterns": [
+    "\\boom\\b|out of memory",
+    "unhealthy",
+    "restart[- ]?loop",
+    "overheat|too hot|\\bhot\\b",
+    "disk.{0,40}(full|filling|running out)",
+    "security (update|patch)",
+    "\\bfail(ed|ing|ure)\\b",
+    "logrotate",
+    "esphome"
+   ]
+  },
+  {
+   "type": "answer_not_contains",
+   "weight": 2,
+   "patterns": [
+    "\\bcritical\\b",
+    "\\burgent\\b",
+    "immediately",
+    "action required"
+   ]
+  }
+ ],
+ "judge": {
+  "rubric": "Overview says the server is healthy. Findings is empty or only mentions the two image updates as a note. Resources gives CPU ~11 %, memory ~35 %, the RTX 4090 and the disks correctly. No invented problems, no alarmist tone, Recommendations is 'None' or trivial."
+ },
+ "tags": [
+  "false-alarm"
+ ]
+}
