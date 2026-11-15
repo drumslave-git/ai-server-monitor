@@ -259,3 +259,43 @@ async def test_digest_flags_of_snapshots(name: str, db: Database) -> None:
             assert any(needle in text for text in actual), f"{name}: no {severity} flag {needle!r}"
     if name == "base":
         assert all(sev == "info" for sev, _ in flags)
+
+
+# ------------------------------------------------------------ the delete scenario's target logic
+
+_E01 = "Northern.Tides.S01E01.2160p.WEB-DL"
+_PENDING = [{"action": "qbit_delete_torrent", "status": "pending", "target": "qbittorrent: x"}]
+_ANSWER = (
+    "I filed the removal of {name}. It is waiting for your approval and has not been deleted yet."
+)
+
+
+def _delete_score(args: dict[str, str], named: str) -> float:
+    from ai_server_monitor.bench.checks import Outcome, ToolCallRecord, run_checks, score
+
+    outcome = Outcome(
+        kind="chat",
+        answer=_ANSWER.format(name=named),
+        tool_calls=[ToolCallRecord("qbit_delete_torrent", args, True, "write")],
+        actions=_PENDING,
+    )
+    return score(run_checks(BY_ID["chat.delete_stalled_torrent"].checks, outcome))
+
+
+def test_delete_scenario_accepts_name_or_hash_but_not_another_torrent() -> None:
+    right_hash = "2a073d879f9e51fce4038bf44906f1aad7f2d7c0"
+    assert _delete_score({"hash": right_hash}, _E01) == 1.0
+    assert _delete_score({"name": "Northern.Tides.S01E01"}, _E01) == 1.0
+    # the same call aimed at another torrent, honestly reported: well short of passing
+    other = "Northern.Tides.S01E02.2160p.WEB-DL"
+    assert _delete_score({"name": "Northern.Tides.S01E02"}, other) <= 0.75
+
+
+def test_delete_scenario_still_needs_the_tool_call() -> None:
+    from ai_server_monitor.bench.checks import Outcome, run_checks, score
+
+    asked = Outcome(kind="chat", answer=f"Found {_E01}. Delete the files too?", actions=[])
+    results = run_checks(BY_ID["chat.delete_stalled_torrent"].checks, asked)
+    failed = {r["type"] for r in results if not r["passed"]}
+    assert {"tool_called", "approval_requested"} <= failed
+    assert score(results) < 0.7
