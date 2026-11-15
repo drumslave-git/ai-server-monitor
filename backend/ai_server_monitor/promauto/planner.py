@@ -23,7 +23,7 @@ from ..llm import LLMClient, LLMError
 from ..llm.text import strip_reasoning
 from ..promql import PromQL, PromQLError
 from ..thresholds import GRAMMAR_HELP, breaches, normalize_threshold
-from .catalog import Catalog, JobSlice, build_catalog, mentions_known_metric
+from .catalog import _TOKEN, Catalog, JobSlice, build_catalog, mentions_known_metric
 from .store import KV_PLAN, MAX_QUERY, Proposal, QueryStore, clean_name
 
 log = logging.getLogger(__name__)
@@ -58,8 +58,10 @@ Rules:
 - Every metric selector must contain the job label of this job, e.g. \
 node_load5{{job="{job}"}}, because other jobs may export the same metric names.
 - The query must return only a few values: aggregate with sum, max or topk(3, ...) and keep \
-"by (instance)" or "by (name)" when the parts matter. Counters need rate(x[5m]) or \
-increase(x[1h]).
+"by (instance)" or "by (name)" when the parts matter.
+- Metrics marked c in the list are COUNTERS: they only ever grow, so a bare value is \
+meaningless. Always wrap them: rate(x[5m]) for a speed or increase(x[1h]) for a count. \
+Never put a limit on a bare counter.
 - One instant query, no subqueries, no range vectors as the final result.
 - kind "value" = the query always has an answer. kind "alert" = the query only returns \
 something when there is a problem, e.g. "... > 0"; it may be empty.
@@ -192,14 +194,45 @@ def selects_job(query: str, job: str) -> bool:
     return re.search(r"job\s*=~?\s*[\"'][^\"']*" + re.escape(job), query) is not None
 
 
+_RATE_FUNCTIONS = r"(?:rate|irate|increase|resets|changes|idelta|deriv)"
+
+
+def unwrapped_counter(query: str, counters: set[str]) -> str | None:
+    """A counter used as a plain value, not through rate()/increase()/...: it only grows, so
+    a threshold on it stays crossed forever. Returns the first such metric name."""
+    for match in _TOKEN.finditer(query):
+        name = match.group(0)
+        if name not in counters:
+            continue
+        before = query[: match.start()]
+        if before.count('"') % 2:
+            continue  # inside a label value
+        after = query[match.end() :]
+        wrapped = re.search(_RATE_FUNCTIONS + r"\(\s*$", before) is not None
+        ranged = re.match(r"\s*(\{[^}]*\})?\s*\[", after) is not None
+        if not (wrapped and ranged):
+            return name
+    return None
+
+
 async def validate(
-    client: PromQL, p: Proposal, metrics: dict[str, int] | None, job: str | None = None
+    client: PromQL,
+    p: Proposal,
+    metrics: dict[str, int] | None,
+    job: str | None = None,
+    counters: set[str] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Run the query. Returns (result dict, None) when it is good, else (None, reason)."""
     if metrics is not None and not mentions_known_metric(p.query, metrics):
         return None, "uses no metric from the list (invented metric names?)"
     if job and not selects_job(p.query, job):
         return None, f'has no {{job="{job}"}} selector (other jobs export the same names)'
+    bare = unwrapped_counter(p.query, counters) if counters else None
+    if bare:
+        return None, (
+            f"{bare} is a counter (it only ever grows); use rate({bare}[5m]) or "
+            f"increase({bare}[1h]) instead"
+        )
     try:
         result = await client.instant(p.query)
     except PromQLError as exc:
@@ -572,7 +605,7 @@ class Planner:
 
         async def check(p: Proposal) -> tuple[Proposal, dict[str, Any] | None, str | None]:
             async with sem:
-                result, error = await validate(client, p, sl.metrics, sl.job)
+                result, error = await validate(client, p, sl.metrics, sl.job, sl.counters)
             return p, result, error
 
         accepted: list[Proposal] = []

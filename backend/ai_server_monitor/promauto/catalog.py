@@ -41,6 +41,48 @@ _USEFUL = re.compile(
     re.IGNORECASE,
 )
 _TOKEN = re.compile(r"[A-Za-z_:][A-Za-z0-9_:]*")
+# Cumulative values the exporter declares as gauges, or does not declare at all.
+_CUMULATIVE_NAME = re.compile(r"(_total$|_count$)")
+_CUMULATIVE_WORDS = re.compile(r"((^|_)counters?_|_aggregate_|_cumulative)")
+_CUMULATIVE_HELP = re.compile(r"cumulative", re.IGNORECASE)
+_SNMP_STYLE = re.compile(r"^node_(netstat|snmp)_")
+_SNMP_GAUGES = re.compile(r"(CurrEstab|MaxConn|Forwarding|DefaultTTL|Rto(Algorithm|Min|Max))")
+# ECC counters are only worth watching where ECC exists; consumer cards always report 0.
+_ECC_ERRORS = re.compile(r"ecc.*errors", re.IGNORECASE)
+_ECC_MODE = re.compile(r"ecc.*mode", re.IGNORECASE)
+
+
+def is_counter(name: str, info: dict[str, Any] | None) -> bool:
+    """Does the metric only ever grow (so it must be read through rate() or increase())?
+
+    The declared type decides when it says counter. Exporters are sloppy though: a
+    nvidia-smi "…_counters_…_seconds" total is declared a gauge, node's netstat counters have
+    no type at all. So the name (_total, counters_, aggregate), the help text ("cumulative") and
+    the netstat/snmp naming also count.
+    """
+    info = info or {}
+    kind = str(info.get("type") or "")
+    if kind == "counter":
+        return True
+    if _CUMULATIVE_WORDS.search(name) or _CUMULATIVE_HELP.search(str(info.get("help") or "")):
+        return True
+    if kind == "gauge":
+        return False  # declared a gauge: "_total" alone is not enough (container_fs_inodes_total)
+    if _CUMULATIVE_NAME.search(name):
+        return True
+    return bool(_SNMP_STYLE.match(name)) and not _SNMP_GAUGES.search(name)
+
+
+def _counter_of(meta: dict[str, Any], name: str) -> bool:
+    entries = meta.get(name)
+    return is_counter(name, entries[0] if isinstance(entries, list) and entries else None)
+
+
+def drop_unusable(metrics: dict[str, int]) -> dict[str, int]:
+    """Without an ECC mode metric there is no sign the GPU has ECC: leave its error counters."""
+    if any(_ECC_MODE.search(n) for n in metrics):
+        return metrics
+    return {n: c for n, c in metrics.items() if not _ECC_ERRORS.search(n)}
 
 
 @dataclass
@@ -52,6 +94,8 @@ class JobSlice:
     text: str = ""
     other_host: str = ""
     """Address of the other machine this job scrapes ('' = the monitored server)."""
+    counters: set[str] = field(default_factory=set)
+    """Metrics that only ever grow (see is_counter)."""
 
     @property
     def usable(self) -> bool:
@@ -113,11 +157,13 @@ def render_slice(
     lines = [
         f"JOB {job}: {len(targets)} target(s) [{where}], {len(metrics)} metrics",
         f"families: {shown}",
-        "metrics [g=gauge c=counter, xN = series count]:",
+        "metrics [g=gauge, c=COUNTER (only grows: use rate/increase), xN = series count]:",
     ]
     for name in ranked:
         meta_entry = info(name)
-        kind = _type_letter(str(meta_entry.get("type", "")))
+        kind = (
+            "c" if is_counter(name, meta_entry) else _type_letter(str(meta_entry.get("type", "")))
+        )
         n = metrics[name]
         many = f" x{n}" + (" aggregate!" if n > MANY_SERIES else "") if n > 1 else ""
         help_text = str(meta_entry.get("help") or "").strip().replace("\n", " ")[:HELP_CHARS]
@@ -165,6 +211,7 @@ async def build_catalog(client: PromQL, big_client: PromQL) -> Catalog:
             value = series.get("value")
             if name and keep_metric(name) and isinstance(value, int | float):
                 metrics[name] = int(value)
+        metrics = drop_unusable(metrics)
         other = next(
             (
                 instance_host(t["instance"])
@@ -180,6 +227,7 @@ async def build_catalog(client: PromQL, big_client: PromQL) -> Catalog:
                 metrics=metrics,
                 text=render_slice(job, by_job[job], metrics, meta) if metrics else "",
                 other_host=other,
+                counters={n for n in metrics if _counter_of(meta, n)},
             )
         )
     digest = hashlib.sha256()

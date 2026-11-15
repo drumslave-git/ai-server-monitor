@@ -603,3 +603,104 @@ def test_alert_kind_needs_a_filter_in_the_query() -> None:
     assert filtered.kind == "alert"
     ranged = make_proposal({"name": "a", "query": "rate(x[5m]) > 0.1", "kind": "alert"}, "j")
     assert ranged.kind == "alert"
+
+
+# --------------------------------------------------------------------------- counters
+
+THERMAL = "nvidia_smi_clocks_event_reasons_counters_hw_thermal_slowdown_seconds"
+
+
+def prom_with_cumulative_gauge() -> FakeProm:
+    """The shape that went wrong live: a cumulative total that the exporter declares a gauge."""
+    prom = prom_with_answers()
+    prom.metrics["node"][THERMAL] = 1
+    prom.meta[THERMAL] = [{"type": "gauge", "help": "clocks_event_reasons_counters [us]"}]
+    prom.answers[f'max by (instance) ({THERMAL}{{job="node"}})'] = vector(({}, 7))
+    prom.answers[f'max by (instance) (rate({THERMAL}{{job="node"}}[5m]))'] = vector(({}, 0))
+    return prom
+
+
+def test_counter_detection_uses_type_name_and_help() -> None:
+    from ai_server_monitor.promauto.catalog import drop_unusable, is_counter
+
+    assert is_counter("x_total", {"type": "counter"})
+    assert is_counter("node_netstat_Tcp_RetransSegs", {"type": "unknown"})  # untyped netstat
+    assert not is_counter("node_netstat_Tcp_CurrEstab", {"type": "unknown"})
+    assert is_counter(THERMAL, {"type": "gauge", "help": "x"})  # declared gauge, cumulative name
+    assert is_counter("nvidia_smi_ecc_errors_uncorrected_aggregate_sram_l2", {"type": "gauge"})
+    assert is_counter("some_metric", {"type": "gauge", "help": "Cumulative bytes sent"})
+    assert is_counter("windows_net_errors_total", None)  # no metadata at all
+    assert not is_counter("container_fs_inodes_total", {"type": "gauge"})  # a real gauge
+    assert not is_counter("node_load5", {"type": "gauge"})
+    # ECC error counters are left out unless the GPU reports an ECC mode
+    ecc = {"a_ecc_errors_uncorrected": 1, "b_temperature": 1}
+    assert drop_unusable(ecc) == {"b_temperature": 1}
+    assert drop_unusable({**ecc, "a_ecc_mode_current": 1}) == {**ecc, "a_ecc_mode_current": 1}
+
+
+def test_a_bare_counter_is_found_and_wrapped_ones_pass() -> None:
+    from ai_server_monitor.promauto.planner import unwrapped_counter
+
+    c = {"a_total", "b_seconds"}
+    assert unwrapped_counter('max by (instance) (b_seconds{job="x"})', c) == "b_seconds"
+    assert unwrapped_counter("a_total > 5", c) == "a_total"
+    assert unwrapped_counter('sum(rate(a_total{job="x"}[5m]))', c) is None
+    assert unwrapped_counter("increase(a_total[1h]) + rate(b_seconds[5m])", c) is None
+    assert unwrapped_counter("max_over_time(a_total[1h])", c) == "a_total"  # not a rate
+    assert unwrapped_counter("rate(a_total[5m]) / a_total", c) == "a_total"  # one bare use
+    assert unwrapped_counter('up{job="a_total"}', c) is None  # inside a label value
+
+
+async def test_the_catalog_marks_cumulative_gauges_as_counters() -> None:
+    prom = prom_with_cumulative_gauge()
+    catalog = await build_catalog(
+        PromQL(PROM, transport=prom.transport()),
+        PromQL(PROM, max_series=5000, transport=prom.transport()),
+    )
+    node = catalog.job("node")
+    assert node is not None and THERMAL in node.counters
+    line = next(ln for ln in node.text.splitlines() if ln.startswith(THERMAL))
+    assert f"{THERMAL} [c]" in line
+    assert "COUNTER" in node.text and "node_cpu_seconds_total" in node.counters
+
+
+async def test_a_bare_counter_with_a_limit_is_repaired_with_rate(db: Database) -> None:
+    prom = prom_with_cumulative_gauge()
+    bare = f'max by (instance) ({THERMAL}{{job="node"}})'
+    wrapped = f'max by (instance) (rate({THERMAL}{{job="node"}}[5m]))'
+
+    def reply(messages: list[dict[str, Any]], n: int) -> str:
+        if job_of(messages) != "node":
+            return "[]"
+        if len(messages) == 2:
+            return plan(
+                {"name": "thermal_throttling", "query": bare, "warn_if": "> 0.1", "crit_if": "> 1"}
+            )
+        return plan({"name": "thermal_throttling", "query": wrapped, "warn_if": "> 0.1"})
+
+    llm = FakeLLM(reply)
+    await make_planner(db, prom, llm).run()
+    system = llm.calls[0][0]["content"]
+    assert "COUNTERS" in system and "rate(x[5m])" in system
+    repair = next(c for c in llm.calls if job_of(c) == "node" and len(c) > 2)
+    assert f"{THERMAL} is a counter" in repair[-1]["content"]
+    assert f"rate({THERMAL}[5m])" in repair[-1]["content"]
+    (row,) = await QueryStore(db).fetch()
+    assert row["query"] == wrapped and row["warn_if"] == "> 0.1"  # a rate: 0 now, limit sane
+
+
+async def test_a_counter_that_stays_bare_is_dropped(db: Database) -> None:
+    prom = prom_with_cumulative_gauge()
+    bare = f'max by (instance) ({THERMAL}{{job="node"}})'
+    llm = FakeLLM(
+        lambda m, n: (
+            plan({"name": "thermal_throttling", "query": bare, "crit_if": "> 1"})
+            if job_of(m) == "node"
+            else "[]"
+        )
+    )
+    outcome = await make_planner(db, prom, llm).run()
+    assert outcome.status == "fallback"  # nothing else usable
+    assert "thermal_throttling" not in {q["name"] for q in await QueryStore(db).fetch()}
+    info = await db.kv_get("prom_plan")
+    assert any("is a counter" in r["reason"] for r in info["rejected"])
