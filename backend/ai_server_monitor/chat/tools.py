@@ -599,5 +599,7 @@ READ_TOOLS: list[Tool] = [
 
 def build_tools(settings: Settings) -> dict[str, Tool]:
     """The tools available under these settings, by name."""
-    tools = [*READ_TOOLS, *_write_tools()]
+    from .host_tools import host_tools  # (imports this module: not at the top)
+
+    tools = [*READ_TOOLS, *host_tools(), *_write_tools()]
     return {t.name: t for t in tools if t.enabled(settings)}
