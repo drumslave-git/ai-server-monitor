@@ -47,9 +47,25 @@ class FakeLLM:
     def __init__(self, *script: dict[str, Any] | Callable[[dict[str, Any]], dict[str, Any]]):
         self.script = list(script)
         self.requests: list[dict[str, Any]] = []
+        self.title_requests: list[dict[str, Any]] = []
+        self.title_reply: str | Callable[[dict[str, Any]], httpx.Response] = ""
+        """What the title request (chat/title.py) gets: text (an empty reply is unusable, so
+        the fallback title stays) or a function returning a whole HTTP response."""
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
+        if str(body["messages"][0]["content"]).startswith("You name chat conversations"):
+            self.title_requests.append(body)  # not part of the script of the conversation
+            if callable(self.title_reply):
+                return self.title_reply(body)
+            return httpx.Response(
+                200,
+                json={
+                    "model": "fake",
+                    "choices": [{"index": 0, "message": {"content": self.title_reply}}],
+                    "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+                },
+            )
         self.requests.append(body)
         step = self.script.pop(0) if self.script else {"content": "(script ended)"}
         message = step(body) if callable(step) else step

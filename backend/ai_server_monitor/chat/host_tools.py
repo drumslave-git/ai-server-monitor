@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -29,13 +28,11 @@ from ..hostinspect.history import MetricError
 from ..hostinspect.history import metric_history as _metric_history
 from ..hostinspect.output import scrub_output
 from ..hostinspect.sandbox import Sandbox
+from .audit import record_call
 from .tools import NoArgs, Tool, ToolContext, ToolError, _Args
 
 log = logging.getLogger(__name__)
 
-SHELL_ENABLED = True  # TODO setting chat.shell (off/on, default on)
-AUDIT_KEY = "chat_shell_audit"
-AUDIT_KEEP = 200
 RESULT_SHARE = 0.7
 """Share of `chat.max_tool_result_chars` a command's output may use (the rest is JSON framing
 and escaping), so the engine's own trimming never has to cut command output."""
@@ -61,18 +58,8 @@ def _require_linux() -> None:
         raise ToolError("host commands need Linux; this monitor is not running on Linux")
 
 
-async def _audit(ctx: ToolContext, entry: dict[str, Any]) -> None:
-    """Record a command (session, text, outcome). Kept in `kv` (no migration needed): the
-    last AUDIT_KEEP entries, newest last. Also logged."""
-    entry = {"ts": round(time.time(), 1), "session": ctx.session_id, **entry}
-    log.info("chat shell: %s", entry)
-    try:
-        async with _audit_lock:
-            rows = await ctx.app.db.kv_get(AUDIT_KEY, [])
-            rows.append(entry)
-            await ctx.app.db.kv_set(AUDIT_KEY, rows[-AUDIT_KEEP:])
-    except Exception:  # auditing must never break the answer
-        log.exception("could not write the shell audit entry")
+async def _audit(ctx: ToolContext, kind: str, **fields: Any) -> None:
+    await record_call(ctx.app.db, kind, ctx.session_id, **fields)
 
 
 # --------------------------------------------------------------------------- run_command
@@ -87,12 +74,12 @@ class RunCommandArgs(_Args):
 
 
 async def _run_command(ctx: ToolContext, args: RunCommandArgs) -> Any:
-    if not SHELL_ENABLED:
+    if not ctx.settings.chat.shell:
         raise ToolError("running commands is switched off in the settings")
     try:
         plan = parse_pipeline(args.cmd, _guard(ctx))
     except Refused as exc:
-        await _audit(ctx, {"cmd": args.cmd, "refused": str(exc)[:200]})
+        await _audit(ctx, "shell", cmd=args.cmd, refused=str(exc)[:200])
         raise ToolError(f"refused: {exc}") from exc
     _require_linux()
     sandbox = _sandbox(ctx)
@@ -103,13 +90,12 @@ async def _run_command(ctx: ToolContext, args: RunCommandArgs) -> Any:
     )
     await _audit(
         ctx,
-        {
-            "cmd": args.cmd,
-            "exit": result.exit_code,
-            "stopped": result.stopped,
-            "seconds": result.duration_s,
-            "bytes": result.output_bytes,
-        },
+        "shell",
+        cmd=args.cmd,
+        exit=result.exit_code,
+        stopped=result.stopped,
+        seconds=result.duration_s,
+        bytes=result.output_bytes,
     )
     out: dict[str, Any] = {"exit_code": result.exit_code, "output": scrub_output(result.output)}
     if result.stderr.strip() and (result.exit_code != 0 or not result.output.strip()):
@@ -184,9 +170,11 @@ async def _disk_usage(ctx: ToolContext, args: DiskUsageArgs) -> Any:
         raise ToolError(f"refused: {why}")
     _require_linux()
     sandbox = _sandbox(ctx)
+    chat = ctx.settings.chat
+    budget = chat.disk_scan_budget.total_seconds()
     if args.top_files:
         found = await asyncio.to_thread(
-            disk.largest_files, sandbox.run, path, args.top_files, 100, disk.SCAN_BUDGET_S
+            disk.largest_files, sandbox.run, path, args.top_files, 100, budget
         )
         try:
             locations = await asyncio.wait_for(_locations(ctx), ATTRIBUTION_TIMEOUT_S)
@@ -195,13 +183,13 @@ async def _disk_usage(ctx: ToolContext, args: DiskUsageArgs) -> Any:
                     row["owner"] = who
         except TimeoutError:
             pass
-        await _audit(ctx, {"cmd": f"disk_usage largest_files {path}", "found": found["found"]})
+        await _audit(ctx, "shell", cmd=f"disk_usage largest_files {path}", found=found["found"])
         return found
-    hit = disk.cached(path, args.depth)
+    hit = disk.cached(path, args.depth, ttl=chat.disk_cache_ttl.total_seconds())
     if hit is not None:
         return hit
     try:
-        scanned = await asyncio.to_thread(disk.scan, sandbox.run, path, args.depth)
+        scanned = await asyncio.to_thread(disk.scan, sandbox.run, path, args.depth, budget)
     except FileNotFoundError as exc:
         raise ToolError(f"cannot read {path}: {exc}") from exc
     try:
@@ -213,9 +201,11 @@ async def _disk_usage(ctx: ToolContext, args: DiskUsageArgs) -> Any:
         result["owner_lookup_problems"] = locations.errors[:3]
     await _audit(
         ctx,
-        {"cmd": f"disk_usage {path} depth={args.depth}", "seconds": scanned.elapsed_s,
-         "complete": scanned.complete},
-    )  # fmt: skip
+        "shell",
+        cmd=f"disk_usage {path} depth={args.depth}",
+        seconds=scanned.elapsed_s,
+        complete=scanned.complete,
+    )
     if scanned.complete:
         disk.remember(path, args.depth, result)
     return result
@@ -297,7 +287,7 @@ def host_tools() -> list[Tool]:
             RunCommandArgs,
             "read",
             _run_command,
-            enabled=lambda s: SHELL_ENABLED and linux(s),
+            enabled=lambda s: s.chat.shell and linux(s),
         ),
         Tool(
             "disk_usage",

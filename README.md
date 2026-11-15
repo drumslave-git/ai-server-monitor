@@ -39,6 +39,7 @@ What the compose file sets, and why:
 | `pid: host` | Lets the container see the host's processes (top CPU/memory consumers, which container a process belongs to). |
 | `/:/host:ro,rslave` | A read-only view of the host's filesystem: disk usage of the real mounts, the apt state, the journal, the systemd D-Bus socket. Nothing is ever written there. |
 | `security_opt: apparmor=unconfined` | On hosts with AppArmor (Ubuntu) Docker's default profile blocks the systemd D-Bus queries and reading other processes. The mounts stay read-only. Hosts without AppArmor do not need it. |
+| default container capabilities | The chat's `run_command` tool chroots into `/host` and drops to the host's unprivileged `nobody` user, which needs `CAP_SYS_CHROOT`, `CAP_SETUID` and `CAP_SETGID` (Docker's defaults; do not use `cap_drop: ALL`). The commands run read-only with no capabilities, limited CPU/memory/time, and every one is logged (`GET /api/chat/audit`). Turn it off with Settings → Chat → `shell`. |
 | `DOCKER_HOST: tcp://docker-proxy:2375` | The Docker API goes through a socket proxy that only allows GET requests. The monitor can look at containers and images, not start, stop or delete anything. |
 | `docker-proxy` env `CONTAINERS`, `IMAGES`, `INFO`, `SYSTEM` | The API sections the proxy lets through: containers (state, stats, logs), images (needed by the image-update check), engine info, and disk usage (`/system/df`). |
 | `# gpus: all` | Uncomment for NVIDIA GPU monitoring (needs the NVIDIA container runtime on the host). |
@@ -256,6 +257,9 @@ a fresh install starts with.
 | `chat.history_messages` | integer (min 0, max 100) | `12` | How many earlier messages of a conversation the model sees. |
 | `chat.max_tool_result_chars` | integer (min 500, max 50000) | `6000` | Longest tool result passed to the model; bigger results are trimmed. |
 | `chat.tool_timeout` | duration | `30s` | Per tool call. |
+| `chat.shell` | boolean | on | Let the chat run read-only commands on the host (journalctl, systemctl status, ss, df, ps, ...) to answer questions. They run in a sandbox as an unprivileged user and can change nothing. Off = the chat only sees the collected data. |
+| `chat.disk_scan_budget` | duration | `20s` | Longest a "what is on this disk" scan may run; it then answers with what it measured. |
+| `chat.disk_cache_ttl` | duration | `10m` | How long a finished disk scan of a path is reused. |
 
 ### Data retention (`storage`)
 
@@ -397,6 +401,9 @@ host never stops the service. Disable it under Settings → Collectors if you do
 - **systemd: "D-Bus … closed the connection"**, or `apparmor="DENIED" operation="ptrace"
   profile="docker-default"` in the host's kernel log — the container is running under Docker's
   default AppArmor profile. Keep `security_opt: [apparmor=unconfined]` from the compose file.
+- **Chat: "host commands failed" / `sandbox setup failed: chroot` or `dropping privileges`** —
+  the container lacks `SYS_CHROOT`/`SETUID`/`SETGID` (a `cap_drop` in the compose file) or is not
+  root. Fix that, or turn `chat.shell` off.
 - **Not sure a connection is right?** Every connection in Settings (LLM, Prometheus, Docker,
   each \*arr app, qBittorrent, Telegram) has a **Test** button that checks the values you typed
   *before* you save: it names the app and version that answered, or says what is wrong (wrong

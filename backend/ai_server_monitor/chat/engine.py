@@ -30,6 +30,7 @@ from ..llm.text import strip_reasoning
 from .prompts import STEP_LIMIT_NOTE, system_prompt
 from .safety import Scrubber, shrink, wrap_untrusted
 from .store import ChatStore
+from .title import TITLE_TIMEOUT_S, clean_title, title_messages
 from .tools import Tool, ToolContext, ToolError, build_tools
 
 if TYPE_CHECKING:
@@ -70,6 +71,7 @@ class ChatEngine:
         self.store = ChatStore(app.db)
         self._promql_transport = promql_transport
         self._locks: dict[str, asyncio.Lock] = {}
+        self._background: set[asyncio.Task[Any]] = set()
 
     # ------------------------------------------------------------------ entry point
 
@@ -86,6 +88,7 @@ class ChatEngine:
         `source` names who asks in the audit log of write actions (default `chat:<session>`);
         `channel` is stored with a new session (web | telegram)."""
         message = message.strip()[:MAX_MESSAGE]
+        is_new = session_id is None
         if session_id is None:
             session_id = await self.store.create_session(message, channel)
         elif not await self.store.session_exists(session_id):
@@ -93,13 +96,63 @@ class ChatEngine:
             return
         yield {"type": "session", "session_id": session_id}
         lock = self._locks.setdefault(session_id, asyncio.Lock())
+        title_task: asyncio.Task[str | None] | None = None
         async with lock:
             try:
                 async for event in self._answer(session_id, message, source):
+                    if event["type"] == "done" and is_new:
+                        # Started before `done` goes out, so the model works while the client
+                        # reads the answer; nothing below waits for it.
+                        title_task = self._start_title(session_id, message, event["text"])
                     yield event
             except LLMError as exc:
                 log.warning("chat: LLM failed: %s", exc)
                 yield {"type": "error", "message": f"The language model failed: {exc}"}
+        if title_task is not None:
+            # Outside the session lock (the next question is not held up) and after `done`
+            # (the answer is already out). The stream stays open for the title, at most
+            # TITLE_TIMEOUT_S; if the client left, the task still finishes and stores it.
+            title = await title_task
+            if title:
+                yield {"type": "title", "session_id": session_id, "title": title}
+
+    async def _prom_queries(self, tools: dict[str, Tool]) -> list[dict[str, Any]]:
+        """The auto-planned Prometheus queries, so the model knows what already exists."""
+        if "promql_query" not in tools:
+            return []
+        from ..promauto.store import list_enabled_queries
+
+        try:
+            return await list_enabled_queries(self.app.db)
+        except Exception:
+            log.exception("chat: could not list the auto Prometheus queries")
+            return []
+
+    # ------------------------------------------------------------------ titles
+
+    def _start_title(self, session_id: str, question: str, answer: str) -> asyncio.Task[str | None]:
+        task = asyncio.create_task(self._make_title(session_id, question, answer))
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+        return task
+
+    async def _make_title(self, session_id: str, question: str, answer: str) -> str | None:
+        """Ask the LLM for a short title and store it. Any failure, timeout or unusable reply
+        leaves the title cut from the first message in place (returns None)."""
+        try:
+            async with asyncio.timeout(TITLE_TIMEOUT_S):
+                completion = await self.app.llm.complete(
+                    title_messages(question, answer), temperature=0.2, max_tokens=40
+                )
+            title = clean_title(completion.content)
+            if title is None:
+                log.info("chat: unusable title reply %r", completion.content[:80])
+                return None
+            await self.store.set_title(session_id, title)
+            return title
+        except Exception as exc:  # a title is a nicety: never let it break a chat
+            log.info("chat: no LLM title (%s: %s)", type(exc).__name__, exc)
+            return None
 
     # ------------------------------------------------------------------ one question
 
@@ -117,7 +170,13 @@ class ChatEngine:
         await self.store.add_message(session_id, "user", message)
 
         digest = (await app.reports.digest()).text if mode == "none" else None
-        system = system_prompt(settings.report.language, digest=digest, tools=bool(tools))
+        system = system_prompt(
+            settings.report.language,
+            digest=digest,
+            tools=bool(tools),
+            tool_names=tools.keys(),
+            prom_queries=await self._prom_queries(tools),
+        )
         definitions = [t.definition() for t in tools.values()]
         if mode == "json" and tools:
             system = json_tool_system_prompt(definitions, system)

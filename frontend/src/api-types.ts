@@ -79,8 +79,32 @@ export interface paths {
          *     `session` {session_id}, `tool_call` {id, name, args, kind}, `tool_result` {id, name, ok,
          *     truncated, size, preview}, `token` {text} (the answer, in pieces), then `done`
          *     {session_id, message_id, tool_mode, steps, usage, stopped} — or `error` {message}.
+         *     For the first answer of a new conversation one more event may follow `done`:
+         *     `title` {session_id, title}, the LLM-written session title (the stream closes right after;
+         *     without it the session keeps the title cut from the first message).
          */
         post: operations["chat_api_chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Chat Audit
+         * @description What the chat did on its own (commands run on the host, API and MCP calls), newest
+         *     first. Extra fields per entry depend on the kind (shell: cmd, exit, seconds, bytes).
+         */
+        get: operations["chat_audit_api_chat_audit_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -187,6 +211,64 @@ export interface paths {
         get: operations["recent_metrics_api_metrics_recent_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/prometheus/queries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Queries
+         * @description The planned queries (with their last result or error) and the state of the planner.
+         */
+        get: operations["list_queries_api_prometheus_queries_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/prometheus/queries/{query_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Query */
+        delete: operations["delete_query_api_prometheus_queries__query_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Query */
+        patch: operations["patch_query_api_prometheus_queries__query_id__patch"];
+        trace?: never;
+    };
+    "/api/prometheus/replan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replan
+         * @description Choose the queries again now (runs in the background; poll GET /queries).
+         */
+        post: operations["replan_api_prometheus_replan_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -568,6 +650,22 @@ export interface components {
             /** Whisparr */
             whisparr?: components["schemas"]["ArrInstance"][];
         };
+        /** AuditEntry */
+        AuditEntry: {
+            /** Kind */
+            kind: string;
+            /** Session */
+            session?: string | null;
+            /** Ts */
+            ts: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** AuditList */
+        AuditList: {
+            /** Items */
+            items: components["schemas"]["AuditEntry"][];
+        };
         /** ChatMessage */
         ChatMessage: {
             /** Content */
@@ -642,6 +740,28 @@ export interface components {
         /** ChatSettings */
         ChatSettings: {
             /**
+             * Disk Cache Ttl
+             * Format: duration
+             * @description How long a finished disk scan of a path is reused.
+             * @default 10m
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            disk_cache_ttl: string;
+            /**
+             * Disk Scan Budget
+             * Format: duration
+             * @description Longest a "what is on this disk" scan may run; it then answers with what it measured.
+             * @default 20s
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            disk_scan_budget: string;
+            /**
              * History Messages
              * @description How many earlier messages of a conversation the model sees.
              * @default 12
@@ -659,6 +779,14 @@ export interface components {
              * @default 6000
              */
             max_tool_result_chars: number;
+            /**
+             * Shell
+             * @description Let the chat run read-only commands on the host (journalctl, systemctl status, ss, df,
+             *     ps, ...) to answer questions. They run in a sandbox as an unprivileged user and can change
+             *     nothing. Off = the chat only sees the collected data.
+             * @default true
+             */
+            shell: boolean;
             /**
              * Tool Timeout
              * Format: duration
@@ -773,22 +901,27 @@ export interface components {
             /**
              * @description Run PromQL queries against an existing Prometheus.
              * @default {
+             *       "auto_queries": true,
              *       "enabled": "auto",
              *       "interval": "1m",
+             *       "max_auto_queries": 12,
              *       "max_series": 50,
              *       "password": "",
              *       "queries": [
              *         {
              *           "description": "Scrape targets that are down",
              *           "name": "targets_down",
-             *           "query": "up == 0"
+             *           "query": "up == 0",
+             *           "unit": ""
              *         },
              *         {
              *           "description": "Alerts currently firing in Prometheus",
              *           "name": "firing_alerts",
-             *           "query": "ALERTS{alertstate=\"firing\"}"
+             *           "query": "ALERTS{alertstate=\"firing\"}",
+             *           "unit": ""
              *         }
              *       ],
+             *       "replan_interval": "7d",
              *       "timeout": "10s",
              *       "token": "",
              *       "url": "",
@@ -1265,6 +1398,11 @@ export interface components {
         /** PromQuery */
         PromQuery: {
             /**
+             * Crit If
+             * @description Critical when a value crosses this, same form as the warning.
+             */
+            crit_if?: string | null;
+            /**
              * Description
              * @description What the result means, e.g. "Scrape targets that are down". Helps the report writer.
              * @default
@@ -1280,9 +1418,28 @@ export interface components {
              * @description PromQL expression, evaluated as an instant query.
              */
             query: string;
+            /**
+             * Unit
+             * @description Unit of the value, e.g. %, bytes, seconds. Optional.
+             * @default
+             */
+            unit: string;
+            /**
+             * Warn If
+             * @description Warning when a value crosses this: an operator and a number, e.g. > 80 or == 0.
+             */
+            warn_if?: string | null;
         };
         /** PrometheusCollectorSettings */
         PrometheusCollectorSettings: {
+            /**
+             * Auto Queries
+             * @description Let the LLM choose more queries from what this Prometheus scrapes (other exporters,
+             *     errors, saturation, other hosts). Also reports firing alerts and down targets. The
+             *     chosen queries are listed below and can be disabled, pinned, edited or deleted.
+             * @default true
+             */
+            auto_queries: boolean;
             /**
              * Enabled
              * @description auto = on as soon as a URL is set.
@@ -1301,6 +1458,12 @@ export interface components {
              */
             interval: string;
             /**
+             * Max Auto Queries
+             * @description Most automatically chosen queries.
+             * @default 12
+             */
+            max_auto_queries: number;
+            /**
              * Max Series
              * @description Max series kept per query result; the rest is only counted.
              * @default 50
@@ -1315,9 +1478,20 @@ export interface components {
             password: string;
             /**
              * Queries
-             * @description PromQL queries run on every collection and included in reports.
+             * @description PromQL queries you wrote, run on every collection and included in reports.
              */
             queries?: components["schemas"]["PromQuery"][];
+            /**
+             * Replan Interval
+             * Format: duration
+             * @description Choose queries again at least this often (also when the set of metrics changes).
+             * @default 7d
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            replan_interval: string;
             /**
              * Timeout
              * Format: duration
@@ -1369,6 +1543,29 @@ export interface components {
              * @default admin
              */
             username: string;
+        };
+        /**
+         * QueryPatch
+         * @description Only the sent fields change. Changing the query text, thresholds, unit or name marks
+         *     the query as edited, which keeps it when the planner chooses again.
+         */
+        QueryPatch: {
+            /** Crit If */
+            crit_if?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Name */
+            name?: string | null;
+            /** Pinned */
+            pinned?: boolean | null;
+            /** Query */
+            query?: string | null;
+            /** Unit */
+            unit?: string | null;
+            /** Warn If */
+            warn_if?: string | null;
         };
         /** Report */
         Report: {
@@ -1713,9 +1910,12 @@ export interface components {
             arr: components["schemas"]["ArrSettings"];
             /**
              * @default {
+             *       "disk_cache_ttl": "10m",
+             *       "disk_scan_budget": "20s",
              *       "history_messages": 12,
              *       "max_steps": 6,
              *       "max_tool_result_chars": 6000,
+             *       "shell": true,
              *       "tool_timeout": "30s"
              *     }
              */
@@ -1758,22 +1958,27 @@ export interface components {
              *         "priority": "warning"
              *       },
              *       "prometheus": {
+             *         "auto_queries": true,
              *         "enabled": "auto",
              *         "interval": "1m",
+             *         "max_auto_queries": 12,
              *         "max_series": 50,
              *         "password": "",
              *         "queries": [
              *           {
              *             "description": "Scrape targets that are down",
              *             "name": "targets_down",
-             *             "query": "up == 0"
+             *             "query": "up == 0",
+             *             "unit": ""
              *           },
              *           {
              *             "description": "Alerts currently firing in Prometheus",
              *             "name": "firing_alerts",
-             *             "query": "ALERTS{alertstate=\"firing\"}"
+             *             "query": "ALERTS{alertstate=\"firing\"}",
+             *             "unit": ""
              *           }
              *         ],
+             *         "replan_interval": "7d",
              *         "timeout": "10s",
              *         "token": "",
              *         "url": "",
@@ -2218,6 +2423,38 @@ export interface operations {
             };
         };
     };
+    chat_audit_api_chat_audit_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                kind?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_sessions_api_chat_sessions_get: {
         parameters: {
             query?: {
@@ -2406,6 +2643,116 @@ export interface operations {
                         [key: string]: {
                             [key: string]: unknown;
                         }[];
+                    };
+                };
+            };
+        };
+    };
+    list_queries_api_prometheus_queries_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    delete_query_api_prometheus_queries__query_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                query_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_query_api_prometheus_queries__query_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                query_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueryPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    replan_api_prometheus_replan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
                     };
                 };
             };

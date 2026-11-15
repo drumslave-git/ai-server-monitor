@@ -8,10 +8,11 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..context import AppContext
 from ..outputs.sse import SSE_HEADERS
+from . import audit
 from .engine import MAX_MESSAGE
 
 router = APIRouter()
@@ -64,6 +65,19 @@ class ChatSession(BaseModel):
     messages: list[ChatMessage]
 
 
+class AuditEntry(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    ts: float
+    kind: str
+    """What kind of call: shell (host commands), api, mcp, ..."""
+    session: str | None = None
+    """The chat session that made the call."""
+
+
+class AuditList(BaseModel):
+    items: list[AuditEntry]
+
+
 def _frame(event: dict[str, Any]) -> str:
     data = json.dumps({k: v for k, v in event.items() if k != "type"}, default=str)
     return f"event: {event['type']}\ndata: {data}\n\n"
@@ -78,7 +92,10 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     """Ask a question. The reply is a server-sent-event stream:
     `session` {session_id}, `tool_call` {id, name, args, kind}, `tool_result` {id, name, ok,
     truncated, size, preview}, `token` {text} (the answer, in pieces), then `done`
-    {session_id, message_id, tool_mode, steps, usage, stopped} — or `error` {message}."""
+    {session_id, message_id, tool_mode, steps, usage, stopped} — or `error` {message}.
+    For the first answer of a new conversation one more event may follow `done`:
+    `title` {session_id, title}, the LLM-written session title (the stream closes right after;
+    without it the session keeps the title cut from the first message)."""
     ctx = _ctx(request)
     if not ctx.settings.llm.configured:
         raise HTTPException(status_code=409, detail="The LLM is not configured (Settings → LLM).")
@@ -117,3 +134,15 @@ async def delete_session(session_id: str, request: Request) -> Response:
     if not await _ctx(request).chat.store.delete_session(session_id):
         raise HTTPException(status_code=404, detail=f"no session {session_id}")
     return Response(status_code=204)
+
+
+@router.get("/api/chat/audit")
+async def chat_audit(
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=300)] = 50,
+    kind: str | None = None,
+) -> AuditList:
+    """What the chat did on its own (commands run on the host, API and MCP calls), newest
+    first. Extra fields per entry depend on the kind (shell: cmd, exit, seconds, bytes)."""
+    rows = await audit.recent(_ctx(request).db, limit, kind)
+    return AuditList.model_validate({"items": rows})

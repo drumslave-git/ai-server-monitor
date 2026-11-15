@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 import pytest
 
-from ai_server_monitor.chat import host_tools
+from ai_server_monitor.chat import audit, host_tools
 from ai_server_monitor.chat.safety import Scrubber
 from ai_server_monitor.chat.tools import ToolContext, ToolError, build_tools
 from ai_server_monitor.collectors.base import HostEnv
@@ -119,9 +119,9 @@ async def test_run_command_refuses_and_audits(cmd: str, tmp_path: Path, db: Data
     ctx = make_ctx(tmp_path, db)
     with pytest.raises(ToolError, match="refused"):
         await call("run_command", ctx, cmd=cmd)
-    audit = await db.kv_get(host_tools.AUDIT_KEY)
-    assert audit[-1]["cmd"] == cmd and "refused" in audit[-1]
-    assert audit[-1]["session"] == "sess-1"
+    rows = await db.kv_get(audit.AUDIT_KEY)
+    assert rows[-1]["cmd"] == cmd and "refused" in rows[-1]
+    assert rows[-1]["session"] == "sess-1" and rows[-1]["kind"] == "shell"
 
 
 @posix_only
@@ -132,9 +132,9 @@ async def test_run_command_runs_audits_and_scrubs(tmp_path: Path, db: Database) 
     assert result["exit_code"] == 0
     assert "port = 8080" in result["output"]
     assert "hunter2" not in result["output"]
-    audit = await db.kv_get(host_tools.AUDIT_KEY)
-    assert audit[-1]["cmd"].startswith("cat ") and audit[-1]["exit"] == 0
-    assert audit[-1]["bytes"] > 0 and "seconds" in audit[-1]
+    rows = await db.kv_get(audit.AUDIT_KEY)
+    assert rows[-1]["cmd"].startswith("cat ") and rows[-1]["exit"] == 0
+    assert rows[-1]["bytes"] > 0 and "seconds" in rows[-1]
 
 
 @posix_only
@@ -158,14 +158,14 @@ async def test_run_command_output_fits_the_result_limit(tmp_path: Path, db: Data
     assert "line 0 " in result["output"] and "line 19999 " in result["output"]
 
 
-async def test_run_command_can_be_switched_off(
-    tmp_path: Path, db: Database, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(host_tools, "SHELL_ENABLED", False)
-    assert "run_command" not in build_tools(Settings())
-    ctx = make_ctx(tmp_path, db)
+async def test_run_command_can_be_switched_off(tmp_path: Path, db: Database) -> None:
+    off = Settings.model_validate({"chat": {"shell": False}})
+    assert "run_command" not in build_tools(off)
+    ctx = make_ctx(tmp_path, db, settings=off)
     with pytest.raises(ToolError, match="switched off"):
         await host_tools._run_command(ctx, host_tools.RunCommandArgs(cmd="ls"))
+    if os.name == "posix":
+        assert "run_command" in build_tools(Settings())  # on by default
 
 
 async def test_engine_scrubber_still_applies_to_command_output() -> None:

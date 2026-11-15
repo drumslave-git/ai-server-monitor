@@ -401,6 +401,7 @@ class TelegramBot:
                     await self.app.db.kv_set(f"telegram.session.{chat_id}", event["session_id"])
                 elif event["type"] == "done":
                     answer = event["text"]
+                    break  # the title that may follow is stored by the engine on its own
                 elif event["type"] == "error":
                     error = event["message"]
         finally:

@@ -44,6 +44,12 @@ class ChatStore:
         )
         return session_id
 
+    async def set_title(self, session_id: str, title: str) -> None:
+        # (does not touch `updated`: a title is not new activity)
+        await self.db.execute(
+            "UPDATE chat_sessions SET title = ? WHERE id = ?", (title[:200], session_id)
+        )
+
     async def session_exists(self, session_id: str) -> bool:
         row = await self.db.fetchone("SELECT 1 FROM chat_sessions WHERE id = ?", (session_id,))
         return row is not None

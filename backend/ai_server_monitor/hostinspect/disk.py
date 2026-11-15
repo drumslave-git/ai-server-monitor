@@ -22,8 +22,10 @@ from .sandbox import RunResult
 Runner = Callable[..., RunResult]
 """run(stages, timeout=..., max_chars=..., collect_all=...) -> RunResult"""
 
-SCAN_BUDGET_S = 20.0  # TODO setting chat.disk_scan_budget
-CACHE_TTL_S = 600.0  # TODO setting chat.disk_cache_ttl
+SCAN_BUDGET_S = 20.0
+"""Default scan budget (the chat setting `chat.disk_scan_budget` overrides it)."""
+CACHE_TTL_S = 600.0
+"""Default cache lifetime (`chat.disk_cache_ttl`)."""
 MAX_CHILDREN_PARALLEL = 60
 PARALLEL = 3
 TOP_ENTRIES = 20
@@ -214,11 +216,13 @@ def summarize(
     return out
 
 
-def cached(path: str, depth: int, now: float | None = None) -> dict[str, Any] | None:
+def cached(
+    path: str, depth: int, now: float | None = None, ttl: float = CACHE_TTL_S
+) -> dict[str, Any] | None:
     now = time.time() if now is None else now
     with _lock:
         hit = _cache.get((path, depth))
-    if hit and now - hit[0] < CACHE_TTL_S:
+    if hit and now - hit[0] < ttl:
         return {**hit[1], "cached_age_s": round(now - hit[0])}
     return None
 

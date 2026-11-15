@@ -177,6 +177,9 @@ export function ChatPage() {
             finished = true;
           } else if (type === "done") {
             finished = true;
+            setBusy(false); // the title event may still follow: the composer need not wait for it
+          } else if (type === "title") {
+            sessions.reload();
           }
         }
       }
@@ -184,11 +187,16 @@ export function ChatPage() {
       if ((e as Error).name === "AbortError") patchLast((t) => void (t.stopped = true));
       else patchLast((t) => void (t.error = (e as Error).message));
     } finally {
-      abort.current = null;
-      setBusy(false);
+      // (The stream can outlive the answer by the title event: by then a new question may be
+      // running, which owns `abort` and the busy flag.)
+      const current = abort.current === controller;
+      if (current) {
+        abort.current = null;
+        setBusy(false);
+      }
       sessions.reload();
       // Replace the live thread with the stored one once the answer is complete.
-      if (finished && sessionId.current) {
+      if (finished && current && sessionId.current) {
         const id = sessionId.current;
         window.setTimeout(() => {
           if (sessionId.current === id) void load(id);

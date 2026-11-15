@@ -245,6 +245,14 @@ class ChatSettings(_Model):
     """Longest tool result passed to the model; bigger results are trimmed."""
     tool_timeout: Duration = timedelta(seconds=30)
     """Per tool call."""
+    shell: bool = True
+    """Let the chat run read-only commands on the host (journalctl, systemctl status, ss, df,
+    ps, ...) to answer questions. They run in a sandbox as an unprivileged user and can change
+    nothing. Off = the chat only sees the collected data."""
+    disk_scan_budget: Duration = timedelta(seconds=20)
+    """Longest a "what is on this disk" scan may run; it then answers with what it measured."""
+    disk_cache_ttl: Duration = timedelta(minutes=10)
+    """How long a finished disk scan of a path is reused."""
 
 
 class StorageSettings(_Model):
