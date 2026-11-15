@@ -203,3 +203,39 @@ A deterministic fan-out over service groups was not needed and not built.
 
 - `GET radarr.test/api/v3/wanted/missing`
 - `GET whisparr.test/api/v3/wanted/missing`
+
+# Run 5: service groups (`service: "movies"`) and a default page size of 50
+
+## Q: what exact movies are we missing?
+
+- **tool call** `api_endpoints` `{"search": "missing", "service": "movies"}`
+  - result (ok, 713 chars): `'{"service":"movies","prefix":"/api/v3","recipes":[{"for":"which movies are missing / not downloaded (monitored, no file)","call":"GET /api/v3/wanted/missing?page=1&pageSize=50&monitored=true","select":"records[].{id: id, title: title, year: year}","note":"Use '`
+- **tool call** `api_call` `{"path": "/api/v3/wanted/missing", "select": "records[].{id: id, title: title, year: year}", "service": "movies"}`
+  - result (ok, 5568 chars): `'{"group":"movies","call":"GET /api/v3/wanted/missing","results":{"radarr":{"status":200,"paged":{"page":1,"pageSize":50,"totalRecords":54},"note":"the server has 54 records, this response holds 50 (page 1): add query page=2 for the next ones, or all_pages=true'`
+
+**Answer** (tool mode native, 3 steps, 13001 prompt tokens):
+
+We are missing a significant number of movies across both Radarr and Whisparr.
+
+*   **Radarr** is missing 54 movies, with the first 50 listed in the results.
+*   **Whisparr** is missing 3,763 movies, with the first 50 listed in the results.
+
+Please note that the results are paginated, and I only retrieved the first 50 entries for each service.
+
+## Pending approvals left by the chat
+
+
+
+Verdict of run 5: **the fan-out is deterministic, the listing is not.** The model picked the
+group `movies` after `api_endpoints` (recipe note: "service=movies asks Radarr AND Whisparr"),
+one `api_call` went to both Radarr and Whisparr (`pageSize=50` added by the gateway, as the
+model omitted it) and the result held 50 titles from each. The answer, however, gave only the
+counts (Radarr 54, Whisparr 3763) and said "the first 50 are listed in the results" instead of
+listing them, although the question was "what exact movies". Runs 1-4 listed titles. A line in
+the system prompt (`chat/prompts.py`: "when asked which/what exact items, name them") is the
+natural fix; that file is not part of this change.
+
+## What the fake services saw (run 5)
+
+- `GET radarr.test/api/v3/wanted/missing` pageSize=50
+- `GET whisparr.test/api/v3/wanted/missing` pageSize=50

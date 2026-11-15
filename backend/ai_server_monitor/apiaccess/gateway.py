@@ -27,7 +27,7 @@ import httpx
 from .errors import ApiAccessError
 from .redact import Redactor
 from .shaping import DEFAULT_LIMIT, MAX_RESULT_CHARS, paged_meta, shape
-from .targets import Prepared, Target, build_targets, prepare
+from .targets import INDEXER_KINDS, Prepared, Target, build_targets, prepare
 
 log = logging.getLogger(__name__)
 
@@ -39,8 +39,21 @@ GET_RATE_LIMIT = 60
 GET_RATE_WINDOW_S = 60.0
 MAX_PAGES = 10
 ALL_PAGES_SIZE = 100
+DEFAULT_PAGE_SIZE = 50
 RECENT_CALLS = 200
 MAX_ERROR_LENGTH = 300
+
+# Paged *arr/Prowlarr lists (records + totalRecords) where a missing pageSize means 10.
+_PAGED_ENDPOINT = re.compile(r"^/api/v\d+/(wanted/(missing|cutoff)|queue|history)$")
+
+
+def _is_paged_endpoint(prepared: Prepared) -> bool:
+    return (
+        prepared.method == "GET"
+        and prepared.target.kind in INDEXER_KINDS
+        and bool(_PAGED_ENDPOINT.match(prepared.path))
+    )
+
 
 AuditHook = Callable[[dict[str, Any]], Any]
 """Called with one record per call: ts, service, method, path, status, bytes, ms, source."""
@@ -158,8 +171,10 @@ class ApiGateway:
     async def _run(self, prepared: Prepared, request: ApiRequest, source: str) -> _Raw:
         paging = request.all_pages and prepared.method == "GET"
         query = list(prepared.query)
-        if paging and not any(k == "pageSize" for k, _ in query):
-            query.append(("pageSize", str(ALL_PAGES_SIZE)))
+        if not any(k == "pageSize" for k, _ in query) and _is_paged_endpoint(prepared):
+            # The apps' own default is 10 per page: a model that leaves it out would see a
+            # tenth of a queue. all_pages wants big pages to keep the call count down.
+            query.append(("pageSize", str(ALL_PAGES_SIZE if paging else DEFAULT_PAGE_SIZE)))
         first = await self._send(prepared, query, request.body, source)
         data = first.data
         if not paging or paged_meta(data) is None:

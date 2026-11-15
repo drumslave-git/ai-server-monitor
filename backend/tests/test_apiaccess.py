@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -632,6 +633,9 @@ def test_tool_schemas_are_small_and_list_the_services() -> None:
         "qbittorrent",
         "docker",
         "prometheus",
+        "movies",
+        "series",
+        "all_arr",
     ]
     definitions = [
         {
@@ -800,3 +804,159 @@ def test_chat_write_ends_as_a_pending_approval_and_runs_after_it(bootstrap: Boot
         assert [(a["method"], a["source"]) for a in audit if a["kind"] == "api"] == [
             ("POST", "action:api_call")
         ]
+
+
+# --------------------------------------------------------------------------- groups, page size
+
+
+def whisparr_world() -> FakeServices:
+    world = FakeServices()
+    world.missing_by_kind["whisparr"] = [
+        {"id": i, "title": f"Whisparr Title {i:03d}", "year": 2001} for i in range(1, 121)
+    ]
+    return world
+
+
+async def group_call(
+    world: FakeServices, actions: ActionService, gw: ApiGateway, **args: Any
+) -> Any:
+    args.setdefault("path", "/api/v3/wanted/missing")
+    return await run_tool("api_call", args, ctx_for(gw, actions))
+
+
+async def test_movies_group_asks_radarr_and_whisparr_and_answers_per_instance(
+    gateway: ApiGateway, actions: ActionService
+) -> None:
+    world = whisparr_world()
+    gw = ApiGateway(api_settings(), transport=world.transport())
+    result = await group_call(
+        world, actions, gw, service="movies", select="records[].title", limit=3
+    )
+    assert result["group"] == "movies" and result["call"] == "GET /api/v3/wanted/missing"
+    assert list(result["results"]) == ["radarr", "whisparr"]
+    radarr, whisparr = result["results"]["radarr"], result["results"]["whisparr"]
+    assert radarr["data"] == ["Missing 001", "Missing 002", "Missing 003"]
+    assert whisparr["data"] == ["Whisparr Title 001", "Whisparr Title 002", "Whisparr Title 003"]
+    assert radarr["total"] == 50 and whisparr["total"] == 50  # per instance, page of 50
+    assert "250 records" in radarr["note"] and "120 records" in whisparr["note"]
+    assert "service" not in radarr  # the key of `results` says which
+    assert len(world.calls("radarr.test")) == 1 and len(world.calls("whisparr.test")) == 1
+    await gw.close()
+
+
+async def test_group_shares_the_size_budget_between_members(
+    gateway: ApiGateway, actions: ActionService
+) -> None:
+    world = whisparr_world()
+    gw = ApiGateway(api_settings(), transport=world.transport())
+    result = await group_call(
+        world, actions, gw, service="movies", query={"pageSize": 120}, limit=500
+    )
+    whisparr = result["results"]["whisparr"]
+    assert whisparr["showing"] < 120 and whisparr["total"] == 120
+    for answer in result["results"].values():
+        assert len(json.dumps(answer["data"], separators=(",", ":"))) <= 5500 // 2
+    await gw.close()
+
+
+async def test_group_refuses_writes_and_indexer_queries(
+    gateway: ApiGateway, actions: ActionService, world: FakeServices
+) -> None:
+    ctx = ctx_for(gateway, actions)
+    with pytest.raises(ApiAccessError, match="group: GET only"):
+        await run_tool(
+            "api_call",
+            {"service": "movies", "method": "DELETE", "path": "/api/v3/movie/5"},
+            ctx,
+        )
+    with pytest.raises(ApiAccessError, match="name one service"):
+        await run_tool("api_call", {"service": "movies", "path": "/api/v3/release?movieId=1"}, ctx)
+    assert world.requests == [] and await actions.pending() == []
+
+
+async def test_group_call_fails_when_every_member_fails(
+    gateway: ApiGateway, actions: ActionService
+) -> None:
+    with pytest.raises(ApiAccessError, match="HTTP 404"):
+        await run_tool(
+            "api_call",
+            {"service": "movies", "path": "/api/v3/movie/999", "select": "id"},
+            ctx_for(gateway, actions),
+        )
+
+
+async def test_group_with_one_failing_member_still_answers(
+    actions: ActionService,
+) -> None:
+    world = whisparr_world()
+    gw = ApiGateway(api_settings(), transport=world.transport())
+    gw.targets["whisparr"] = type(gw.targets["whisparr"])(
+        "whisparr", "whisparr", "http://whisparr.test:6969", "/api/v3", headers={"X-Api-Key": "bad"}
+    )
+    result = await group_call(world, actions, gw, service="movies", select="totalRecords")
+    assert result["results"]["radarr"]["data"] is None or "data" in result["results"]["radarr"]
+    assert "access denied" in result["results"]["whisparr"]["error"]
+    await gw.close()
+
+
+async def test_groups_exist_only_with_members_and_show_up_in_the_tools() -> None:
+    specs = {t.name: t for t in api_tool_specs(api_settings())}
+    enum = specs["api_call"].args_model.model_json_schema()["properties"]["service"]["enum"]
+    assert enum[-3:] == ["movies", "series", "all_arr"]
+    assert "movies (all Radarr and Whisparr instances)" in str(
+        specs["api_call"].args_model.model_json_schema()["properties"]["service"]["description"]
+    )
+    assert "group service movies" in specs["api_call"].description
+    no_sonarr = api_settings(sonarr=[])
+    enum = api_tool_specs(no_sonarr)[1].args_model.model_json_schema()["properties"]["service"][
+        "enum"
+    ]
+    assert "series" not in enum and "movies" in enum
+    only_radarr = api_settings(sonarr=[], whisparr=[])
+    enum = api_tool_specs(only_radarr)[1].args_model.model_json_schema()["properties"]["service"][
+        "enum"
+    ]
+    assert "movies" in enum and "all_arr" not in enum  # one member: nothing to fan out over
+
+
+async def test_endpoints_for_a_group_returns_the_recipes_and_names_the_members(
+    gateway: ApiGateway, actions: ActionService
+) -> None:
+    result = await run_tool(
+        "api_endpoints", {"service": "movies", "search": "missing"}, ctx_for(gateway, actions)
+    )
+    assert result["recipes"][0]["call"].startswith("GET /api/v3/wanted/missing")
+    assert "radarr, whisparr" in result["group"] and "service=movies" in result["group"]
+    assert "service=movies" in result["recipes"][0]["note"]
+
+
+@pytest.mark.parametrize(
+    ("service", "path", "given", "expected"),
+    [
+        ("radarr", "/api/v3/wanted/missing", None, "50"),
+        ("whisparr", "/api/v3/wanted/cutoff", None, "50"),
+        ("sonarr", "/api/v3/queue", None, "50"),
+        ("radarr", "/api/v3/history", None, "50"),
+        ("radarr", "/api/v3/wanted/missing", {"pageSize": 7}, "7"),
+        ("radarr", "/api/v3/wanted/missing?pageSize=3", None, "3"),
+    ],
+)
+async def test_paged_endpoints_default_to_50_per_page(
+    gateway: ApiGateway,
+    world: FakeServices,
+    service: str,
+    path: str,
+    given: dict[str, Any] | None,
+    expected: str,
+) -> None:
+    with contextlib.suppress(ApiAccessError):  # the fake has no /history: the request was made
+        await gateway.execute(get(service, path, query=given))
+    sent = dict(world.calls(f"{service}.test")[0]["params"])
+    assert sent["pageSize"] == expected
+
+
+async def test_other_endpoints_get_no_page_size(gateway: ApiGateway, world: FakeServices) -> None:
+    await gateway.execute(get("radarr", "/api/v3/movie", select="length(@)"))
+    assert "pageSize" not in dict(world.calls("radarr.test")[0]["params"])
+    await gateway.execute(get("prowlarr", "/api/v1/indexer"))
+    assert "pageSize" not in dict(world.calls("prowlarr.test")[0]["params"])

@@ -86,15 +86,16 @@ def _movie_recipes(kind: str) -> list[Recipe]:
             "for": f"which {_M} are missing / not downloaded (monitored, no file)",
             "call": "GET /api/v3/wanted/missing?page=1&pageSize=50&monitored=true",
             "select": "records[].{id: id, title: title, year: year}",
-            "note": "totalRecords is the full count; next page: page=2. For a count only use "
-            "pageSize=1 and select totalRecords.",
+            "note": "Use service=movies to ask Radarr AND Whisparr at once (answer per "
+            "instance). totalRecords is the full count; next page: page=2. For a count only "
+            "use pageSize=1 and select totalRecords.",
         },
         {
             "for": "what is stuck / failing in the download queue",
             "call": f"GET /api/v3/queue?page=1&pageSize=50&{unknown}=true",
             "select": "records[?trackedDownloadStatus!='ok'].{title: title, status: status, "
             "state: trackedDownloadState, why: statusMessages[].messages[]}",
-            "note": "empty result = nothing wrong. pageSize=50 covers most queues.",
+            "note": "service=movies asks every Radarr/Whisparr. empty result = nothing wrong.",
         },
         {
             "for": "health warnings of the app",
@@ -138,7 +139,8 @@ def _sonarr_recipes() -> list[Recipe]:
             "&includeSeries=true",
             "select": "records[].{series: series.title, season: seasonNumber, "
             "episode: episodeNumber, title: title, aired: airDate}",
-            "note": "totalRecords is the full count; next page: page=2.",
+            "note": "service=series asks every Sonarr instance at once. totalRecords is the "
+            "full count; next page: page=2.",
         },
         {
             "for": "what is stuck / failing in the download queue",

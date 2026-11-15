@@ -9,6 +9,7 @@ action packages.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -20,11 +21,14 @@ from ..arr.base import ArrError
 from . import index
 from .errors import ApiAccessError
 from .gateway import ApiGateway, ApiRequest
-from .shaping import DEFAULT_LIMIT, MAX_LIMIT
+from .groups import GROUP_LABEL, build_groups
+from .shaping import DEFAULT_LIMIT, MAX_LIMIT, MAX_RESULT_CHARS
 from .targets import KIND_LABEL, METHODS, build_targets, prepare
 
 ACTION_NAME = "api_call"
 POLICY_KEY = "api_call"  # TODO setting: arr.actions.api_call, default "approve"
+MIN_MEMBER_CHARS = 1500
+"""Smallest share of the result budget a member of a group gets."""
 ACTION_RESULT_CHARS = 3000
 """Size of the result kept in the audit log of an approved call."""
 
@@ -81,8 +85,8 @@ class _CompactArgs(BaseModel):
         return copy.deepcopy(cls.compact_schema)
 
 
-def _api_call_model(services: dict[str, str]) -> type[BaseModel]:
-    names = tuple(services) or ("none",)
+def _api_call_model(services: dict[str, str], groups: dict[str, list[str]]) -> type[BaseModel]:
+    names = (*services, *groups) or ("none",)
     model = create_model(
         "ApiCallArgs",
         __base__=_CompactArgs,
@@ -96,6 +100,10 @@ def _api_call_model(services: dict[str, str]) -> type[BaseModel]:
         all_pages=(bool, False),
     )
     listing = ", ".join(f"{n} ({label})" for n, label in services.items())
+    if groups:
+        listing += ". Groups (GET only, every member is asked, answer per instance): " + ", ".join(
+            f"{g} ({GROUP_LABEL[g]})" for g in groups
+        )
     model.compact_schema = {
         "type": "object",
         "properties": {
@@ -130,8 +138,8 @@ def _api_call_model(services: dict[str, str]) -> type[BaseModel]:
     return model
 
 
-def _endpoints_model(services: dict[str, str]) -> type[BaseModel]:
-    names = tuple(services) or ("none",)
+def _endpoints_model(services: dict[str, str], groups: dict[str, list[str]]) -> type[BaseModel]:
+    names = (*services, *groups) or ("none",)
     model = create_model(
         "ApiEndpointsArgs",
         __base__=_CompactArgs,
@@ -157,6 +165,8 @@ API_CALL_DESCRIPTION = (
     "library, queue, missing; Prowlarr indexers; qBittorrent torrents; Docker containers; "
     "Prometheus). Unsure of the path or parameters? Call api_endpoints first: it has "
     "ready-made examples. Always pass select to return only the fields you need. "
+    "For a question about all movies or all series use the group service movies / series "
+    "(every Radarr+Whisparr / Sonarr instance at once). "
     "GET runs now. POST/PUT/DELETE/PATCH are only requested and need the owner's approval "
     "(they are NOT done until approved: say so)."
 )
@@ -179,14 +189,23 @@ def api_tool_specs(
     `gateway_of(ctx)` / `actions_of(ctx)` find the ApiGateway and the ActionService from a
     tool context; `error_cls` is the exception type whose message goes back to the model
     (the chat's ToolError)."""
-    services = {name: target.label for name, target in build_targets(settings).items()}
+    targets = build_targets(settings)
+    services = {name: target.label for name, target in targets.items()}
+    groups = build_groups(targets)
 
     async def endpoints(ctx: Any, args: Any) -> Any:
         gateway = gateway_of(ctx)
-        target = gateway.target(args.service) if args.service in gateway.targets else None
+        group = build_groups(gateway.targets).get(args.service)
+        target = gateway.targets.get(group[0] if group else args.service)
         if target is None:
             raise error_cls(f"unknown service {args.service!r}; available: {', '.join(services)}")
         result = index.search(target.kind, args.search) | {"service": args.service}
+        if group:
+            result["group"] = (
+                f"{args.service} = {', '.join(group)}: api_call with service={args.service} "
+                "sends the same GET to each of them"
+            )
+            return result
         related = _related(gateway, args.service)
         if related:
             result["also"] = related
@@ -194,6 +213,9 @@ def api_tool_specs(
 
     async def call(ctx: Any, args: Any) -> Any:
         gateway = gateway_of(ctx)
+        members = build_groups(gateway.targets).get(args.service)
+        if members is not None:
+            return await _fan_out(gateway, args, members, _source(ctx), error_cls)
         try:
             prepared = gateway.prepare(args.service, args.method, args.path, args.query)
             if not prepared.write_like:
@@ -222,7 +244,7 @@ def api_tool_specs(
         ToolSpec(
             "api_endpoints",
             API_ENDPOINTS_DESCRIPTION,
-            _endpoints_model(services),
+            _endpoints_model(services, groups),
             "read",
             endpoints,
             enabled,
@@ -230,13 +252,66 @@ def api_tool_specs(
         ToolSpec(
             "api_call",
             API_CALL_DESCRIPTION,
-            _api_call_model(services),
+            _api_call_model(services, groups),
             "write",
             call,
             enabled,
             kind_for=_call_kind,
         ),
     ]
+
+
+async def _fan_out(
+    gateway: ApiGateway,
+    args: Any,
+    members: list[str],
+    source: str,
+    error_cls: type[Exception],
+) -> dict[str, Any]:
+    """One GET to every member of a group; each answer is shaped (select, limit, size) on
+    its own and they come back side by side. A member that fails reports its error."""
+    if args.method != "GET":
+        raise error_cls(
+            f"{args.service} is a group: GET only. Name one service for {args.method} "
+            f"({', '.join(members)})"
+        )
+    try:
+        probe = gateway.prepare(members[0], "GET", args.path, args.query)
+    except ApiAccessError as exc:
+        raise error_cls(str(exc)) from exc
+    if probe.write_like:
+        raise error_cls(
+            f"{probe.display} queries every indexer and needs the owner's approval: "
+            f"name one service ({', '.join(members)}), not the group {args.service}"
+        )
+    budget = max(MAX_RESULT_CHARS // len(members), MIN_MEMBER_CHARS)
+
+    async def one(name: str) -> dict[str, Any]:
+        try:
+            result = await gateway.execute(
+                ApiRequest(
+                    service=name,
+                    path=args.path,
+                    query=args.query,
+                    select=args.select,
+                    limit=args.limit,
+                    all_pages=args.all_pages,
+                ),
+                source=source,
+                max_chars=budget,
+            )
+        except ApiAccessError as exc:
+            return {"error": str(exc)}
+        return {k: v for k, v in result.items() if k not in ("service", "call")}
+
+    answers = await asyncio.gather(*(one(name) for name in members))
+    if all("error" in a for a in answers):
+        raise error_cls(f"{members[0]}: {answers[0]['error']}")
+    return {
+        "group": args.service,
+        "call": probe.display,
+        "results": dict(zip(members, answers, strict=True)),
+    }
 
 
 _FAMILIES = (frozenset({"radarr", "whisparr"}),)  # both hold movies, same API
