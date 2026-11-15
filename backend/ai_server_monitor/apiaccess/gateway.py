@@ -332,6 +332,13 @@ class ApiGateway:
                 data={"username": target.login[0], "password": target.login[1]},
             )
             diagnosis = qbit_auth.diagnose_login(response, target.base_url)
+            if diagnosis.kind == "unverified":  # 2xx, no body, no cookie: does a request work?
+                probe = await client.get(target.base_url + "/api/v2/app/version")
+                if (failure := qbit_auth.after_probe(diagnosis, probe.status_code)) is None:
+                    qbit_auth.record_success(key)
+                    self._logged_in.add(target.name)
+                    return
+                diagnosis = failure
             if not diagnosis.ok:
                 until = qbit_auth.record_failure(key, diagnosis)
                 raise ApiAccessError(

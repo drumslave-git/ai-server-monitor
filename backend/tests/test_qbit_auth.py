@@ -13,8 +13,16 @@ URL = "https://qb.example.test"
 class Answer:
     """A fake qBittorrent whose login answer can be changed; counts login attempts."""
 
-    def __init__(self, status: int = 200, text: str = "Ok.", content_type: str = "text/plain"):
+    def __init__(
+        self,
+        status: int = 200,
+        text: str = "Ok.",
+        content_type: str = "text/plain",
+        cookie: str | None = None,
+        version_status: int = 200,
+    ):
         self.status, self.text, self.content_type = status, text, content_type
+        self.cookie, self.version_status = cookie, version_status
         self.logins = 0
         self.seen: list[httpx.Request] = []
 
@@ -23,10 +31,13 @@ class Answer:
             self.seen.append(request)
             if request.url.path == "/api/v2/auth/login":
                 self.logins += 1
-                return httpx.Response(
-                    self.status, text=self.text, headers={"content-type": self.content_type}
-                )
-            return httpx.Response(200, text="v5.0.1")
+                headers = {"content-type": self.content_type}
+                if self.cookie:
+                    headers["set-cookie"] = f"{self.cookie}=abc123; HttpOnly; path=/"
+                return httpx.Response(self.status, text=self.text, headers=headers)
+            return httpx.Response(
+                self.version_status, text="v5.2.0" if self.version_status == 200 else "Forbidden"
+            )
 
         return httpx.MockTransport(handle)
 
@@ -64,6 +75,45 @@ async def test_ok_logs_in_and_sends_referer_and_origin() -> None:
     assert sent["referer"] == URL and sent["origin"] == URL
 
 
+@pytest.mark.parametrize(
+    ("status", "text", "cookie"),
+    [
+        (204, "", "SID"),  # qBittorrent 5.2+: no body, the session cookie
+        (204, "", "QBT_SID_8080"),
+        (200, "", "SID"),
+        (200, "Ok.", None),  # older versions
+    ],
+)
+async def test_every_accepted_login_shape_logs_in(
+    status: int, text: str, cookie: str | None
+) -> None:
+    fake = Answer(status, text, cookie=cookie)
+    assert await login(fake) is None
+    assert fake.logins == 1
+    assert qbit_auth.state_of(qbit_auth.backoff_key(URL, "admin", "s3cret-pw"))["paused"] is False
+
+
+async def test_204_without_cookie_is_proved_by_the_version_call() -> None:
+    assert await login(Answer(204, "")) is None  # (e.g. authentication bypass for this address)
+
+
+async def test_204_without_cookie_and_a_refused_version_is_not_qbittorrent() -> None:
+    err = await login(Answer(204, "", version_status=403))
+    assert err is not None
+    text = str(err)
+    assert "does not look like qBittorrent" in text and "HTTP 204" in text and "HTTP 403" in text
+    assert "paused" not in text  # nothing to back off from
+
+
+async def test_204_does_not_leave_a_stale_pause_behind(clock: Clock) -> None:
+    fake = Answer(200, "Fails.")
+    assert await login(fake) is not None  # paused now
+    clock.now += 601
+    fake.status, fake.text, fake.cookie = 204, "", "SID"
+    assert await login(fake) is None  # the next attempt after the pause works at once
+    assert qbit_auth.state_of(qbit_auth.backoff_key(URL, "admin", "s3cret-pw"))["paused"] is False
+
+
 async def test_fails_means_wrong_credentials() -> None:
     err = await login(Answer(200, "Fails."))
     assert err is not None and err.status == 401
@@ -78,7 +128,8 @@ async def test_401_means_host_header_or_csrf_not_password() -> None:
     err = await login(Answer(401, "Unauthorized"))
     assert err is not None and err.status == 401
     text = str(err)
-    assert "NOT a wrong password" in text and "Host-header validation" in text
+    assert "Invalid Host header" in text and "Host-header validation" in text
+    assert "5.2+" in text  # on newer versions a wrong password is a 401 as well
     assert "http://<qbittorrent container>:8080" in text and "Server domains" in text
     assert "qb.example.test" in text and 'HTTP 401, body "Unauthorized"' in text
 

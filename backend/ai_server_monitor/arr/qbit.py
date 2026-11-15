@@ -48,6 +48,13 @@ class QBittorrent:
             data={"username": self._username, "password": self._password},
         )
         diagnosis = qbit_auth.diagnose_login(response, self._url)
+        if diagnosis.kind == "unverified":  # 2xx, no body, no cookie: does a request work?
+            probe = await self._http.send("GET", "/api/v2/app/version")
+            if (failure := qbit_auth.after_probe(diagnosis, probe.status_code)) is None:
+                qbit_auth.record_success(self._key)
+                self._logged_in = True
+                return
+            diagnosis = failure
         if diagnosis.ok:
             qbit_auth.record_success(self._key)
             self._logged_in = True

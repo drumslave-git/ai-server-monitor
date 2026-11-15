@@ -16,6 +16,7 @@ Changing the URL or the credentials gives a new key, i.e. an immediate fresh att
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -36,7 +37,8 @@ clock: Callable[[], float] = time.time
 @dataclass(frozen=True)
 class LoginDiagnosis:
     kind: str
-    """ok | bad_credentials | host_validation | banned | html | redirect | unexpected"""
+    """ok | unverified | bad_credentials | host_validation | banned | html | redirect |
+    unexpected. `unverified` = a 2xx with no cookie and no body: ask for the version to know."""
     status: int
     body: str
     url: str
@@ -46,6 +48,12 @@ class LoginDiagnosis:
     @property
     def ok(self) -> bool:
         return self.kind == "ok"
+
+    @property
+    def accepted(self) -> bool:
+        """The login may have worked: `ok`, or `unverified` (the caller must then check with
+        `GET /api/v2/app/version`, see `after_probe`)."""
+        return self.kind in ("ok", "unverified")
 
     def message(self) -> str:
         sent = ", ".join(f"{k}: {v}" for k, v in self.headers_sent.items())
@@ -76,6 +84,17 @@ def host_header(url: str) -> str:
     return urlsplit(url.strip()).netloc
 
 
+_SESSION_COOKIE = re.compile(r"^(?:QBT_)?SID(?:_\d+)?$", re.IGNORECASE)
+
+
+def has_session_cookie(response: httpx.Response) -> bool:
+    """Did the login answer set qBittorrent's session cookie (`SID`, or `QBT_SID_<port>`)?"""
+    for line in response.headers.get_list("set-cookie"):
+        if _SESSION_COOKIE.match(line.split("=", 1)[0].strip()):
+            return True
+    return False
+
+
 def _excerpt(response: httpx.Response) -> str:
     text = " ".join(response.text.split())
     return text[:BODY_EXCERPT] + ("…" if len(text) > BODY_EXCERPT else "")
@@ -96,6 +115,16 @@ def diagnose_login(response: httpx.Response, url: str) -> LoginDiagnosis:
 
     if status == 200 and stripped == "Ok.":
         return result("ok", "Login accepted.")
+    if 200 <= status < 300 and has_session_cookie(response) and stripped.lower() != "fails.":
+        # qBittorrent 5.2+ answers a successful login with an empty body (HTTP 204 or 200)
+        # and the session cookie instead of `Ok.`.
+        return result("ok", "Login accepted (session cookie set).")
+    if 200 <= status < 300 and not stripped:
+        return result(
+            "unverified",
+            f"The login answered HTTP {status} with no body and no session cookie: checking "
+            "with the version call whether we are logged in.",
+        )
     if status in (301, 302, 303, 307, 308):
         target = response.headers.get("location", "").split("?", 1)[0][:200]
         return result(
@@ -120,13 +149,17 @@ def diagnose_login(response: httpx.Response, url: str) -> LoginDiagnosis:
     if status == 401 or stripped.lower() == "unauthorized":
         return result(
             "host_validation",
-            f"qBittorrent answered 401 Unauthorized before checking the password, so this is "
-            f"NOT a wrong password: its Host-header validation or CSRF protection rejected the "
-            f"request (typical behind a reverse proxy; the Host we sent is '{host}'). Fix: use "
-            f"the internal URL (http://<qbittorrent container>:8080) in Settings, or in "
-            f"qBittorrent → WebUI add '{host.split(':')[0]}' to 'Server domains' (or switch off "
-            f"'Enable Host header validation' / 'CSRF protection'), and make sure the proxy "
-            f"passes the Host, Origin and Referer headers unchanged.",
+            f"qBittorrent answered 401 Unauthorized. Two causes look the same from here: "
+            f"(a) its Host-header validation or CSRF protection rejected the request before "
+            f"looking at the password (typical behind a reverse proxy; the Host we sent is "
+            f"'{host}'; a password that works in the browser points to this), or (b) in "
+            f"qBittorrent 5.2+ the user name or password is wrong (older versions say 'Fails.' "
+            f"with HTTP 200). The qBittorrent log tells which: 'Invalid Host header' is (a), "
+            f"'WebAPI login failure' is (b). Fix for (a): use the internal URL "
+            f"(http://<qbittorrent container>:8080) in Settings, or in qBittorrent → WebUI add "
+            f"'{host.split(':')[0]}' to 'Server domains' (or switch off 'Enable Host header "
+            f"validation' / 'CSRF protection'), and make sure the proxy passes the Host, "
+            f"Origin and Referer headers unchanged.",
         )
     if status == 403:
         return result(
@@ -143,6 +176,23 @@ def diagnose_login(response: httpx.Response, url: str) -> LoginDiagnosis:
         "unexpected",
         f"Unexpected answer to the login (HTTP {status}): this does not look like "
         "qBittorrent's WebUI API. Check the URL and port.",
+    )
+
+
+def after_probe(diagnosis: LoginDiagnosis, version_status: int) -> LoginDiagnosis | None:
+    """Settle an `unverified` login with the status of `GET /api/v2/app/version`: None = we
+    are logged in; otherwise the failure to report ("not qBittorrent or a proxy page")."""
+    if version_status == 200:
+        return None
+    return LoginDiagnosis(
+        "unexpected",
+        diagnosis.status,
+        diagnosis.body,
+        diagnosis.url,
+        diagnosis.headers_sent,
+        f"The login answered HTTP {diagnosis.status} with no body and no session cookie, and "
+        f"the version call was refused (HTTP {version_status}): this does not look like "
+        "qBittorrent's WebUI API (or a proxy answers instead). Check the URL and port.",
     )
 
 

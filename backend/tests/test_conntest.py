@@ -209,12 +209,34 @@ def test_qbit_wrong_credentials_ban_and_unreachable(client: TestClient) -> None:
 
 
 @respx.mock
+def test_qbit_52_login_answers_204_with_a_cookie(client: TestClient) -> None:
+    body = {"url": QBIT, "username": "admin", "password": "good-password"}
+    respx.post(f"{QBIT}/api/v2/auth/login").respond(204, headers={"set-cookie": "SID=abc; path=/"})
+    respx.get(f"{QBIT}/api/v2/app/version").respond(200, text="v5.2.0")
+    r = post(client, "qbittorrent", body)
+    assert r["ok"] is True and "qBittorrent v5.2.0" in r["message"]
+    assert r["details"]["version"] == "v5.2.0"
+
+
+@respx.mock
+def test_qbit_204_without_cookie_needs_a_working_version_call(client: TestClient) -> None:
+    body = {"url": QBIT, "username": "admin", "password": "good-password"}
+    respx.post(f"{QBIT}/api/v2/auth/login").respond(204)
+    version = respx.get(f"{QBIT}/api/v2/app/version").respond(403, text="Forbidden")
+    r = post(client, "qbittorrent", body)
+    assert r["ok"] is False and "does not look like qBittorrent" in r["message"]
+    assert "HTTP 204" in r["message"] and "HTTP 403" in r["message"]
+    version.respond(200, text="v5.2.0")
+    assert post(client, "qbittorrent", body)["ok"] is True  # (e.g. authentication bypass)
+
+
+@respx.mock
 def test_qbit_401_is_host_validation_not_wrong_password(client: TestClient) -> None:
     body = {"url": QBIT, "username": "admin", "password": "good-password"}
     login = respx.post(f"{QBIT}/api/v2/auth/login").respond(401, text="Unauthorized")
     r = post(client, "qbittorrent", body)
     assert r["ok"] is False
-    assert "NOT a wrong password" in r["message"] and "Server domains" in r["message"]
+    assert "Host-header validation" in r["message"] and "Server domains" in r["message"]
     assert "http://<qbittorrent container>:8080" in r["message"]
     assert 'HTTP 401, body "Unauthorized"' in r["message"]
     sent = login.calls.last.request.headers

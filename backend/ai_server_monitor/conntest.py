@@ -282,13 +282,22 @@ async def check_qbittorrent(cfg: QbitSettings) -> ConnResult:
             data={"username": cfg.username, "password": password},
         )
         diagnosis = qbit_auth.diagnose_login(login, base)
-        if not diagnosis.ok:
+        if not diagnosis.accepted:
             until = qbit_auth.record_failure(key, diagnosis)
             raise ConnFailure(
                 diagnosis.message() + qbit_auth.pause_note(until), diagnosis.details()
             )
-        qbit_auth.record_success(key)
         version, ms = await _request(client, "GET", f"{base}/api/v2/app/version")
+        # (an `unverified` login, 2xx with no body and no cookie, is proved by the version call)
+        failure = (
+            qbit_auth.after_probe(diagnosis, version.status_code)
+            if (diagnosis.kind == "unverified")
+            else None
+        )
+        if failure:
+            qbit_auth.record_failure(key, failure)
+            raise ConnFailure(failure.message(), failure.details())
+        qbit_auth.record_success(key)
     if version.status_code != 200:
         excerpt = " ".join(version.text.split())[:200]
         raise ConnFailure(

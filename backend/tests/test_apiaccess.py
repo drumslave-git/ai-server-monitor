@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -334,6 +335,24 @@ async def test_qbittorrent_logs_in_and_trims(gateway: ApiGateway, world: FakeSer
     assert again["data"] == ["Big.Movie.2024"] and world.logins == 1
     version = await gateway.execute(get("qbittorrent", "/app/version"))
     assert version["data"] == "v5.0.1"
+
+
+async def test_qbittorrent_52_login_204_with_cookie_is_a_login() -> None:
+    class Qbit52(FakeServices):
+        def _qbit(self, request: Any, body: str) -> Any:
+            if request.url.path == "/api/v2/auth/login":
+                self.logins += 1
+                self.session_valid = True
+                return httpx.Response(204, headers={"set-cookie": "SID=abc; path=/"})
+            return super()._qbit(request, body)
+
+    world = Qbit52()
+    gw = ApiGateway(api_settings(), transport=world.transport())
+    try:
+        result = await gw.execute(get("qbittorrent", "/api/v2/torrents/info?filter=downloading"))
+    finally:
+        await gw.close()
+    assert world.logins == 1 and result["data"][0]["name"] == "Big.Movie.2024"
 
 
 async def test_qbittorrent_session_expiry_logs_in_again(

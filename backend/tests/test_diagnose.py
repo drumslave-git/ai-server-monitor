@@ -102,7 +102,7 @@ async def test_diagnose_qbit_401_gives_cause_config_container_and_next_steps(
     assert d["config"]["url"] == QBIT and d["config"]["username"] == "admin"
     assert d["config"]["pw_configured"] is True and "settings_last_saved" in d["config"]
     test = d["connection_test"]
-    assert test["ok"] is False and "NOT a wrong password" in test["message"]
+    assert test["ok"] is False and "Host-header validation" in test["message"]
     assert test["details"]["http_status"] == 401 and test["details"]["kind"] == "host_validation"
     assert d["login_retry_state"]["paused"] is True
     assert "401 Unauthorized" in d["collector"]["this_service_error"]
