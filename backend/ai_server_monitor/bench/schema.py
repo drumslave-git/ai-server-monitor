@@ -156,12 +156,39 @@ class ApiRule(_Model):
     path: str = ".*"
     status: int = 200
     response: Any = None
+    response_text: str | None = None
+    """Raw text instead of JSON, served as bytes: what Docker's `/containers/<name>/logs`
+    returns. Use it with `response`, not both."""
+    multiplexed: bool = False
+    """With `response_text`: wrap every line in a Docker log frame (8-byte header: stream
+    type, length), as Docker does for containers without a TTY."""
 
     @field_validator("path")
     @classmethod
     def _regex(cls, v: str) -> str:
         _compile(v, "api[].path")
         return v
+
+    @model_validator(mode="after")
+    def _one_body(self) -> ApiRule:
+        if self.response_text is not None and self.response is not None:
+            raise ValueError("give `response` (JSON) or `response_text` (raw), not both")
+        if self.multiplexed and self.response_text is None:
+            raise ValueError("`multiplexed` needs `response_text`")
+        return self
+
+    def body(self) -> bytes | None:
+        """The raw bytes for a `response_text` rule (None for a JSON rule)."""
+        if self.response_text is None:
+            return None
+        text = self.response_text
+        if not self.multiplexed:
+            return text.encode()
+        out = bytearray()
+        for line in text.splitlines(keepends=True):
+            payload = (line if line.endswith("\n") else line + "\n").encode()
+            out += bytes([1, 0, 0, 0]) + len(payload).to_bytes(4, "big") + payload
+        return bytes(out)
 
     @field_validator("method")
     @classmethod

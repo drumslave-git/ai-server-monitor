@@ -194,7 +194,8 @@ class FakeDockerApi:
             if rule.service == "docker" and rule.method == "GET" and re.search(rule.path, path):
                 if rule.status >= 400:
                     raise CollectorUnavailable(f"HTTP {rule.status}")
-                return copy.deepcopy(rule.response)
+                raw = rule.body()
+                return raw if raw is not None else copy.deepcopy(rule.response)
         raise CollectorUnavailable(self.world.default)
 
 
@@ -298,6 +299,9 @@ def world_transport(world: World) -> httpx.MockTransport:
             return httpx.Response(200, text="Ok.", headers={"set-cookie": "SID=bench; Path=/"})
         for rule in world.api:
             if _rule_matches(rule, host, request.method, target):
+                raw = rule.body()
+                if raw is not None:
+                    return httpx.Response(rule.status, content=raw)
                 return httpx.Response(rule.status, json=copy.deepcopy(rule.response))
         return httpx.Response(404, text=world.default)
 

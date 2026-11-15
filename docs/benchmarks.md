@@ -145,6 +145,12 @@ Anything no rule answers returns `world.default` as an error.
   The real command guard still refuses unsafe commands (`rm`, `;`, `>` …), exactly as in the app.
 - **api**: used by `api_call` / `api_endpoints`. `service` is the service name or an alias
   (`movies`, `series`, `all_arr`); `path` is a regex matched against path + query. First match wins.
+  A rule can return raw text instead of JSON: `"response_text": "..."` is served as bytes, with
+  `"multiplexed": true` wrapping every line in a Docker log frame. This is what the chat tool
+  `container_logs` reads (service `docker`, path regex like `/containers/qbittorrent/logs`; the
+  tool asks for timestamps, so put an RFC 3339 stamp at the start of each line if the scenario
+  needs one). The tool first lists the containers, so add a rule for `/containers/json` that names
+  them. `response` and `response_text` cannot both be set.
 - **disk**: `disk_usage` answers from the tree, cut at the requested depth; `top_files` lists
   from `files`. Sizes are bytes.
 - **mcp**: each rule is one tool of a fake MCP server and is offered to the model with its

@@ -492,3 +492,73 @@ async def test_prom_catalog_overrides_and_parse_errors() -> None:
 
 
 _ = Path
+
+
+# --------------------------------------------------------------------------- container logs
+
+LOG_TEXT = (
+    "2026-06-01T11:58:01.000000000Z WebUI login failed for user 'bench' from 172.18.0.5\n"
+    "2026-06-01T11:58:09.000000000Z IP 172.18.0.5 banned after 5 failed logins\n"
+    "2026-06-01T11:59:00.000000000Z torrent added\n"
+)
+
+
+def logs_world(multiplexed: bool) -> dict[str, Any]:
+    return {
+        "api": [
+            {
+                "service": "docker",
+                "path": "^/containers/json",
+                "response": [{"Id": "abc", "Names": ["/qbittorrent"], "State": "running"}],
+            },
+            {
+                "service": "docker",
+                "path": "^/containers/qbittorrent/logs",
+                "response_text": LOG_TEXT,
+                "multiplexed": multiplexed,
+            },
+        ]
+    }
+
+
+@pytest.mark.parametrize("multiplexed", [False, True])
+async def test_container_logs_reads_raw_text_rules_plain_or_framed(
+    trace_db: Database, multiplexed: bool
+) -> None:
+    sc = chat_scenario(
+        "why can I not log in to qBittorrent?",
+        [
+            {"type": "tool_called", "tool": "container_logs"},
+            {"type": "answer_contains_all", "values": ["banned"]},
+        ],
+        world=logs_world(multiplexed),
+    )
+    llm = FakeLLM(
+        call("container_logs", {"name": "qbit", "contains": "login"}),
+        say("The IP was banned after 5 failed logins."),
+    )
+    row, _ = await attempt(trace_db, sc, llm)
+    result = next(m for m in llm.requests[1]["messages"] if m["role"] == "tool")["content"]
+    assert "banned after 5 failed logins" in result and "torrent added" not in result
+    assert row["score"] == 1.0, row["checks"]
+
+
+def test_api_rule_bodies() -> None:
+    from ai_server_monitor.bench.schema import ApiRule
+
+    plain = ApiRule(service="docker", response_text="a\nb")
+    assert plain.body() == b"a\nb"
+    framed = ApiRule(service="docker", response_text="a\nb\n", multiplexed=True).body()
+    assert framed == b"\x01\x00\x00\x00\x00\x00\x00\x02a\n" + b"\x01\x00\x00\x00\x00\x00\x00\x02b\n"
+    assert ApiRule(service="radarr", response=[1]).body() is None
+    with pytest.raises(ValueError, match="not both"):
+        ApiRule(service="docker", response=[1], response_text="x")
+    with pytest.raises(ValueError, match="needs"):
+        ApiRule(service="docker", multiplexed=True)
+
+
+async def test_gateway_serves_raw_text_rules_as_bytes() -> None:
+    world = World.model_validate(logs_world(False))
+    async with httpx.AsyncClient(transport=world_transport(world)) as client:
+        response = await client.get("http://docker/containers/qbittorrent/logs?tail=5")
+        assert response.status_code == 200 and response.content == LOG_TEXT.encode()
