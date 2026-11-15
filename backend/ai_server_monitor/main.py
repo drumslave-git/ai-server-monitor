@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from . import __version__, api_models
 from .actions.api import router as actions_router
+from .bench.api import router as bench_router
 from .chat.api import router as chat_router
 from .collectors import Collector
 from .config import Bootstrap, LLMSettings, Settings, settings_json_schema
@@ -43,6 +44,7 @@ SECTION_TITLES = {
     "chat": "Chat",
     "storage": "Data retention",
     "logs": "Logs",
+    "bench": "Benchmarks",
     "collectors": "Collectors",
     "outputs": "Outputs",
     "arr": "*arr & downloads",
@@ -105,6 +107,7 @@ def create_app(
     app.include_router(chat_router)
     app.include_router(prometheus_router)
     app.include_router(logs_router)
+    app.include_router(bench_router)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz(request: Request) -> JSONResponse:

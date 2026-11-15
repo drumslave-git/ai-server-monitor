@@ -19,6 +19,7 @@ from .actions import ActionService, Notifier
 from .apiaccess import ApiGateway
 from .arr.automations import AutomationEnv
 from .arr.automations import register as register_automations
+from .bench.service import BenchService
 from .chat import ChatEngine
 from .chat.audit import audit_hook
 from .chat.safety import Scrubber
@@ -116,6 +117,8 @@ class AppContext:
             api=self.api_gateway,
         )
         self.chat = ChatEngine(self)
+        self.bench = BenchService(self, llm_transport=llm_transport)
+        """Model benchmarks; survives settings changes (a run keeps the LLM it started with)."""
 
     def _build_api_gateway(self, settings: Settings) -> ApiGateway:
         """Generic HTTP API access (chat `api_call` / `api_endpoints` and the `api_call`
@@ -134,6 +137,7 @@ class AppContext:
 
     async def start(self) -> None:
         await self.db.connect()
+        await self.bench.store.recover()
         self.tracing.applog.install()
         self.tracing.applog.start()
         self._start_metrics_consumer()
@@ -144,6 +148,7 @@ class AppContext:
         log.info("started (data=%s, host root=%s)", self.bootstrap.data_dir, self.host_env.root)
 
     async def stop(self) -> None:
+        await self.bench.shutdown()
         await self._stop_services()
         self.events.close()
         if self._metrics_task is not None:

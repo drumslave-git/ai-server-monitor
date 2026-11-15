@@ -18,12 +18,13 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
+from ..config import Settings
 from ..llm import LLMError
 from ..llm.client import Usage, new_tool_call_id
 from ..llm.jsontools import json_tool_system_prompt, parse_tool_request
@@ -71,10 +72,19 @@ class _Turn:
 
 
 class ChatEngine:
-    def __init__(self, app: AppContext, *, promql_transport: Any = None):
+    def __init__(
+        self,
+        app: AppContext,
+        *,
+        promql_transport: Any = None,
+        tools_builder: Callable[[Settings, Any], dict[str, Tool]] | None = None,
+    ):
+        """`tools_builder(settings, mcp)` replaces `build_tools` (the model benchmarks swap the
+        executors of the real tools for a frozen world)."""
         self.app = app
         self.store = ChatStore(app.db)
         self._promql_transport = promql_transport
+        self._tools_builder = tools_builder or build_tools
         self._locks: dict[str, asyncio.Lock] = {}
         self._background: set[asyncio.Task[Any]] = set()
 
@@ -191,7 +201,7 @@ class ChatEngine:
         mode = await app.tool_mode.resolve()
         if mode != "none":
             await app.mcp.prepare()  # lazy connect; never blocks long, dead servers just stay out
-        tools = build_tools(settings, app.mcp) if mode != "none" else {}
+        tools = self._tools_builder(settings, app.mcp) if mode != "none" else {}
         history = await self.store.history(session_id, settings.chat.history_messages)
         await self.store.add_message(session_id, "user", message)
 
@@ -260,6 +270,7 @@ class ChatEngine:
                 "completion_tokens": turn.usage.completion_tokens,
             },
             "stopped": stopped,
+            "repairs": turn.repairs,
             "trace_turn": turn.trace_id,
         }
         message_id = await self.store.add_message(session_id, "assistant", final, meta=meta)

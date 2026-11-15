@@ -153,6 +153,9 @@ class Tracing:
         """Wait until everything submitted so far is stored."""
         while self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
+            # Finished tasks leave the set through a done-callback; awaiting only finished
+            # tasks never yields, so without this the loop could spin forever.
+            await asyncio.sleep(0)
 
     async def attach(
         self, target: TraceScope | list[int], link_kind: str, link_id: str | int

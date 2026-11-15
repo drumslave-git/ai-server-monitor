@@ -102,7 +102,7 @@ async def test_database_at_schema_4_migrates_to_latest(tmp_path: Path) -> None:
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 7
+        assert await db.schema_version() == 8
         info = await db.fetchall("PRAGMA table_info(telegram_approval_messages)")
         cols = {r["name"] for r in info}
         assert cols == {"approval_id", "chat_id", "message_id", "created_ts"}
@@ -125,7 +125,7 @@ async def test_database_at_schema_5_gets_the_prometheus_query_table(tmp_path: Pa
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 7
+        assert await db.schema_version() == 8
         cols = {r["name"] for r in await db.fetchall("PRAGMA table_info(prom_queries)")}
         assert {"name", "query", "source", "enabled", "pinned", "edited", "fail_count"} <= cols
     finally:

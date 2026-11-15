@@ -284,6 +284,35 @@ class LogsSettings(_Model):
     The Logs page always shows the newest few thousand lines since the last start."""
 
 
+class BenchJudgeSettings(_Model):
+    """A second model that grades the answers of a benchmark run."""
+
+    enabled: bool = False
+    """Grade every answer 1-5 against the scenario's rubric. The grade is shown next to the rule
+    score and never mixed into it. Costs one extra model call per graded attempt."""
+    base_url: OptionalHttpUrl = ""
+    """OpenAI-compatible API base URL of the judge, e.g. https://api.openai.com/v1."""
+    api_key: Secret = SecretStr("")
+    """API key of the judge, if its endpoint needs one."""
+    model: str = ""
+    """Model name of the judge."""
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.enabled and self.base_url.strip() and self.model.strip())
+
+
+class BenchSettings(_Model):
+    """Model benchmarks (the Benchmarks page): fixed scenarios run against the model chosen in
+    LLM. To compare models, switch the model there and run again."""
+
+    repeats: int = Field(default=3, ge=1, le=20)
+    """How many times every scenario runs. More runs smooth out the model's randomness."""
+    attempt_timeout: Duration = timedelta(minutes=5)
+    """Time budget of one attempt; a slower one counts as failed."""
+    judge: BenchJudgeSettings = BenchJudgeSettings()
+
+
 class CollectorSettings(_Model):
     enabled: bool | Literal["auto"] = True
     """auto = use it if available on this host, silently skip otherwise."""
@@ -733,6 +762,7 @@ class Settings(_Model):
     outputs: OutputsSettings = OutputsSettings()
     arr: ArrSettings = ArrSettings()
     mcp: McpSettings = McpSettings()
+    bench: BenchSettings = BenchSettings()
 
     def public_dict(self) -> dict[str, Any]:
         """JSON for the API: secrets masked."""

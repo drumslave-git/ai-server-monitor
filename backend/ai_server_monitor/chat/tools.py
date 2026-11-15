@@ -610,12 +610,14 @@ READ_TOOLS: list[Tool] = [
 ]
 
 
-def build_tools(settings: Settings, mcp: Any = None) -> dict[str, Tool]:
+def build_tools(
+    settings: Settings, mcp: Any = None, *, assume_linux: bool = False
+) -> dict[str, Tool]:
     """The tools available under these settings, by name. `mcp` is the McpManager: the tools
     of its connected servers (as far as chosen in the settings) are added."""
     from .host_tools import host_tools  # (imports this module: not at the top)
 
-    tools = [*READ_TOOLS, *host_tools(), *_write_tools()]
+    tools = [*READ_TOOLS, *host_tools(assume_linux), *_write_tools()]
     found = {t.name: t for t in tools if t.enabled(settings)}
     from ..apiaccess import api_tool_specs  # (the specs are plain data; keep imports local)
 

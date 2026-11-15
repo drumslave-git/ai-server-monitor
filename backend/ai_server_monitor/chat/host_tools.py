@@ -274,8 +274,10 @@ async def _metric_history_tool(ctx: ToolContext, args: MetricHistoryArgs) -> Any
 # --------------------------------------------------------------------------- registry
 
 
-def host_tools() -> list[Tool]:
-    linux = lambda s: os.name == "posix"  # noqa: E731
+def host_tools(assume_linux: bool = False) -> list[Tool]:
+    """`assume_linux`: offer the tools whatever this machine is (the model benchmarks put the
+    real tool set in front of the model on a development PC, with the executors swapped)."""
+    linux = lambda s: assume_linux or os.name == "posix"  # noqa: E731
     return [
         Tool(
             "run_command",

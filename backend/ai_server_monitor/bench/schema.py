@@ -725,6 +725,7 @@ class Scenario(_Model):
             ],
             "judge": bool(self.judge),
             "tags": self.tags,
+            "smoke": self.smoke,
         }
 
 
