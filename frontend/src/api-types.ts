@@ -238,7 +238,8 @@ export interface paths {
         /**
          * Chat
          * @description Ask a question. The reply is a server-sent-event stream:
-         *     `session` {session_id}, `tool_call` {id, name, args, kind}, `tool_result` {id, name, ok,
+         *     `session` {session_id}, `tool_call` {id, name, args, kind}, `tool_progress` {id, name,
+         *     elapsed_s} (every few seconds while a tool is still running), `tool_result` {id, name, ok,
          *     truncated, size, preview}, `token` {text} (the answer, in pieces), then `done`
          *     {session_id, message_id, tool_mode, steps, usage, stopped} — or `error` {message}.
          *     For the first answer of a new conversation one more event may follow `done`:
@@ -1189,17 +1190,6 @@ export interface components {
              */
             disk_cache_ttl: string;
             /**
-             * Disk Scan Budget
-             * Format: duration
-             * @description Longest a "what is on this disk" scan may run; it then answers with what it measured.
-             * @default 20s
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            disk_scan_budget: string;
-            /**
              * History Messages
              * @description How many earlier messages of a conversation the model sees.
              * @default 12
@@ -1228,8 +1218,10 @@ export interface components {
             /**
              * Tool Timeout
              * Format: duration
-             * @description Per tool call.
-             * @default 30s
+             * @description Longest one tool call (a disk scan, a command, an API call) may run before the chat
+             *     gives up on it. The answer waits for the tool; the chat shows what is running and for
+             *     how long.
+             * @default 1h
              * @example 30s
              * @example 5m
              * @example 6h
@@ -2774,7 +2766,6 @@ export interface components {
             /**
              * @default {
              *       "disk_cache_ttl": "10m",
-             *       "disk_scan_budget": "20s",
              *       "history_messages": 12,
              *       "max_steps": 6,
              *       "max_tool_result_chars": 6000,

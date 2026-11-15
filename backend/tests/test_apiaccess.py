@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -325,6 +326,17 @@ async def test_every_call_is_logged(world: FakeServices) -> None:
 
 
 # --------------------------------------------------------------------------- other services
+
+
+def test_api_timeouts_follow_the_one_tool_timeout() -> None:
+    settings = api_settings().model_copy(
+        update={
+            "chat": api_settings().chat.model_copy(update={"tool_timeout": timedelta(minutes=10)})
+        }
+    )
+    gw = ApiGateway(settings)
+    assert gw.total_timeout_s == 600 and gw.get_timeout_s == 595
+    assert ApiGateway(api_settings()).total_timeout_s == 3600
 
 
 async def test_qbittorrent_logs_in_and_trims(gateway: ApiGateway, world: FakeServices) -> None:

@@ -39,7 +39,14 @@ log = logging.getLogger(__name__)
 RESULT_SHARE = 0.7
 """Share of `chat.max_tool_result_chars` a command's output may use (the rest is JSON framing
 and escaping), so the engine's own trimming never has to cut command output."""
-ATTRIBUTION_TIMEOUT_S = 8.0
+ATTRIBUTION_TIMEOUT_S = 60.0
+"""Owner lookup (Docker / *arr API calls) next to a disk scan: it may only add information, so
+it never fails the answer; generous because the scan may be long anyway."""
+SCAN_CPU_S = 3600
+"""CPU-time limit of one `du` of a disk scan (the sandbox default of 60 s is for ordinary
+commands; a walk of a big disk can use minutes of CPU)."""
+SCAN_RESERVE_S = 90.0
+"""Left over from `chat.tool_timeout` for the owner lookup and the answer after the walk."""
 
 _audit_lock = asyncio.Lock()
 _sandboxes: dict[Path, Sandbox] = {}
@@ -164,6 +171,16 @@ async def _locations(ctx: ToolContext) -> attribution.Locations:
     return locations
 
 
+def _scan_runner(sandbox: Sandbox) -> Any:
+    """The sandbox as a disk scan uses it: enough CPU time, and an IO priority that is not
+    starved for as long as anything else (a torrent client) keeps the disk busy."""
+
+    def run(stages: list[list[str]], **kwargs: Any) -> Any:
+        return sandbox.run(stages, cpu_s=SCAN_CPU_S, io_best_effort=True, **kwargs)
+
+    return run
+
+
 async def _disk_usage(ctx: ToolContext, args: DiskUsageArgs) -> Any:
     path = args.path.strip()
     if not path.startswith("/"):
@@ -174,11 +191,10 @@ async def _disk_usage(ctx: ToolContext, args: DiskUsageArgs) -> Any:
     _require_linux()
     sandbox = _sandbox(ctx)
     chat = ctx.settings.chat
-    budget = chat.disk_scan_budget.total_seconds()
+    budget = max(chat.tool_timeout.total_seconds() - SCAN_RESERVE_S, 30.0)
+    run = _scan_runner(sandbox)
     if args.top_files:
-        found = await asyncio.to_thread(
-            disk.largest_files, sandbox.run, path, args.top_files, 100, budget
-        )
+        found = await asyncio.to_thread(disk.largest_files, run, path, args.top_files, 100, budget)
         try:
             locations = await asyncio.wait_for(_locations(ctx), ATTRIBUTION_TIMEOUT_S)
             for row in found["files"]:
@@ -192,7 +208,7 @@ async def _disk_usage(ctx: ToolContext, args: DiskUsageArgs) -> Any:
     if hit is not None:
         return hit
     try:
-        scanned = await asyncio.to_thread(disk.scan, sandbox.run, path, args.depth, budget)
+        scanned = await asyncio.to_thread(disk.scan, run, path, args.depth, budget)
     except FileNotFoundError as exc:
         raise ToolError(f"cannot read {path}: {exc}") from exc
     try:
@@ -296,7 +312,11 @@ async def _ss_listeners(ctx: ToolContext) -> tuple[list[dict[str, Any]], str | N
         plan = parse_pipeline("ss -tlnp", _guard(ctx))
         limit = ctx.settings.chat.max_tool_result_chars
         result = await asyncio.to_thread(
-            _sandbox(ctx).run, plan.stages, timeout=10.0, max_chars=limit, collect_all=True
+            _sandbox(ctx).run,
+            plan.stages,
+            timeout=max(ctx.settings.chat.tool_timeout.total_seconds() - 5, 5.0),
+            max_chars=limit,
+            collect_all=True,
         )
     except (ToolError, Refused, RuntimeError, OSError) as exc:
         return [], f"host sockets not readable: {exc}"[:200]

@@ -70,7 +70,9 @@ def main() -> None:
         os.nice(19)
     number = _IOPRIO_SYSCALL.get(platform.machine())
     if number:
-        libc.syscall(number, 1, 0, 3 << 13)  # IOPRIO_WHO_PROCESS, self, class idle
+        # IOPRIO_WHO_PROCESS, self; class idle, or best-effort level 7 (the lowest normal one)
+        ioprio = (2 << 13) | 7 if spec.get("io_best_effort") else 3 << 13
+        libc.syscall(number, 1, 0, ioprio)
 
     if privileged:
         try:

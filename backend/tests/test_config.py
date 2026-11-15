@@ -126,6 +126,23 @@ def test_lenient_validate_drops_incomplete_list_item_not_everything() -> None:
     assert [r.name for r in settings.arr.radarr] == ["ok"]
 
 
+def test_every_tool_may_run_for_an_hour_by_default() -> None:
+    assert Settings().chat.tool_timeout == timedelta(hours=1)
+
+
+async def test_stored_old_default_tool_timeout_moves_to_the_new_default(db: Database) -> None:
+    """The database holds every setting, so the old 30 s default would stay forever."""
+    raw = Settings().storage_dict()
+    raw["chat"]["tool_timeout"] = "30s"
+    raw["chat"]["disk_scan_budget"] = "20s"  # removed setting
+    await db.kv_set("settings", raw)
+    assert (await SettingsStore(db).load()).chat.tool_timeout == timedelta(hours=1)
+    # a value the owner chose is kept
+    raw["chat"]["tool_timeout"] = "5m"
+    await db.kv_set("settings", raw)
+    assert (await SettingsStore(db).load()).chat.tool_timeout == timedelta(minutes=5)
+
+
 async def test_store_roundtrip_and_repair(db: Database) -> None:
     store = SettingsStore(db)
     assert await store.load() == Settings()  # first run

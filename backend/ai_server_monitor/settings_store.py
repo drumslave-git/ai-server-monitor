@@ -57,6 +57,24 @@ def _delete_path(data: Any, loc: tuple[Any, ...]) -> bool:
     return True
 
 
+OLD_DEFAULTS: dict[tuple[str, str], str] = {("chat", "tool_timeout"): "30s"}
+"""Stored values that are the OLD default of a setting whose default was raised. The database
+holds every setting (not only the changed ones), so an installation that never touched
+`chat.tool_timeout` would keep 30 s forever; such a value is dropped and the new default applies."""
+
+
+def upgrade_stored(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """`raw` without the values in `OLD_DEFAULTS` (a copy), and what was dropped."""
+    data = copy.deepcopy(raw)
+    dropped = []
+    for (section, key), old in OLD_DEFAULTS.items():
+        node = data.get(section)
+        if isinstance(node, dict) and node.get(key) == old:
+            del node[key]
+            dropped.append(f"{section}.{key} (was the old default {old})")
+    return data, dropped
+
+
 def lenient_validate(raw: dict[str, Any]) -> tuple[Settings, list[str]]:
     """Validate stored settings, dropping (→ default) only the parts that no longer fit,
     e.g. after an upgrade renamed or removed a field. Returns (settings, problems)."""
@@ -86,9 +104,14 @@ class SettingsStore:
         raw = await self.db.kv_get(KV_KEY)
         if raw is None:
             return Settings()
-        settings, problems = lenient_validate(raw if isinstance(raw, dict) else {})
-        if problems:
-            log.warning("some stored settings were reset to defaults: %s", "; ".join(problems))
+        raw_dict = raw if isinstance(raw, dict) else {}
+        upgraded, dropped = upgrade_stored(raw_dict)
+        settings, problems = lenient_validate(upgraded)
+        if dropped:
+            log.info("stored settings moved to the new defaults: %s", "; ".join(dropped))
+        if problems or dropped:
+            if problems:
+                log.warning("some stored settings were reset to defaults: %s", "; ".join(problems))
             await self.db.kv_set(f"{KV_KEY}.backup.{int(time.time())}", raw)
             await self.save(settings)
         return settings

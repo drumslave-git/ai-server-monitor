@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from ai_server_monitor.chat.safety import REDACTED, Scrubber, shrink, wrap_untrusted
@@ -282,6 +283,34 @@ def test_bad_tool_arguments_and_unknown_tools_are_reported_back_to_the_model(
     assert "unknown tool 'rm_rf'" in results[2]["preview"]
     assert "invalid arguments" in results[3]["preview"] and "limit" in results[3]["preview"]
     assert events[-1]["type"] == "done"
+
+
+def test_a_slow_tool_is_waited_for_and_reports_progress(
+    bootstrap: Bootstrap, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    from ai_server_monitor.chat import engine as engine_module
+    from ai_server_monitor.chat.tools import NoArgs, Tool
+
+    async def slow(ctx: Any, args: Any) -> Any:
+        await asyncio.sleep(0.4)
+        return {"done": True}
+
+    monkeypatch.setattr(engine_module, "PROGRESS_EVERY_S", 0.1)
+    llm = FakeLLM(call("slow_scan", {}), say("The scan is finished: done."))
+    app = make_app(bootstrap, llm)
+    with TestClient(app) as client:
+        app.state.ctx.chat._tools_builder = lambda s, m: {
+            "slow_scan": Tool("slow_scan", "A slow tool.", NoArgs, "read", slow)
+        }
+        events = ask(client, "scan it")
+    progress = [e for e in events if e["type"] == "tool_progress"]
+    assert progress and progress[0]["name"] == "slow_scan" and "elapsed_s" in progress[0]
+    order = [e["type"] for e in events]
+    assert order.index("tool_progress") < order.index("tool_result")
+    assert next(e for e in events if e["type"] == "tool_result")["ok"] is True
+    assert events[-1]["type"] == "done" and "finished" in events[-1]["text"]
 
 
 def test_step_limit_stops_the_loop_and_forces_an_answer(bootstrap: Bootstrap) -> None:

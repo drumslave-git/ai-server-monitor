@@ -23,7 +23,7 @@ Runner = Callable[..., RunResult]
 """run(stages, timeout=..., max_chars=..., collect_all=...) -> RunResult"""
 
 SCAN_BUDGET_S = 20.0
-"""Default scan budget (the chat setting `chat.disk_scan_budget` overrides it)."""
+"""Default scan budget; the chat passes what is left of `chat.tool_timeout`."""
 CACHE_TTL_S = 600.0
 """Default cache lifetime (`chat.disk_cache_ttl`)."""
 MAX_CHILDREN_PARALLEL = 60
@@ -72,9 +72,7 @@ def scan(run: Runner, path: str, depth: int, budget_s: float = SCAN_BUDGET_S) ->
     started = time.monotonic()
     deadline = started + budget_s
     result = Scan()
-    listing = run(
-        [["ls", "-A", "-1", path]], timeout=min(10.0, budget_s), max_chars=200_000, collect_all=True
-    )
+    listing = run([["ls", "-A", "-1", path]], timeout=budget_s, max_chars=400_000, collect_all=True)
     names = [n for n in listing.output.splitlines() if n]
     if listing.exit_code not in (0, None) and not names:
         raise FileNotFoundError(listing.stderr.strip() or f"cannot list {path}")
@@ -182,8 +180,8 @@ def summarize(
     rows = []
     for e in top:
         row: dict[str, Any] = {"path": e.path, "size": human(e.bytes)}
-        if total:
-            row["percent"] = round(e.bytes / total * 100, 1) if total else None
+        if total and scanned.complete:  # (of a partial total a percentage would mislead)
+            row["percent"] = round(e.bytes / total * 100, 1)
         if not e.complete:
             row["partial"] = True
         who = owners(e.path)
@@ -203,10 +201,16 @@ def summarize(
     if inside:
         out["owners_below"] = inside
     if not scanned.complete:
+        out["result"] = "PARTIAL: the scan hit its time limit"
         out["approximate"] = (
-            f"scan stopped after {scanned.elapsed_s:.0f}s; not finished: "
-            + ", ".join(scanned.unfinished[:8])
-            + (f" and {len(scanned.unfinished) - 8} more" if len(scanned.unfinished) > 8 else "")
+            f"scan stopped after {scanned.elapsed_s:.0f}s; NOT measured (or only partly): "
+            + ", ".join(scanned.unfinished[:15])
+            + (f" and {len(scanned.unfinished) - 15} more" if len(scanned.unfinished) > 15 else "")
+        )
+        out["warning"] = (
+            "These sizes are NOT the disk's usage: the entries named above are missing or "
+            "partial and may be larger than any listed. Do not call the total the disk's usage "
+            "or name a 'largest' directory as final; say which folders were not measured."
         )
     if scanned.unreadable:
         out["unreadable"] = (

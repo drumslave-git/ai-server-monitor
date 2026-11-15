@@ -289,9 +289,8 @@ a fresh install starts with.
 | `chat.max_steps` | integer (min 1, max 20) | `6` | Most tool-use rounds per question before the model must answer with what it has. |
 | `chat.history_messages` | integer (min 0, max 100) | `12` | How many earlier messages of a conversation the model sees. |
 | `chat.max_tool_result_chars` | integer (min 500, max 50000) | `6000` | Longest tool result passed to the model; bigger results are trimmed. |
-| `chat.tool_timeout` | duration | `30s` | Per tool call. |
+| `chat.tool_timeout` | duration | `1h` | Longest one tool call (a disk scan, a command, an API call) may run before the chat gives up on it. The answer waits for the tool; the chat shows what is running and for how long. |
 | `chat.shell` | boolean | on | Let the chat run read-only commands on the host (journalctl, systemctl status, ss, df, ps, ...) to answer questions. They run in a sandbox as an unprivileged user and can change nothing. Off = the chat only sees the collected data. |
-| `chat.disk_scan_budget` | duration | `20s` | Longest a "what is on this disk" scan may run; it then answers with what it measured. |
 | `chat.disk_cache_ttl` | duration | `10m` | How long a finished disk scan of a path is reused. |
 
 ### Data retention (`storage`)

@@ -14,6 +14,8 @@ type ToolUse = {
   ok?: boolean;
   preview?: string;
   kind?: string | null;
+  /** Seconds the tool has been running (progress events while it runs). */
+  elapsed?: number;
   approval?: { id: number; status: string };
 };
 type Turn =
@@ -29,6 +31,11 @@ type Turn =
       session?: string;
       trace?: string;
     };
+
+/** "45 s", "3 min 20 s": how long a tool has been running. */
+function running(s: number): string {
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
+}
 
 /** A write tool's result mentions the audit record it created: {"action_id": 7, "status": "pending", ...}. */
 function approvalOf(text: string | undefined): ToolUse["approval"] {
@@ -175,6 +182,11 @@ export function ChatPage() {
             patchLast((t) => {
               t.text = "";
               t.tools.push({ id: data.id, name: data.name, args: data.args, kind: data.kind });
+            });
+          } else if (type === "tool_progress") {
+            patchLast((t) => {
+              const use = t.tools.find((x) => x.id === data.id);
+              if (use) use.elapsed = data.elapsed_s;
             });
           } else if (type === "tool_result") {
             patchLast((t) => {
@@ -323,6 +335,15 @@ function AssistantBubble({ turn }: { turn: Extract<Turn, { role: "assistant" }> 
   const names = Array.from(new Set(turn.tools.map((t) => displayName(t.name))));
   return (
     <div className="bubble bubble-assistant">
+      {turn.live &&
+        turn.tools
+          .filter((t) => t.ok === undefined)
+          .map((t) => (
+            <p key={t.id + t.name} className="muted small tool-running">
+              <Dot level="warn" /> Running <span className="mono">{displayName(t.name)}</span>
+              {t.elapsed ? ` for ${running(t.elapsed)}` : "…"} (big scans and slow services take a while)
+            </p>
+          ))}
       {turn.tools.length > 0 && (
         <details className="tools">
           <summary>

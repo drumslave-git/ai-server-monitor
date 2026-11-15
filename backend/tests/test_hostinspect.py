@@ -482,6 +482,11 @@ def test_disk_scan_stops_at_the_budget_and_says_so() -> None:
     assert "/d/media" in result["approximate"]
     assert result["total_scanned"].startswith("at least")
     assert [r["path"] for r in result["largest"]] == ["/d/downloads", "/d/appdata"]
+    # the model cannot mistake it for the disk's usage: PARTIAL, what is missing, no percentages
+    assert result["result"].startswith("PARTIAL")
+    assert "NOT measured" in result["approximate"] and "/d/media" in result["approximate"]
+    assert "NOT the disk's usage" in result["warning"]
+    assert all("percent" not in r for r in result["largest"])
 
 
 def test_disk_scan_missing_path_raises() -> None:

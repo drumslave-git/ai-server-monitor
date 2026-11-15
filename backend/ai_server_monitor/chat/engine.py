@@ -6,8 +6,9 @@ Two tool protocols, chosen by the LLM tool-mode probe (or the setting):
   with validation and up to two repair prompts for malformed replies;
 - none: no tools; the digest is put into the prompt instead.
 
-The engine yields plain event dicts (session, tool_call, tool_result, token, done, error);
-the HTTP layer turns them into SSE. Nothing chat-private is published on the event bus.
+The engine yields plain event dicts (session, tool_call, tool_progress, tool_result, token,
+done, error); the HTTP layer turns them into SSE. Nothing chat-private is published on the
+event bus.
 Writes only ever go through `ActionService.request` (see tools.py), so policy decides.
 """
 
@@ -17,6 +18,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -39,6 +41,9 @@ from .tools import Tool, ToolContext, ToolError, build_tools, failure_hint
 
 if TYPE_CHECKING:
     from ..context import AppContext
+
+PROGRESS_EVERY_S = 5.0
+"""While a tool runs, a `tool_progress` event this often (the UI shows the elapsed time)."""
 
 log = logging.getLogger(__name__)
 
@@ -450,7 +455,25 @@ class ChatEngine:
             step=turn.steps,
         ):
             timer = self.app.tracing.start_tool(name, args)
-            ok, text, truncated = await self._execute(turn, tool, name, args, problem)
+            # The tool may run for a long time (a disk scan): run it as a task and say every few
+            # seconds that it is still going, which also keeps the browser connection busy.
+            job = asyncio.ensure_future(self._execute(turn, tool, name, args, problem))
+            started = time.monotonic()
+            try:
+                while True:
+                    done, _ = await asyncio.wait({job}, timeout=PROGRESS_EVERY_S)
+                    if done:
+                        break
+                    yield {
+                        "type": "tool_progress",
+                        "id": call_id,
+                        "name": name,
+                        "elapsed_s": int(time.monotonic() - started),
+                    }
+                ok, text, truncated = job.result()
+            finally:
+                if not job.done():  # the client went away: stop the tool with it
+                    job.cancel()
             timer.finish(ok=ok, result=text, error=None if ok else text, result_size=len(text))
         await self.store.add_message(
             turn.session_id,

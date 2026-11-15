@@ -32,9 +32,9 @@ from .targets import INDEXER_KINDS, Prepared, Target, build_targets, prepare
 
 log = logging.getLogger(__name__)
 
-# TODO setting (Settings → *arr & downloads → API access); module constants until then.
-GET_TIMEOUT_S = 20.0
-TOTAL_TIMEOUT_S = 40.0
+CONNECT_TIMEOUT_S = 8.0
+"""Kept short on purpose: a host that does not accept a connection is down, waiting longer
+only delays the answer. How long an answer may take is `chat.tool_timeout`."""
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 GET_RATE_LIMIT = 60
 GET_RATE_WINDOW_S = 60.0
@@ -90,6 +90,9 @@ class ApiGateway:
         on_call: AuditHook | None = None,
         clock: Callable[[], float] = time.monotonic,
     ):
+        # One limit for every tool (`chat.tool_timeout`): the whole call, and each read of it.
+        self.total_timeout_s = float(settings.chat.tool_timeout.total_seconds())
+        self.get_timeout_s = max(self.total_timeout_s - 5.0, 1.0)
         self.targets: dict[str, Target] = build_targets(settings)
         self.redactor = Redactor.from_settings(settings)
         self.on_call = on_call
@@ -214,7 +217,7 @@ class ApiGateway:
                 headers=target.headers,
                 auth=target.basic_auth,
                 transport=transport,
-                timeout=httpx.Timeout(GET_TIMEOUT_S, connect=8.0),
+                timeout=httpx.Timeout(self.get_timeout_s, connect=CONNECT_TIMEOUT_S),
                 follow_redirects=False,
             )
             self._clients[target.name] = client
@@ -244,7 +247,7 @@ class ApiGateway:
         size = 0
         error: str | None = None
         try:
-            async with asyncio.timeout(TOTAL_TIMEOUT_S):
+            async with asyncio.timeout(self.total_timeout_s):
                 status, content_type, payload = await self._request(prepared, query, body)
             size = len(payload)
             if status >= 400:
@@ -253,10 +256,10 @@ class ApiGateway:
             data = self._decode(target, prepared, content_type, payload)
             return _Raw(status, data, size, int((time.monotonic() - started) * 1000))
         except TimeoutError:
-            error = f"{target.name} did not answer within {TOTAL_TIMEOUT_S:.0f}s"
+            error = f"{target.name} did not answer within {self.total_timeout_s:.0f}s"
             raise ApiAccessError(error) from None
         except httpx.TimeoutException:
-            error = f"{target.name} timed out after {GET_TIMEOUT_S:.0f}s"
+            error = f"{target.name} timed out after {self.get_timeout_s:.0f}s"
             raise ApiAccessError(error) from None
         except httpx.HTTPError as exc:
             error = f"cannot reach {target.name} ({type(exc).__name__})"

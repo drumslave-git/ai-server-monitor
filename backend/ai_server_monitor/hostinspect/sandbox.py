@@ -101,14 +101,17 @@ class Sandbox:
         """True when commands really run chrooted as an unprivileged user (we are root)."""
         return os.name == "posix" and os.geteuid() == 0
 
-    def _spec(self, argv: list[str]) -> list[str]:
+    def _spec(
+        self, argv: list[str], cpu_s: int | None = None, io_best_effort: bool = False
+    ) -> list[str]:
         spec = {
             "argv": argv,
             "root": str(self.root),
             "uid": self.identity.uid,
             "gid": self.identity.gid,
             "groups": list(self.identity.groups),
-            "cpu_s": self.cpu_s,
+            "cpu_s": cpu_s or self.cpu_s,
+            "io_best_effort": io_best_effort,
             "address_space": self.address_space,
             "nproc": self.nproc,
         }
@@ -121,9 +124,14 @@ class Sandbox:
         timeout: float = DEFAULT_TIMEOUT_S,
         max_chars: int = 5000,
         collect_all: bool = False,
+        cpu_s: int | None = None,
+        io_best_effort: bool = False,
     ) -> RunResult:
         """Run the pipeline and wait (blocking: call from a thread). With `collect_all` the
-        output is kept whole up to `max_chars` instead of head + tail."""
+        output is kept whole up to `max_chars` instead of head + tail. `cpu_s` raises the
+        CPU-time limit of each process (a disk walk may need minutes of CPU) and
+        `io_best_effort` runs it at the lowest normal IO priority instead of the idle class
+        (idle starves for as long as anything else keeps the disk busy)."""
         if not self.available:
             raise RuntimeError("the command sandbox needs Linux")
         started = time.monotonic()
@@ -142,7 +150,7 @@ class Sandbox:
             pgid: int | None = None
             for argv in stages:
                 proc = subprocess.Popen(
-                    self._spec(argv),
+                    self._spec(argv, cpu_s, io_best_effort),
                     stdin=previous if previous is not None else subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=err_w,

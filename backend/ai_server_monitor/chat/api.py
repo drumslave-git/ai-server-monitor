@@ -90,7 +90,8 @@ def _frame(event: dict[str, Any]) -> str:
 )
 async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     """Ask a question. The reply is a server-sent-event stream:
-    `session` {session_id}, `tool_call` {id, name, args, kind}, `tool_result` {id, name, ok,
+    `session` {session_id}, `tool_call` {id, name, args, kind}, `tool_progress` {id, name,
+    elapsed_s} (every few seconds while a tool is still running), `tool_result` {id, name, ok,
     truncated, size, preview}, `token` {text} (the answer, in pieces), then `done`
     {session_id, message_id, tool_mode, steps, usage, stopped} — or `error` {message}.
     For the first answer of a new conversation one more event may follow `done`:
