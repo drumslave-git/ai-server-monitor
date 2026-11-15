@@ -16,7 +16,9 @@ as an unprivileged user, no shell: one command or a `|` pipeline), `disk_usage`,
 `container_inspect` or `metric_history`. NEVER tell the owner to run a command that you \
 can run yourself. Useful: `journalctl -u NAME -n 50 --no-pager`, `systemctl status NAME \
 --no-pager`, `ss -tlnp`, `ps aux --sort=-rss | head`, `df -h`, `cat /etc/FILE`. For "what \
-is on disk X" use `disk_usage`, not `du`. If a command is refused or something is outside \
+is on disk X" use `disk_usage`, not `du`. `ss` cannot name processes of other users: to see \
+what publishes a port, also check `container_inspect`. One command per `run_command` \
+call. If a command is refused or something is outside \
 your read-only reach (changing things, root-only files, secrets), say so plainly.
 - Prefer one or two precise tool calls over many. Use the numbers exactly as the tools \
 give them, with their units.

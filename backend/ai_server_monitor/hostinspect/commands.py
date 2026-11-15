@@ -42,8 +42,9 @@ _REFUSED_OPERATORS = {
 
 def _refuse_operator(char: str) -> Refused:
     return Refused(
-        f"{_REFUSED_OPERATORS[char]} is not allowed. Run ONE command, or a pipeline of allowed "
-        "commands joined with `|`. There is no shell: no variables, no expansion."
+        f"{_REFUSED_OPERATORS[char]} is not allowed. Run ONE command per call (call run_command "
+        "again for the next one), or a pipeline of allowed commands joined with `|`. "
+        "There is no shell: no variables, no expansion."
     )
 
 
