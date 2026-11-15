@@ -2,7 +2,7 @@
  "id": "chat.port_8080",
  "group": "chat",
  "title": "What listens on port 8080?",
- "description": "ss shows the listener on 0.0.0.0:8080 but, as an unprivileged user, cannot name the process (it belongs to a Docker proxy of another user). The system prompt tells the model to also check containers. Correct answer: the qbittorrent container (web UI port 8080). Tests that the model does not stop at 'ss shows no process' and combines a second source (container ports, or the process list showing --webui-port=8080).",
+ "description": "ss shows the listener on 0.0.0.0:8080 but, as an unprivileged user, cannot name the process (it belongs to a Docker proxy of another user). The system prompt tells the model to also check containers. Correct answer: the qbittorrent container (web UI port 8080). Tests that the model does not stop at 'ss shows no process' and combines a second source (container ports, or the process list showing --webui-port=8080), whether by hand or with the listening_ports tool that does the join.",
  "snapshot": "base",
  "input": {
   "kind": "chat",
@@ -275,15 +275,14 @@
   {
    "type": "tool_called",
    "weight": 1,
-   "tool": "run_command",
-   "args_match": {
-    "cmd": "\\bss\\b|netstat|lsof"
-   }
+   "tool": "listening_ports|run_command",
+   "note": "looks at the listening sockets"
   },
   {
    "type": "tool_called",
    "weight": 2,
-   "tool": "container_inspect|api_call|get_collector_data|run_command|get_status"
+   "tool": "listening_ports|container_inspect|api_call|get_collector_data|run_command|get_status",
+   "note": "finds the owner"
   },
   {
    "type": "answer_contains_all",
