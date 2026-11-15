@@ -71,3 +71,11 @@ def test_prompt_mentions_api_tools_and_auto_prometheus_queries_only_when_present
         "en", tool_names={"get_status"}, prom_queries=queries
     )
     assert prom_lines([{"name": "n", "query": "rate(x[5m])"}]) == ["- n: rate(x[5m])"]
+
+
+def test_prompt_asks_for_named_items_not_just_counts() -> None:
+    for tools in ({"get_status"}, {"api_call", "api_endpoints"}):
+        prompt = " ".join(system_prompt("en", tool_names=tools).split())
+        assert "asks WHICH or WHAT exactly" in prompt
+        assert "NAME the items" in prompt and "up to about 50" in prompt
+        assert "say how many more" in prompt and "A count alone is not an answer" in prompt
