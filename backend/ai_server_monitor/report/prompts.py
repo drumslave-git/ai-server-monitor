@@ -42,7 +42,8 @@ First, a fenced json block:
 "detail": "one or two sentences with the numbers"}}]}}
 ```
 - health: "ok" = nothing needs attention, "warn" = needs attention soon, \
-"crit" = needs action now.
+"crit" = needs action now. The health follows the flags: with no [WARN] and no [CRIT] flag \
+it is "ok", however many [INFO] notes there are (they are background noise, not problems).
 - score: 0-100 (100 = perfect, below 50 = serious problem).
 - findings: real problems only, most severe first, at most 8, [] if there are none. \
 severity is "info", "warn" or "crit".

@@ -249,6 +249,101 @@ async def _container_inspect(ctx: ToolContext, args: ContainerArgs) -> Any:
     return summarize_inspect(raw)
 
 
+class ListeningPortsArgs(_Args):
+    port: int | None = Field(default=None, ge=1, le=65535, description="Only this port.")
+
+
+_SS_LINE = re.compile(
+    r"^(?P<state>LISTEN|UNCONN) +\d+ +\d+ +(?P<local>\S+) +\S+ *(?P<rest>.*)$",
+    re.M,
+)
+_SS_PROCESS = re.compile(r'\("(?P<name>[^"]+)",pid=(?P<pid>\d+)')
+
+
+def _docker_port_owners(listing: list[dict[str, Any]]) -> tuple[dict[int, list[str]], list[str]]:
+    """Host port -> the containers publishing it, and the host-network containers."""
+    owners: dict[int, list[str]] = {}
+    host_network: list[str] = []
+    for c in listing:
+        name = str((c.get("Names") or ["?"])[0]).lstrip("/")
+        if (c.get("HostConfig") or {}).get("NetworkMode") == "host":
+            host_network.append(name)
+        for p in c.get("Ports") or []:
+            if p.get("PublicPort"):
+                owners.setdefault(int(p["PublicPort"]), []).append(
+                    f"{name} (container: published {p['PublicPort']}→{p.get('PrivatePort')}"
+                    f"/{p.get('Type', 'tcp')})"
+                )
+    return owners, host_network
+
+
+def _parse_ss(output: str) -> list[dict[str, Any]]:
+    out = []
+    for match in _SS_LINE.finditer(output):
+        bind, _, port = match["local"].rpartition(":")
+        if not port.isdigit():
+            continue
+        proc = _SS_PROCESS.search(match["rest"])
+        out.append({"port": int(port), "bind": bind, "process": proc["name"] if proc else None})
+    return out
+
+
+async def _ss_listeners(ctx: ToolContext) -> tuple[list[dict[str, Any]], str | None]:
+    """The host's listening TCP sockets (`ss -tlnp`) as {port, bind, process}; a note on why
+    there are none (not Linux, refused, failed)."""
+    try:
+        _require_linux()
+        plan = parse_pipeline("ss -tlnp", _guard(ctx))
+        limit = ctx.settings.chat.max_tool_result_chars
+        result = await asyncio.to_thread(
+            _sandbox(ctx).run, plan.stages, timeout=10.0, max_chars=limit, collect_all=True
+        )
+    except (ToolError, Refused, RuntimeError, OSError) as exc:
+        return [], f"host sockets not readable: {exc}"[:200]
+    out = _parse_ss(result.output)
+    return out, None if out or result.exit_code == 0 else f"ss exited {result.exit_code}"
+
+
+async def _listening_ports(ctx: ToolContext, args: ListeningPortsArgs) -> Any:
+    owners: dict[int, list[str]] = {}
+    host_network: list[str] = []
+    notes: list[str] = []
+    try:
+        api = await _docker_api(ctx)
+        owners, host_network = _docker_port_owners(await api.get("/containers/json"))
+    except (ToolError, CollectorUnavailable, PermissionError, httpx.HTTPError) as exc:
+        notes.append(f"Docker published ports unknown: {exc}"[:200])
+    sockets, ss_note = await _ss_listeners(ctx)
+    if ss_note:
+        notes.append(ss_note)
+    rows: dict[int, dict[str, Any]] = {}
+    for s in sockets:
+        row = rows.setdefault(s["port"], {"port": s["port"], "bind": s["bind"]})
+        if s["process"]:
+            row["process"] = s["process"]
+    for port, who in owners.items():
+        rows.setdefault(port, {"port": port})["container"] = who
+    for row in rows.values():
+        if "container" not in row and "process" not in row:
+            row["owner"] = "unknown (another user's process or a host-network container)"
+    wanted = sorted(rows.values(), key=lambda r: r["port"])
+    if args.port is not None:
+        wanted = [r for r in wanted if r["port"] == args.port]
+        if not wanted:
+            notes.append(f"nothing was found listening on port {args.port}")
+    out: dict[str, Any] = {"listening": wanted[:80]}
+    if host_network:
+        out["host_network_containers"] = host_network[:20]
+        notes.append(
+            "host-network containers open their ports directly on the host: an 'unknown' "
+            "listener may belong to one of them (container_inspect NAME shows its config)"
+        )
+    if notes:
+        out["notes"] = notes
+    await _audit(ctx, "shell", cmd=f"listening_ports {args.port or ''}".strip(), rows=len(wanted))
+    return out
+
+
 class ContainerLogsArgs(_Args):
     name: str = Field(description="Container name or id.")
     tail: int = Field(default=200, ge=1, le=2000, description="Newest lines to return.")
@@ -396,6 +491,16 @@ def host_tools(assume_linux: bool = False) -> list[Tool]:
             "read",
             _container_inspect,
             enabled=lambda s: s.collectors.docker.enabled is not False,
+        ),
+        Tool(
+            "listening_ports",
+            "Which port is open and WHO owns it: the host's listening sockets joined with the "
+            "Docker containers that publish them (e.g. 8080 -> qbittorrent). Use this for 'what "
+            "is listening on port X' instead of `ss`, which cannot name other users' processes.",
+            ListeningPortsArgs,
+            "read",
+            _listening_ports,
+            enabled=lambda s: s.collectors.docker.enabled is not False or linux(s),
         ),
         Tool(
             "container_logs",

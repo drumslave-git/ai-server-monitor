@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -323,6 +324,152 @@ async def test_container_logs_without_docker(tmp_path: Path, db: Database) -> No
     ctx = make_ctx(tmp_path, db, docker=None)
     with pytest.raises(ToolError, match="Docker API is not available"):
         await call("container_logs", ctx, name="radarr")
+
+
+class PortsDocker(FakeDocker):
+    async def get(self, path: str, **params: Any) -> Any:
+        if path != "/containers/json":
+            return await super().get(path, **params)
+        extra = [
+            {
+                "Names": ["/qbittorrent"],
+                "Image": "lscr.io/linuxserver/qbittorrent",
+                "State": "running",
+                "Ports": [
+                    {"IP": "0.0.0.0", "PrivatePort": 8080, "PublicPort": 8080, "Type": "tcp"}
+                ],
+            },
+            {"Names": ["/plex"], "Image": "plex", "HostConfig": {"NetworkMode": "host"}},
+        ]
+        return [*await super().get(path, **params), *extra]
+
+
+SS_OUTPUT = (
+    "State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"
+    "LISTEN 0      4096         0.0.0.0:8080      0.0.0.0:*\n"
+    "LISTEN 0      128          0.0.0.0:22        0.0.0.0:*     "
+    'users:(("sshd",pid=801,fd=3))\n'
+    "LISTEN 0      4096   127.0.0.53%lo:53        0.0.0.0:*\n"
+    "LISTEN 0      4096            [::]:7878         [::]:*\n"
+)
+
+
+def test_ss_output_is_parsed() -> None:
+    rows = host_tools._parse_ss(SS_OUTPUT)
+    assert [(r["port"], r["bind"], r["process"]) for r in rows] == [
+        (8080, "0.0.0.0", None),
+        (22, "0.0.0.0", "sshd"),
+        (53, "127.0.0.53%lo", None),
+        (7878, "[::]", None),
+    ]
+
+
+async def test_listening_ports_names_the_container_behind_a_port(
+    tmp_path: Path, db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_ss(ctx: ToolContext) -> Any:
+        return host_tools._parse_ss(SS_OUTPUT), None
+
+    monkeypatch.setattr(host_tools, "_ss_listeners", fake_ss)
+    ctx = make_ctx(tmp_path, db, docker=PortsDocker(tmp_path))
+    out = await call("listening_ports", ctx, port=8080)
+    (row,) = out["listening"]
+    assert (
+        row["port"] == 8080
+        and "qbittorrent (container: published 8080→8080/tcp)" in (row["container"][0])
+    )
+    everything = await call("listening_ports", ctx)
+    by_port = {r["port"]: r for r in everything["listening"]}
+    assert by_port[22]["process"] == "sshd"
+    assert "radarr" in by_port[7878]["container"][0]
+    assert "unknown" in by_port[53]["owner"]
+    assert everything["host_network_containers"] == ["plex"]
+    assert any("host-network" in n for n in everything["notes"])
+    nothing = await call("listening_ports", ctx, port=9999)
+    assert nothing["listening"] == [] and "nothing was found" in nothing["notes"][0]
+
+
+async def test_listening_ports_without_docker_or_ss_says_so(
+    tmp_path: Path, db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def no_ss(ctx: ToolContext) -> Any:
+        return [], "host sockets not readable: needs Linux"
+
+    monkeypatch.setattr(host_tools, "_ss_listeners", no_ss)
+    out = await call("listening_ports", make_ctx(tmp_path, db, docker=None))
+    assert out["listening"] == [] and len(out["notes"]) == 2
+
+
+async def test_gpu_default_view_lists_the_top_processes_by_vram(db: Database) -> None:
+    from ai_server_monitor.collectors.base import CollectorResult
+
+    procs = [{"pid": i, "name": f"p{i}", "mem_used": (i + 1) * 1024**3} for i in range(7)]
+    data = {
+        "driver": "560",
+        "gpus": [
+            {
+                "index": 0,
+                "name": "RTX 4090",
+                "util_percent": 6,
+                "mem_used": 16 * 1024**3,
+                "mem_total": 24 * 1024**3,
+                "uuid": "GPU-secret-looking",
+                "processes": procs,
+            }
+        ],
+    }
+    manager = SimpleNamespace(
+        registry={"gpu": object()},
+        status=lambda: {"gpu": {"state": "ok", "reason": None}},
+        latest={"gpu": CollectorResult("gpu", time.time(), True, data=data)},
+    )
+    ctx = ToolContext(SimpleNamespace(settings=Settings(), db=db, collectors=manager), "s")  # type: ignore[arg-type]
+    tool = build_tools(Settings(), assume_linux=True)["get_collector_data"]
+    out = await tool.handler(ctx, tool.args_model.model_validate({"collector": "gpu"}))
+    (gpu,) = out["default_view"]["gpus"]
+    top = gpu["top_processes_by_vram"]
+    assert [p["name"] for p in top] == ["p6", "p5", "p4", "p3", "p2"]
+    assert top[0]["mem_used"] == 7 * 1024**3 and gpu["more_processes"] == 2
+    assert "uuid" not in gpu
+    assert "gpus" in out["available_sections"] and "gpus" in out["sections"]
+
+
+async def test_failed_tools_get_a_fallback_hint(tmp_path: Path) -> None:
+    from ai_server_monitor.chat.engine import ChatEngine
+    from ai_server_monitor.chat.tools import failure_hint
+
+    assert "df -h" in failure_hint("disk_usage") and failure_hint("no_such_tool") == ""
+
+    async def boom(ctx: Any, args: Any) -> Any:
+        raise ToolError("cannot read /mnt/disks/backup: scan failed")
+
+    tool = {t.name: t for t in host_tools.host_tools(True)}["disk_usage"]
+    failing = type(tool)(
+        tool.name, tool.description, tool.args_model, "read", boom, enabled=lambda s: True
+    )
+    engine = ChatEngine.__new__(ChatEngine)
+    turn = SimpleNamespace(
+        scrub=Scrubber(Settings()), timeout=5.0, ctx=None, limit_chars=5000, tools={}
+    )
+    ok, text, _ = await engine._execute(turn, failing, "disk_usage", {"path": "/x"}, None)  # type: ignore[arg-type]
+    assert ok is False and "scan failed" in text and "Do not stop here: try run_command" in text
+
+    async def refuse(ctx: Any, args: Any) -> Any:
+        raise ToolError("refused: nope")
+
+    refused = type(tool)(
+        tool.name, tool.description, tool.args_model, "read", refuse, enabled=lambda s: True
+    )
+    _, text, _ = await engine._execute(turn, refused, "disk_usage", {"path": "/x"}, None)  # type: ignore[arg-type]
+    assert text == "refused: nope"  # a refusal is not a failure to work around
+
+
+def test_prompt_rules_for_failures_writes_and_ports() -> None:
+    from ai_server_monitor.chat.prompts import system_prompt
+
+    text = system_prompt("en")
+    assert 'do not answer "unable to retrieve"' in text and "`listening_ports`" in text
+    assert "safe default" in text and "keep its files" in text
 
 
 async def test_container_inspect_without_docker(tmp_path: Path, db: Database) -> None:

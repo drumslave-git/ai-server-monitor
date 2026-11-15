@@ -35,7 +35,7 @@ from .prompts import STEP_LIMIT_NOTE, system_prompt
 from .safety import Scrubber, shrink, wrap_untrusted
 from .store import ChatStore
 from .title import TITLE_TIMEOUT_S, clean_title, title_messages
-from .tools import Tool, ToolContext, ToolError, build_tools
+from .tools import Tool, ToolContext, ToolError, build_tools, failure_hint
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -496,12 +496,13 @@ class ChatEngine:
             async with asyncio.timeout(turn.timeout):
                 result = await tool.handler(turn.ctx, parsed)
         except ToolError as exc:
-            return False, turn.scrub.text(str(exc)), False
+            text = turn.scrub.text(str(exc))
+            return False, text + ("" if text.startswith("refused") else failure_hint(name)), False
         except TimeoutError:
-            return False, f"{name} timed out after {turn.timeout:.0f}s", False
+            return False, f"{name} timed out after {turn.timeout:.0f}s{failure_hint(name)}", False
         except Exception as exc:
             log.exception("chat tool %s crashed", name)
-            return False, f"{name} failed: {type(exc).__name__}", False
+            return False, f"{name} failed: {type(exc).__name__}{failure_hint(name)}", False
         text, truncated = shrink(humanize(turn.scrub.clean(result)), turn.limit_chars)
         return True, text, truncated
 

@@ -129,7 +129,8 @@ class CollectorArgs(_Args):
     section: str | None = Field(
         default=None,
         description="Part of the data, e.g. 'memory', 'filesystems', 'processes.top_memory', "
-        "'containers', 'failed', 'packages'. Omit to get an overview of the available sections.",
+        "'containers', 'failed', 'packages', 'gpus'. Omit to get the list of sections plus a "
+        "short default view (for gpu: each GPU with its top processes by VRAM).",
     )
     contains: str | None = Field(
         default=None, description="Keep only list items with this text in any of their values."
@@ -150,6 +151,62 @@ def _overview(data: dict[str, Any]) -> dict[str, Any]:
         else:
             out[key] = value
     return out
+
+
+def _section_names(data: dict[str, Any]) -> list[str]:
+    """Every section the model can ask for: top-level keys, and `key.sub` for objects."""
+    names: list[str] = []
+    for key, value in data.items():
+        names.append(key)
+        if isinstance(value, dict):
+            names.extend(f"{key}.{sub}" for sub in list(value)[:8])
+    return names
+
+
+GPU_TOP_PROCESSES = 5
+
+FALLBACKS = {
+    "disk_usage": "run_command `df -h PATH` or get_collector_data system section=filesystems",
+    "container_inspect": "get_collector_data docker section=containers, or run_command `ps aux`",
+    "container_logs": "run_command `journalctl -n 100 --no-pager`, or container_inspect",
+    "listening_ports": "run_command `ss -tlnp` and container_inspect (published ports)",
+    "run_command": "the matching tool: get_collector_data, disk_usage, container_inspect",
+    "get_collector_data": "run_command (e.g. `df -h`, `free -h`, `ps aux`) or get_status",
+    "metric_history": "get_collector_data for the current value",
+    "diagnose_service": "container_logs and the service's settings, one at a time",
+}
+"""What to try when a tool fails (appended to its error, so a small model does not stop at
+'unable to retrieve')."""
+
+
+def failure_hint(tool_name: str) -> str:
+    fallback = FALLBACKS.get(tool_name)
+    return f" Do not stop here: try {fallback}." if fallback else ""
+
+
+def _default_view(collector: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    """What a bare `get_collector_data <collector>` shows besides the section list, for the
+    collectors whose answer lives one level down (a model that sees only 'gpus: list of 1
+    items' stops there)."""
+    if collector != "gpu":
+        return None
+    gpus = []
+    for gpu in data.get("gpus") or []:
+        if not isinstance(gpu, dict):
+            continue
+        keep = ("index", "name", "util_percent", "mem_used", "mem_total", "mem_percent")
+        keep += ("temperature_c", "power_w")
+        view = {k: gpu[k] for k in keep if k in gpu}
+        procs = [p for p in gpu.get("processes") or [] if isinstance(p, dict)]
+        procs.sort(key=lambda p: p.get("mem_used") or 0, reverse=True)
+        view["top_processes_by_vram"] = [
+            {k: p[k] for k in ("name", "pid", "mem_used") if k in p}
+            for p in procs[:GPU_TOP_PROCESSES]
+        ]
+        if len(procs) > GPU_TOP_PROCESSES:
+            view["more_processes"] = len(procs) - GPU_TOP_PROCESSES
+        gpus.append(view)
+    return {"gpus": gpus} if gpus else None
 
 
 def _dig(data: Any, path: str) -> Any:
@@ -177,7 +234,10 @@ async def _collector_data(ctx: ToolContext, args: CollectorArgs) -> Any:
     data = sanitize(args.collector, result.data)
     base = {"collector": args.collector, "age_s": round(time.time() - result.ts)}
     if args.section is None:
-        return {**base, "sections": _overview(data)}
+        out = {**base, "sections": _overview(data), "available_sections": _section_names(data)}
+        if view := _default_view(args.collector, data):
+            out["default_view"] = view
+        return out
     try:
         part = _dig(data, args.section)
     except KeyError:
@@ -536,8 +596,9 @@ READ_TOOLS: list[Tool] = [
     Tool(
         "get_collector_data",
         "Latest raw data of one collector, sliced. Without `section` you get the list of "
-        "sections. Examples: collector=system section=memory; collector=system "
-        "section=processes.top_memory; collector=system section=filesystems; "
+        "sections (gpu: also each GPU with its top VRAM processes). Examples: "
+        "collector=system section=memory; collector=system section=processes.top_memory; "
+        "collector=system section=filesystems; "
         "collector=docker section=containers sort_by=mem_usage limit=5.",
         CollectorArgs,
         "read",

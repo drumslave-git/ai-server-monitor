@@ -26,6 +26,26 @@ def test_clean_fenced_header() -> None:
     assert p.markdown == BODY  # header removed from the Markdown
 
 
+def test_warn_from_info_flags_only_is_kept_ok() -> None:
+    """The benchmark trap: three kernel audit lines are an [INFO] flag, not a problem."""
+    text = (
+        '```json\n{"health": "warn", "score": 70, "summary": "Audit lines.", '
+        '"findings": [{"severity": "warn", "title": "Audit", "detail": "3 lines"}]}\n```\n' + BODY
+    )
+    p = parse_report(text, [Flag("info", "Kernel audit messages")])
+    assert p.health == "ok" and p.score == 90
+    assert p.findings[0]["severity"] == "info"
+    assert any("kept ok" in n for n in p.notes)
+
+
+def test_warn_stays_with_a_warn_flag_and_crit_is_never_lowered() -> None:
+    text = '```json\n{"health": "warn", "score": 70, "summary": "s"}\n```\n' + BODY
+    assert parse_report(text, [Flag("warn", "Unit a failed"), Flag("info", "i")]).health == "warn"
+    assert parse_report(text, []).health == "warn"  # nothing to judge by: the model decides
+    crit = '```json\n{"health": "crit", "score": 20, "summary": "s"}\n```\n' + BODY
+    assert parse_report(crit, [Flag("info", "i")]).health == "crit"
+
+
 def test_lenient_json_trailing_commas_case_and_wrong_types() -> None:
     text = (
         '```JSON\n{"Health": "CRITICAL", "Score": "35/100", "Summary": "Bad.",\n'

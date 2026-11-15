@@ -259,6 +259,25 @@ def _salvage_truncated(text: str) -> tuple[dict[str, Any], int] | None:
     )
 
 
+OK_SCORE_FLOOR = 90
+
+
+def _agree_with_flags(
+    health: str, score: int, findings: list[dict[str, str]], flags: list[Flag], notes: list[str]
+) -> tuple[str, int]:
+    """The digest's rules are the authority on what needs attention: a model that says `warn`
+    while the digest has no [WARN]/[CRIT] flag (only [INFO] notes such as kernel audit lines)
+    has over-read the notes, so the health stays `ok`. `crit` is never lowered."""
+    only_info = bool(flags) and worst_severity(flags) == "ok"
+    if health != "warn" or not only_info:
+        return health, score
+    for finding in findings:
+        if finding.get("severity") == "warn":
+            finding["severity"] = "info"
+    notes.append("model said warn, but the digest has only info flags: health kept ok")
+    return "ok", max(score, OK_SCORE_FLOOR)
+
+
 def parse_report(text: str, flags: list[Flag]) -> ParsedReport:
     text = strip_reasoning(text).strip()
     found = _find_object(text)
@@ -291,6 +310,7 @@ def parse_report(text: str, flags: list[Flag]) -> ParsedReport:
     if score is None:
         score = score_from_flags(findings or flags)
         notes.append("score missing or invalid; derived")
+    health, score = _agree_with_flags(health, score, findings, flags, notes)
     summary = (
         str(low.get("summary") or "").strip()
         or _first_sentence(markdown)
@@ -320,6 +340,7 @@ def _from_truncated(obj: dict[str, Any], before: str, flags: list[Flag]) -> Pars
     if score is None:
         score = score_from_flags(findings or flags)
         notes.append("score missing; derived")
+    health, score = _agree_with_flags(health, score, findings, flags, notes)
     summary = str(obj.get("summary") or "").strip() or _generated_summary(health, findings or flags)
     lines = ["## Overview", summary, ""]
     if findings:
