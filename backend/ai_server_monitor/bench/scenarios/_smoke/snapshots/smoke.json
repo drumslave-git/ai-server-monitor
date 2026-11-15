@@ -1,0 +1,266 @@
+{
+ "name": "smoke",
+ "description": "A small invented server for the benchmark's own tests: disk at 91 %, one failed unit.",
+ "collectors": {
+  "system": {
+   "data": {
+    "hostname": "bench-host",
+    "kernel": "6.8.0",
+    "uptime_s": 864000,
+    "cpu": {
+     "percent": 12.0,
+     "iowait_percent": 0.5,
+     "steal_percent": 0.0,
+     "cores_logical": 8,
+     "cores_physical": 4,
+     "load": [
+      0.8,
+      0.7,
+      0.6
+     ],
+     "load_per_core": 0.1,
+     "freq_mhz": 3200
+    },
+    "memory": {
+     "total": 34359738368,
+     "available": 25769803776,
+     "used": 8589934592,
+     "percent": 25.0,
+     "cached": 10737418240,
+     "swap_total": 4294967296,
+     "swap_used": 0,
+     "swap_percent": 0.0
+    },
+    "filesystems": [
+     {
+      "device": "/dev/sda1",
+      "mount": "/",
+      "fstype": "ext4",
+      "total": 536870912000,
+      "used": 488552529920,
+      "avail": 48318382080,
+      "percent": 91.0,
+      "inodes_percent": 12.0
+     },
+     {
+      "device": "/dev/sdb1",
+      "mount": "/mnt/media",
+      "fstype": "ext4",
+      "total": 4294967296000,
+      "used": 1288490188800,
+      "avail": 3006477107200,
+      "percent": 30.0,
+      "inodes_percent": 2.0
+     }
+    ],
+    "disks": [
+     {
+      "name": "sda",
+      "read_bps": 1000.0,
+      "write_bps": 5000.0,
+      "busy_percent": 1.0
+     }
+    ],
+    "network": [
+     {
+      "name": "eth0",
+      "rx_bps": 20000.0,
+      "tx_bps": 10000.0,
+      "rx_bytes": 9000000000,
+      "tx_bytes": 4000000000,
+      "errors": 0,
+      "dropped": 0
+     }
+    ],
+    "temperatures": [
+     {
+      "sensor": "coretemp",
+      "label": "Package id 0",
+      "current": 45.0,
+      "high": 80.0,
+      "critical": 100.0
+     }
+    ],
+    "processes": {
+     "total": 210,
+     "by_status": {
+      "sleeping": 200,
+      "running": 2,
+      "idle": 8
+     },
+     "zombies": 0,
+     "top_cpu": [
+      {
+       "pid": 1201,
+       "name": "plex",
+       "user": "plex",
+       "cpu_percent": 9.0,
+       "rss": 900000000,
+       "mem_percent": 2.6,
+       "threads": 40,
+       "cmd": "/usr/lib/plexmediaserver/Plex",
+       "container_id": null
+      }
+     ],
+     "top_memory": [
+      {
+       "pid": 1201,
+       "name": "plex",
+       "user": "plex",
+       "cpu_percent": 9.0,
+       "rss": 900000000,
+       "mem_percent": 2.6,
+       "threads": 40,
+       "cmd": "/usr/lib/plexmediaserver/Plex",
+       "container_id": null
+      }
+     ]
+    }
+   }
+  },
+  "docker": {
+   "data": {
+    "engine": {
+     "version": "27.0.1",
+     "storage_driver": "overlayfs",
+     "images": 12,
+     "warnings": []
+    },
+    "summary": {
+     "total": 3,
+     "running": 3,
+     "unhealthy": [],
+     "restarting": [],
+     "exited_with_error": [],
+     "restarted_recently": [],
+     "oom_killed": []
+    },
+    "containers": [
+     {
+      "id": "aaaaaaaaaaaa",
+      "name": "radarr",
+      "image": "lscr.io/linuxserver/radarr:latest",
+      "image_id": "sha256:1",
+      "state": "running",
+      "status": "Up 3 days",
+      "compose_project": "media",
+      "compose_service": "radarr",
+      "health": "none",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-11-10T08:00:00Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 1.0,
+      "mem_usage": 300000000,
+      "mem_limit": 34359738368,
+      "mem_percent": 0.9,
+      "net_rx_bps": 100.0,
+      "net_tx_bps": 50.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 0.0,
+      "pids": 20,
+      "log_lines": 10,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "bbbbbbbbbbbb",
+      "name": "sonarr",
+      "image": "lscr.io/linuxserver/sonarr:latest",
+      "image_id": "sha256:2",
+      "state": "running",
+      "status": "Up 3 days",
+      "compose_project": "media",
+      "compose_service": "sonarr",
+      "health": "none",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-11-10T08:00:00Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 0.5,
+      "mem_usage": 280000000,
+      "mem_limit": 34359738368,
+      "mem_percent": 0.8,
+      "net_rx_bps": 100.0,
+      "net_tx_bps": 50.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 0.0,
+      "pids": 18,
+      "log_lines": 8,
+      "log_errors": 0,
+      "log_error_samples": []
+     },
+     {
+      "id": "cccccccccccc",
+      "name": "qbittorrent",
+      "image": "lscr.io/linuxserver/qbittorrent:latest",
+      "image_id": "sha256:3",
+      "state": "running",
+      "status": "Up 3 days",
+      "compose_project": "media",
+      "compose_service": "qbittorrent",
+      "health": "none",
+      "restart_count": 0,
+      "restarts_delta": 0,
+      "restarted_since_last": false,
+      "started_at": "2026-11-10T08:00:00Z",
+      "oom_killed": false,
+      "exit_code": null,
+      "restart_policy": "unless-stopped",
+      "cpu_percent": 2.0,
+      "mem_usage": 500000000,
+      "mem_limit": 34359738368,
+      "mem_percent": 1.5,
+      "net_rx_bps": 5000.0,
+      "net_tx_bps": 9000.0,
+      "blk_read_bps": 0.0,
+      "blk_write_bps": 0.0,
+      "pids": 30,
+      "log_lines": 20,
+      "log_errors": 0,
+      "log_error_samples": []
+     }
+    ],
+    "disk_usage": {
+     "images_bytes": 6442450944,
+     "images_unused_bytes": 1073741824,
+     "images_count": 12,
+     "containers_rw_bytes": 200000000,
+     "volumes_bytes": 3221225472,
+     "volumes_count": 4,
+     "build_cache_bytes": 0,
+     "largest_volumes": [],
+     "ts": 1794686400
+    }
+   }
+  },
+  "systemd": {
+   "data": {
+    "system_state": "degraded",
+    "units_total": 300,
+    "by_active_state": {
+     "active": 290,
+     "inactive": 9,
+     "failed": 1
+    },
+    "failed": [
+     {
+      "name": "logrotate.service",
+      "description": "Rotate log files",
+      "sub": "failed",
+      "since": 1794610004,
+      "result": "exit-code"
+     }
+    ],
+    "restarting": [],
+    "activating": []
+   }
+  }
+ }
+}
