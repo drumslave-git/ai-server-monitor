@@ -56,6 +56,10 @@ export type JsonSchema = {
   minimum?: number;
   maximum?: number;
   examples?: Json[];
+  /** Set on a connection (schema extra): which test the Test button runs. */
+  test?: string;
+  /** Extra test buttons: query mode → label (e.g. Telegram: send → "Send test message"). */
+  test_modes?: Record<string, string>;
 };
 
 export type CollectorStatus = {
@@ -95,6 +99,7 @@ import type { components } from "./api-types";
 export type Schemas = components["schemas"];
 export type StatusResponse = Schemas["StatusResponse"];
 export type Report = Schemas["Report"];
+export type ConnectionTestResult = Schemas["ConnectionTestResult"];
 export type ReportSummary = Schemas["ReportSummary"];
 export type ReportList = Schemas["ReportList"];
 export type Finding = Schemas["Finding"];

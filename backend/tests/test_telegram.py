@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from ai_server_monitor.config import Bootstrap, Settings
 from ai_server_monitor.main import create_app
 from ai_server_monitor.outputs.telegram import (
+    ID_COOLDOWN,
     BotAPI,
     TelegramError,
     html_messages,
@@ -210,6 +211,64 @@ def test_chats_outside_the_allowlist_are_ignored_without_a_reply(
     ignored = [r for r in caplog.records if "ignoring chat 999" in r.getMessage()]
     assert len(ignored) == 1  # logged once, not per message
     assert TOKEN not in caplog.text
+
+
+def test_id_command_answers_everybody_but_nothing_else_does(bootstrap: Bootstrap) -> None:
+    tg = FakeTelegram()
+    llm = FakeLLM(say("should never be asked"))
+    app = make_app(bootstrap, tg, llm=llm)
+    with TestClient(app) as client:
+        bot = app.state.ctx.telegram
+        stranger = {"id": STRANGER, "type": "private"}
+        update = {
+            "update_id": 1,
+            "message": {"chat": stranger, "text": "/id", "from": {"id": 4242}},
+        }
+        client.portal.call(bot.handle_update, update)
+        (text,) = tg.texts()
+        assert f"<code>{STRANGER}</code>" in text  # chat id
+        assert "<code>4242</code>" in text  # sender id
+        assert "private" in text  # chat type
+        assert "Add this chat id under Settings → Outputs → Telegram → Allowed chat IDs" in text
+        assert tg.of("sendMessage")[0]["chat_id"] == STRANGER
+        # The same stranger gets nothing else: no commands, no chat, no buttons.
+        for other in ("/status", "/help", "/report", "hello", "/idx", "/id2"):
+            client.portal.call(
+                bot.handle_update, {"update_id": 2, "message": {**update["message"], "text": other}}
+            )
+        client.portal.call(bot.handle_update, press("a:1:abc", 5, chat=STRANGER))
+    assert len(tg.texts()) == 1 and tg.of("answerCallbackQuery") == []
+    assert llm.requests == []
+
+
+def test_id_command_forms_group_chat_and_allowed_chat(bootstrap: Bootstrap) -> None:
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
+    with TestClient(app) as client:
+        bot = app.state.ctx.telegram
+        group = {"update_id": 1, "message": {"chat": {"id": -100123, "type": "supergroup"}}}
+        group["message"]["text"] = "/id@my_asm_bot"
+        group["message"]["from"] = {"id": 7}
+        client.portal.call(bot.handle_update, group)
+        client.portal.call(bot.handle_update, message("/ID"))  # an allowed chat: also fine
+        group_text, allowed_text = tg.texts()
+    assert "<code>-100123</code>" in group_text and "supergroup" in group_text
+    assert f"<code>{CHAT}</code>" in allowed_text and "already allowed" in allowed_text
+
+
+def test_id_command_is_rate_limited_per_chat(bootstrap: Bootstrap) -> None:
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
+    with TestClient(app) as client:
+        bot = app.state.ctx.telegram
+        for _ in range(5):
+            client.portal.call(bot.handle_update, message("/id", chat=STRANGER))
+        assert len(tg.texts()) == 1  # a burst gets one answer
+        client.portal.call(bot.handle_update, message("/id", chat=STRANGER + 1))
+        assert len(tg.texts()) == 2  # other chats have their own limit
+        bot._id_replied[STRANGER] -= ID_COOLDOWN + 1  # the cooldown has passed
+        client.portal.call(bot.handle_update, message("/id", chat=STRANGER))
+        assert len(tg.texts()) == 3
 
 
 # --------------------------------------------------------------------------- approvals
@@ -441,7 +500,7 @@ def test_commands_status_help_approvals_and_report(bootstrap: Bootstrap) -> None
         for text in ("/help", "/status", "/approvals", "/nope"):
             client.portal.call(ctx.telegram.handle_update, message(text))
         help_text, status, approvals, unknown = tg.texts()
-        assert "/status" in help_text and "/report" in help_text
+        assert "/status" in help_text and "/report" in help_text and "/id" in help_text
         assert "warn (score 71)" in status and "Disk is filling up" in status
         assert "Nothing is waiting" in approvals and "Unknown command" in unknown
 

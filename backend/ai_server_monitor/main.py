@@ -19,6 +19,8 @@ from .actions.api import router as actions_router
 from .chat.api import router as chat_router
 from .collectors import Collector
 from .config import Bootstrap, LLMSettings, Settings, settings_json_schema
+from .conntest import KINDS as TEST_KINDS
+from .conntest import run_test
 from .context import AppContext
 from .digest import collectors_snapshot
 from .digest.snapshot import Snapshot
@@ -323,6 +325,27 @@ def create_app(
             return {"ok": False, "error": str(exc), "models": models[:100] if models else None}
         finally:
             await client.aclose()
+
+    @app.post("/api/settings/test/{kind}")
+    async def test_connection(
+        kind: str,
+        request: Request,
+        body: JsonBody,
+        mode: Annotated[str | None, Query(max_length=20)] = None,
+        index: Annotated[int | None, Query(ge=0)] = None,
+    ) -> api_models.ConnectionTestResult:
+        """Try one connection with the given (possibly unsaved) form values: Prometheus,
+        Docker, a Radarr/Sonarr/Whisparr/Prowlarr instance, qBittorrent or Telegram.
+        Masked secrets are replaced by the stored ones. `mode=send` (Telegram) sends a test
+        message to every allowed chat; `index` is the position of a list item (*arr
+        instance) in the form."""
+        if kind not in TEST_KINDS:
+            raise HTTPException(status_code=404, detail=f"no connection test {kind!r}")
+        ctx = get_ctx(request)
+        result = await run_test(kind, body, ctx.settings, ctx.host_env, mode=mode, index=index)
+        return api_models.ConnectionTestResult(
+            ok=result.ok, message=result.message, details=result.details
+        )
 
     static_dir = bootstrap.static_dir
     if static_dir is not None and static_dir.is_dir():

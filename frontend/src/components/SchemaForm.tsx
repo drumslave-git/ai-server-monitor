@@ -1,5 +1,5 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
-import type { Json, JsonObject, JsonSchema } from "../api";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { api, type ConnectionTestResult, type Json, type JsonObject, type JsonSchema } from "../api";
 
 /* Renders a form from the backend's pydantic JSON schema, so every setting the backend
    defines shows up here without UI changes. Field help comes from `description`. */
@@ -87,9 +87,13 @@ export function Field(props: FieldProps) {
   // Nested settings group (e.g. one collector) → titled group.
   if (isNestedObject(s)) {
     return (
-      <Group title={label} description={s.description} error={ctx.errors[path]}>
-        <ObjectFields schema={s} value={value} onChange={onChange} path={path} ctx={ctx} />
-      </Group>
+      <Tested spec={s} value={value}>
+        {(buttons, result) => (
+          <Group title={label} description={s.description} error={ctx.errors[path]} actions={buttons} below={result}>
+            <ObjectFields schema={s} value={value} onChange={onChange} path={path} ctx={ctx} />
+          </Group>
+        )}
+      </Tested>
     );
   }
 
@@ -177,8 +181,8 @@ function Row({
   );
 }
 
-function Group({ title, description, error, actions, children }: {
-  title: string; description?: string; error?: string; actions?: ReactNode; children: ReactNode;
+function Group({ title, description, error, actions, below, children }: {
+  title: string; description?: string; error?: string; actions?: ReactNode; below?: ReactNode; children: ReactNode;
 }) {
   return (
     <section className="group">
@@ -189,6 +193,7 @@ function Group({ title, description, error, actions, children }: {
         </div>
         {actions}
       </header>
+      {below}
       {error && <p className="error">{error}</p>}
       <div className="group-body">{children}</div>
     </section>
@@ -199,22 +204,30 @@ function OptionalGroup(props: FieldProps & { label: string; inner: JsonSchema })
   const { label, inner, value, onChange, path, ctx } = props;
   const enabled = value !== null && value !== undefined;
   return (
-    <Group
-      title={label}
-      description={inner.description}
-      error={ctx.errors[path]}
-      actions={
-        enabled ? (
-          <button type="button" className="btn btn-quiet" onClick={() => onChange(null)}>Remove</button>
-        ) : (
-          <button type="button" className="btn" onClick={() => onChange(defaultFor({ ...inner, default: undefined }, ctx.defs))}>
-            Configure
-          </button>
-        )
-      }
-    >
-      {enabled ? <ObjectFields schema={inner} value={value} onChange={onChange} path={path} ctx={ctx} /> : <p className="muted">Not configured.</p>}
-    </Group>
+    <Tested spec={enabled ? resolve(props.schema, ctx.defs) : undefined} value={value}>
+      {(buttons, result) => (
+        <Group
+          title={label}
+          description={inner.description}
+          error={ctx.errors[path]}
+          below={result}
+          actions={
+            enabled ? (
+              <div className="head-actions">
+                {buttons}
+                <button type="button" className="btn btn-quiet" onClick={() => onChange(null)}>Remove</button>
+              </div>
+            ) : (
+              <button type="button" className="btn" onClick={() => onChange(defaultFor({ ...inner, default: undefined }, ctx.defs))}>
+                Configure
+              </button>
+            )
+          }
+        >
+          {enabled ? <ObjectFields schema={inner} value={value} onChange={onChange} path={path} ctx={ctx} /> : <p className="muted">Not configured.</p>}
+        </Group>
+      )}
+    </Tested>
   );
 }
 
@@ -236,18 +249,90 @@ function ListOfObjects(props: FieldProps & { label: string; item: JsonSchema }) 
     >
       {list.length === 0 && <p className="muted">None.</p>}
       {list.map((entry, i) => (
-        <div className="list-item" key={i}>
-          <div className="list-item-head">
-            <strong>{(entry as JsonObject)?.name ? String((entry as JsonObject).name) : `#${i + 1}`}</strong>
-            <button type="button" className="btn btn-quiet" onClick={() => onChange(list.filter((_, j) => j !== i))}>
-              Remove
-            </button>
-          </div>
-          <ObjectFields schema={item} value={entry} onChange={(v) => update(i, v)} path={`${path}.${i}`} ctx={ctx} />
-        </div>
+        <Tested key={i} spec={s} value={entry} index={i}>
+          {(buttons, result) => (
+            <div className="list-item">
+              <div className="list-item-head">
+                <strong>{(entry as JsonObject)?.name ? String((entry as JsonObject).name) : `#${i + 1}`}</strong>
+                <div className="head-actions">
+                  {buttons}
+                  <button type="button" className="btn btn-quiet" onClick={() => onChange(list.filter((_, j) => j !== i))}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+              {result}
+              <ObjectFields schema={item} value={entry} onChange={(v) => update(i, v)} path={`${path}.${i}`} ctx={ctx} />
+            </div>
+          )}
+        </Tested>
       ))}
     </Group>
   );
+}
+
+/** Test buttons + inline result for a connection. A node is a connection when its schema has
+    a `test` extra; any other node gets nothing extra. The values tested are the ones in the
+    form right now (saved or not); secrets that are still masked are filled in by the server
+    from the stored ones. */
+function Tested({ spec, value, index, children }: {
+  spec?: JsonSchema; value: Json; index?: number; children: (buttons: ReactNode, result: ReactNode) => ReactNode;
+}) {
+  const kind = spec?.test;
+  const [running, setRunning] = useState<string | null>(null);
+  const [result, setResult] = useState<ConnectionTestResult | null>(null);
+  const snapshot = JSON.stringify(value);
+  const requestId = useRef(0);
+  useEffect(() => {
+    requestId.current++; // an edit makes an older answer (or a test still running) stale
+    setResult(null);
+    setRunning(null);
+  }, [snapshot]);
+  if (!kind) return <>{children(null, null)}</>;
+
+  const run = async (mode: string | null) => {
+    const mine = ++requestId.current;
+    setRunning(mode ?? "");
+    setResult(null);
+    const query = new URLSearchParams();
+    if (mode) query.set("mode", mode);
+    if (index !== undefined) query.set("index", String(index));
+    let outcome: ConnectionTestResult;
+    try {
+      const qs = query.toString();
+      outcome = await api.post<ConnectionTestResult>(`/api/settings/test/${kind}${qs ? `?${qs}` : ""}`, value);
+    } catch (e) {
+      outcome = { ok: false, message: `The test could not run: ${(e as Error).message}`, details: {} };
+    }
+    if (mine !== requestId.current) return;
+    setResult(outcome);
+    setRunning(null);
+  };
+  const button = (mode: string | null, label: string) => (
+    <button type="button" className="btn btn-test" disabled={running !== null} onClick={() => void run(mode)}>
+      {running === (mode ?? "") && <span className="spinner" aria-hidden="true" />}
+      {running === (mode ?? "") ? "Testing…" : label}
+    </button>
+  );
+  const buttons = (
+    <div className="test-buttons">
+      {button(null, "Test")}
+      {Object.entries(spec?.test_modes ?? {}).map(([mode, label]) => (
+        <span key={mode}>{button(mode, label)}</span>
+      ))}
+    </div>
+  );
+  const shown = (
+    <div className="test-result" role="status" aria-live="polite">
+      {result && (
+        <p className={result.ok ? "ok" : "error"}>
+          <strong>{result.ok ? "✓ " : "✕ "}</strong>
+          {result.message}
+        </p>
+      )}
+    </div>
+  );
+  return <>{children(buttons, shown)}</>;
 }
 
 function Scalar({ id, schema, value, onChange, suggestions }: {

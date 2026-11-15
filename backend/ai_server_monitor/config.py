@@ -385,7 +385,9 @@ class ArrCollectorSettings(CollectorSettings):
 class CollectorsSettings(_Model):
     system: SystemCollectorSettings = SystemCollectorSettings()
     """CPU, memory, disks, network, temperatures, top processes."""
-    docker: DockerCollectorSettings = DockerCollectorSettings()
+    docker: DockerCollectorSettings = Field(
+        default=DockerCollectorSettings(), json_schema_extra={"test": "docker"}
+    )
     """Containers: state, health, restarts, resource use, log errors, disk usage."""
     gpu: CollectorSettings = CollectorSettings(enabled="auto", interval=timedelta(seconds=30))
     """NVIDIA GPUs (needs the NVIDIA container runtime)."""
@@ -395,10 +397,14 @@ class CollectorsSettings(_Model):
     """Warnings and errors from the system journal."""
     apt: CollectorSettings = CollectorSettings(interval=timedelta(hours=6))
     """Pending package updates, security updates, reboot required."""
-    image_updates: ImageUpdatesCollectorSettings = ImageUpdatesCollectorSettings()
+    image_updates: ImageUpdatesCollectorSettings = Field(
+        default=ImageUpdatesCollectorSettings(), json_schema_extra={"test": "docker"}
+    )
     """Running containers whose image tag has a newer build in its registry (same tag, new
     digest; does not look for newer version numbers)."""
-    prometheus: PrometheusCollectorSettings = PrometheusCollectorSettings()
+    prometheus: PrometheusCollectorSettings = Field(
+        default=PrometheusCollectorSettings(), json_schema_extra={"test": "prometheus"}
+    )
     """Run PromQL queries against an existing Prometheus."""
     arr: ArrCollectorSettings = ArrCollectorSettings()
     """Radarr/Sonarr/Whisparr queues and health, Prowlarr indexers, qBittorrent torrents
@@ -411,7 +417,8 @@ class TelegramSettings(_Model):
     token: Secret = SecretStr("")
     """Bot token from @BotFather."""
     allowed_chat_ids: list[int] = Field(default_factory=list)
-    """Only these chats may talk to the bot."""
+    """Only these chats may talk to the bot. Don't know a chat id? Send /id to the bot: it
+    answers in any chat."""
     report_every: int = Field(default=1, ge=0)
     """Send every Nth report (0 = alerts only)."""
     alerts: bool = True
@@ -430,7 +437,10 @@ class MetricsSettings(_Model):
 
 
 class OutputsSettings(_Model):
-    telegram: TelegramSettings = TelegramSettings()
+    telegram: TelegramSettings = Field(
+        default=TelegramSettings(),
+        json_schema_extra={"test": "telegram", "test_modes": {"send": "Send test message"}},
+    )
     metrics: MetricsSettings = MetricsSettings()
 
 
@@ -516,11 +526,15 @@ class ArrSettings(_Model):
     """Log what would be done without changing anything."""
     timeout: Duration = timedelta(seconds=15)
     """Per-request timeout for *arr, Prowlarr and qBittorrent."""
-    radarr: list[ArrInstance] = Field(default_factory=list)
-    sonarr: list[ArrInstance] = Field(default_factory=list)
-    whisparr: list[ArrInstance] = Field(default_factory=list)
-    prowlarr: ArrInstance | None = None
-    qbittorrent: QbitSettings | None = None
+    radarr: list[ArrInstance] = Field(default_factory=list, json_schema_extra={"test": "radarr"})
+    sonarr: list[ArrInstance] = Field(default_factory=list, json_schema_extra={"test": "sonarr"})
+    whisparr: list[ArrInstance] = Field(
+        default_factory=list, json_schema_extra={"test": "whisparr"}
+    )
+    prowlarr: ArrInstance | None = Field(default=None, json_schema_extra={"test": "prowlarr"})
+    qbittorrent: QbitSettings | None = Field(
+        default=None, json_schema_extra={"test": "qbittorrent"}
+    )
     actions: ActionsSettings = ActionsSettings()
 
     @model_validator(mode="after")

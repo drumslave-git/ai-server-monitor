@@ -315,6 +315,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/test/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Connection
+         * @description Try one connection with the given (possibly unsaved) form values: Prometheus,
+         *     Docker, a Radarr/Sonarr/Whisparr/Prowlarr instance, qBittorrent or Telegram.
+         *     Masked secrets are replaced by the stored ones. `mode=send` (Telegram) sends a test
+         *     message to every allowed chat; `index` is the position of a list item (*arr
+         *     instance) in the form.
+         */
+        post: operations["test_connection_api_settings_test__kind__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/status": {
         parameters: {
             query?: never;
@@ -449,6 +473,7 @@ export interface components {
             /**
              * Interval
              * Format: duration
+             * @description How often this collector gathers fresh data.
              * @default 2m
              * @example 30s
              * @example 5m
@@ -657,6 +682,7 @@ export interface components {
             /**
              * Interval
              * Format: duration
+             * @description How often this collector gathers fresh data.
              * @default 30s
              * @example 30s
              * @example 5m
@@ -789,6 +815,20 @@ export interface components {
              */
             systemd: components["schemas"]["SystemdCollectorSettings"];
         };
+        /**
+         * ConnectionTestResult
+         * @description Outcome of a Settings → Test button.
+         */
+        ConnectionTestResult: {
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            };
+            /** Message */
+            message: string;
+            /** Ok */
+            ok: boolean;
+        };
         /** ContainersSummary */
         ContainersSummary: {
             /** Running */
@@ -859,6 +899,7 @@ export interface components {
             /**
              * Interval
              * Format: duration
+             * @description How often this collector gathers fresh data.
              * @default 30s
              * @example 30s
              * @example 5m
@@ -947,12 +988,14 @@ export interface components {
             cache_ttl: string;
             /**
              * Enabled
+             * @description auto = on when the Docker API is reachable.
              * @default auto
              */
             enabled: boolean | "auto";
             /**
              * Interval
              * Format: duration
+             * @description How often this collector gathers fresh data.
              * @default 12h
              * @example 30s
              * @example 5m
@@ -1023,6 +1066,7 @@ export interface components {
             /**
              * Interval
              * Format: duration
+             * @description How often this collector gathers fresh data.
              * @default 1m
              * @example 30s
              * @example 5m
@@ -1081,6 +1125,7 @@ export interface components {
             max_output_tokens: number;
             /**
              * Max Retries
+             * @description How many times a failed model request is retried before giving up.
              * @default 2
              */
             max_retries: number;
@@ -1099,6 +1144,7 @@ export interface components {
             stream_usage: boolean;
             /**
              * Temperature
+             * @description Randomness of answers: 0 is the most predictable, higher is more varied.
              * @default 0.2
              */
             temperature: number;
@@ -1246,6 +1292,7 @@ export interface components {
             /**
              * Interval
              * Format: duration
+             * @description How often this collector gathers fresh data.
              * @default 1m
              * @example 30s
              * @example 5m
@@ -1262,6 +1309,7 @@ export interface components {
             /**
              * Password
              * Format: password
+             * @description Basic-auth password.
              * @default
              */
             password: string;
@@ -1306,6 +1354,7 @@ export interface components {
             /**
              * Password
              * Format: password
+             * @description WebUI password.
              * @default
              */
             password: string;
@@ -1316,6 +1365,7 @@ export interface components {
             url: string;
             /**
              * Username
+             * @description WebUI user name.
              * @default admin
              */
             username: string;
@@ -1594,6 +1644,7 @@ export interface components {
             /**
              * Interval
              * Format: duration
+             * @description How often a search run starts.
              * @default 6h
              * @example 30s
              * @example 5m
@@ -1603,6 +1654,7 @@ export interface components {
             interval: string;
             /**
              * Max Per Hour
+             * @description Cap on how many searches run per hour (0 = no cap).
              * @default 30
              */
             max_per_hour: number;
@@ -1843,11 +1895,13 @@ export interface components {
             interval: string;
             /**
              * Max Per Hour
+             * @description Cap on how many downloads are cleaned up per hour (0 = no cap).
              * @default 10
              */
             max_per_hour: number;
             /**
              * Policy
+             * @description off = never; suggest = mention in reports; approve = ask you first; auto = just do it.
              * @default approve
              * @enum {string}
              */
@@ -1932,6 +1986,7 @@ export interface components {
             /**
              * Interval
              * Format: duration
+             * @description How often this collector gathers fresh data.
              * @default 15s
              * @example 30s
              * @example 5m
@@ -1963,6 +2018,7 @@ export interface components {
             /**
              * Interval
              * Format: duration
+             * @description How often this collector gathers fresh data.
              * @default 1m
              * @example 30s
              * @example 5m
@@ -1982,7 +2038,8 @@ export interface components {
             alerts: boolean;
             /**
              * Allowed Chat Ids
-             * @description Only these chats may talk to the bot.
+             * @description Only these chats may talk to the bot. Don't know a chat id? Send /id to the bot: it
+             *     answers in any chat.
              */
             allowed_chat_ids?: number[];
             /**
@@ -1993,6 +2050,7 @@ export interface components {
             api_url: string;
             /**
              * Enabled
+             * @description Turn the Telegram bot on (needs a bot token and at least one allowed chat id).
              * @default false
              */
             enabled: boolean;
@@ -2547,6 +2605,46 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_connection_api_settings_test__kind__post: {
+        parameters: {
+            query?: {
+                mode?: string | null;
+                index?: number | null;
+            };
+            header?: never;
+            path: {
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionTestResult"];
                 };
             };
             /** @description Validation Error */

@@ -63,6 +63,8 @@ GHCR package is private, `docker login ghcr.io` with a token that has `read:pack
 
 Open **Settings**. The sections are tabs; **Save** applies the change without a restart. A bad
 value is shown next to the field and nothing is saved until it is fixed.
+Every connection (LLM, Prometheus, Docker, each \*arr app, qBittorrent, Telegram) has a **Test**
+button that checks what you typed, before you save, and says what answered or what is wrong.
 
 1. **LLM** (`llm`) — the one thing the monitor cannot work without.
    - *Base URL*: any OpenAI-compatible endpoint ending in `/v1`: `http://ollama:11434/v1`,
@@ -93,10 +95,12 @@ value is shown next to the field and nothing is saved until it is fixed.
    [the approval model](#security-and-the-approval-model)). Turn *Dry run* off last.
 5. **Outputs** (`outputs`):
    - *Telegram*: create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`), paste the token.
-     Add your chat id to *Allowed chat ids*: send any message to the bot, then look in the
-     container log, which prints `telegram: ignoring chat <id> (not in the allowlist)` once
-     (`docker logs ai-server-monitor | grep ignoring`); the number is your chat id. Add it, save,
-     and the bot answers. Chats that are not on the list are ignored without a reply.
+     Press **Test** to check the token (it shows the bot's name). To find your chat id, open the
+     bot in Telegram and send `/id`: it answers in any chat with the chat id, your user id and the
+     chat type. Add the chat id to *Allowed chat ids*, save, and the bot answers. **Send test
+     message** then sends a short message to every allowed chat and reports each one (a chat that
+     never pressed *Start* fails with "chat not found"). Apart from `/id`, chats that are not on
+     the list are ignored without a reply.
      *Report every* N reports (0 = only health-change alerts); *Alerts* sends a short message
      whenever the health status changes.
    - *Metrics*: `/metrics` is on by default. Set a *Bearer token* if anything outside your trusted
@@ -114,7 +118,8 @@ value is shown next to the field and nothing is saved until it is fixed.
 - **Telegram** — reports and alerts arrive by themselves. Write a plain question to chat
   ("what is using the most disk and memory?"); the model looks at live data with read-only tools
   and answers. Commands: `/status` (health and open flags), `/report` (write one now),
-  `/approvals` (open requests, with buttons), `/help`. When an action needs approval, the bot sends
+  `/approvals` (open requests, with buttons), `/id` (this chat's id: works in any chat, also for
+  chats that are not allowed yet, once per 10 s), `/help`. When an action needs approval, the bot sends
   a message with **Approve** and **Reject** buttons; the message is edited to the outcome, also when
   you decide in the web UI.
 - **Chat API** — `POST /api/chat` with `{"message": "...", "session_id": "..."}` answers as a
@@ -312,7 +317,7 @@ a fresh install starts with.
 |---|---|---|---|
 | `outputs.telegram.enabled` | boolean | off | Turn the Telegram bot on (needs a bot token and at least one allowed chat id). |
 | `outputs.telegram.token` | secret | empty | Bot token from @BotFather. |
-| `outputs.telegram.allowed_chat_ids` | list of integer | empty | Only these chats may talk to the bot. |
+| `outputs.telegram.allowed_chat_ids` | list of integer | empty | Only these chats may talk to the bot. Don't know a chat id? Send /id to the bot: it answers in any chat. |
 | `outputs.telegram.report_every` | integer (min 0) | `1` | Send every Nth report (0 = alerts only). |
 | `outputs.telegram.alerts` | boolean | on | Send a short alert whenever the health status changes (also when reports are not sent every time). |
 | `outputs.telegram.api_url` | string | empty | Bot API server. Empty = https://api.telegram.org. |
@@ -377,12 +382,17 @@ host never stops the service. Disable it under Settings → Collectors if you do
 - **systemd: "D-Bus … closed the connection"**, or `apparmor="DENIED" operation="ptrace"
   profile="docker-default"` in the host's kernel log — the container is running under Docker's
   default AppArmor profile. Keep `security_opt: [apparmor=unconfined]` from the compose file.
+- **Not sure a connection is right?** Every connection in Settings (LLM, Prometheus, Docker,
+  each \*arr app, qBittorrent, Telegram) has a **Test** button that checks the values you typed
+  *before* you save: it names the app and version that answered, or says what is wrong (wrong
+  key, wrong password, a Radarr URL in the Sonarr slot, DNS name not found, timeout, TLS error).
 - **Reports fail or are empty** — Settings → LLM → *Test connection*. Thinking models need
   *Max output tokens* of 4096 or more. For Ollama check `OLLAMA_CONTEXT_LENGTH`.
 - **Image updates say "auth required" or "unknown"** — the check is anonymous; private registries and
   locally built images cannot be compared. The docker proxy needs `IMAGES: 1`.
-- **Telegram does not answer** — your chat id must be in *Allowed chat ids* (see the walkthrough);
-  `docker logs` shows polling errors without the token.
+- **Telegram does not answer** — your chat id must be in *Allowed chat ids*: send `/id` to the
+  bot to see it, and use *Send test message* under Settings → Outputs → Telegram to check each
+  chat. `docker logs` shows polling errors without the token.
 - **An approval or action does nothing** — with *Dry run* on, approved actions only log what they
   would have done (status `dry_run`).
 

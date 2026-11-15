@@ -2,7 +2,9 @@
 
 Plain long polling against the Bot API with httpx (no webhook: the server sits behind a
 reverse proxy, and nothing needs to be reachable from outside). Only chats on the allowlist
-are served; everything else is ignored without a reply. The bot token is only ever used to
+are served; everything else is ignored without a reply. The one exception is `/id`: it
+answers in any chat (so the id to put on the allowlist can be found), at most once per
+`ID_COOLDOWN` seconds per chat. The bot token is only ever used to
 build request URLs: it is not logged, and errors never contain request URLs.
 
 Messages are sent as HTML (only `&`, `<`, `>` need escaping, unlike MarkdownV2) and split
@@ -46,8 +48,11 @@ HELP = (
     "/status — health and open flags\n"
     "/report — write a report now\n"
     "/approvals — actions waiting for your decision\n"
+    "/id — this chat's id (works in any chat)\n"
     "/help — this text"
 )
+ID_COOLDOWN = 10.0
+"""Seconds between two /id answers in the same chat: it works for everybody, so it is limited."""
 _HEALTH_ICON = {"ok": "🟢", "warn": "🟡", "crit": "🔴"}
 
 
@@ -200,6 +205,7 @@ class TelegramBot:
         self._key = hashlib.sha256(f"asm-telegram|{token}".encode()).digest()
         self.allowed = set(cfg.allowed_chat_ids)
         self._ignored: set[int] = set()
+        self._id_replied: dict[int, float] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self._runners: list[asyncio.Task[None]] = []
         self._offset = 0
@@ -235,6 +241,7 @@ class TelegramBot:
                     {"command": "status", "description": "Health and open flags"},
                     {"command": "report", "description": "Write a report now"},
                     {"command": "approvals", "description": "Actions waiting for approval"},
+                    {"command": "id", "description": "Show this chat's id"},
                     {"command": "help", "description": "What I can do"},
                 ],
             )
@@ -292,13 +299,41 @@ class TelegramBot:
         message = update.get("message") or {}
         chat_id = (message.get("chat") or {}).get("id")
         text = (message.get("text") or "").strip()
-        if chat_id is None or not text or not self._allowed(chat_id):
+        if chat_id is None or not text:
             return
-        if text.startswith("/"):
-            command = text.split()[0][1:].split("@")[0].lower()
+        command = text.split()[0][1:].split("@")[0].lower() if text.startswith("/") else None
+        if command == "id":  # the only thing anybody may ask for
+            await self._id_command(message)
+            return
+        if not self._allowed(chat_id):
+            return
+        if command is not None:
             await self._command(chat_id, command)
         else:
             await self._chat(chat_id, text)
+
+    async def _id_command(self, message: dict[str, Any]) -> None:
+        """Reply with the chat id, sender id and chat type, in any chat, rate-limited."""
+        chat = message.get("chat") or {}
+        chat_id = int(chat["id"])
+        now = time.monotonic()
+        last = self._id_replied.get(chat_id)
+        if last is not None and now - last < ID_COOLDOWN:
+            return
+        if len(self._id_replied) > 1000:  # forget old entries: strangers can create many
+            self._id_replied = {c: t for c, t in self._id_replied.items() if now - t < ID_COOLDOWN}
+        self._id_replied[chat_id] = now
+        sender = (message.get("from") or {}).get("id")
+        lines = [
+            f"<b>Chat id:</b> <code>{chat_id}</code>",
+            f"<b>Your user id:</b> <code>{sender if sender is not None else 'unknown'}</code>",
+            f"<b>Chat type:</b> {html.escape(str(chat.get('type') or 'unknown'))}",
+            "This chat is already allowed to use the bot."
+            if chat_id in self.allowed
+            else "Add this chat id under Settings → Outputs → Telegram → Allowed chat IDs.",
+        ]
+        log.info("telegram: /id answered in chat %s", chat_id)
+        await self.send(chat_id, "\n".join(lines), markdown=False)
 
     async def _command(self, chat_id: int, command: str) -> None:
         if command in ("start", "help"):

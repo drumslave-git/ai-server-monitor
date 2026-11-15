@@ -7,6 +7,7 @@ provide health, score and findings, and the whole text becomes the Markdown.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -181,21 +182,95 @@ def _norm_findings(value: Any) -> list[dict[str, str]]:
 
 
 def _first_sentence(markdown: str) -> str:
-    for line in markdown.splitlines():
-        line = line.strip().lstrip("#*-> ").strip()
-        if len(line) > 3 and not line.lower().startswith(("overview", "findings")):
-            return line[:200]
+    """First real prose line of the text; never a code fence or a line of JSON."""
+    in_fence = False
+    for raw in markdown.splitlines():
+        if raw.strip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        line = raw.strip().lstrip("#*-> ").strip()
+        if in_fence or len(line) <= 3 or line.lower().startswith(("overview", "findings")):
+            continue
+        if line[0] in "{}[]" or re.match(r'^"[\w ]+"\s*:', line):
+            continue  # a JSON line (truncated header), not a sentence
+        return line[:200]
     return ""
+
+
+def _generated_summary(health: str, flags: list[Flag] | list[dict[str, Any]]) -> str:
+    """A one-line summary built from the rule flags, for when the text has none."""
+    titles = [
+        str(f.title if isinstance(f, Flag) else f.get("title") or "")
+        for f in flags
+        if (f.severity if isinstance(f, Flag) else f.get("severity")) in ("crit", "warn")
+    ]
+    titles = [t for t in titles if t]
+    if not titles:
+        return {
+            "ok": "No problems found.",
+            "warn": "Warnings found.",
+            "crit": "Critical problems.",
+        }[health]
+    extra = f" (+{len(titles) - 1} more)" if len(titles) > 1 else ""
+    return f"{health.upper()}: {titles[0]}{extra}"[:300]
+
+
+_KEY = r'"{}"\s*:\s*'
+_TRUNCATED_NOTE = (
+    "_The model's answer was cut off (output token limit). "
+    "Raise Settings → LLM → maximum output tokens._"
+)
+
+
+def _salvage_truncated(text: str) -> tuple[dict[str, Any], int] | None:
+    """Pull health, score, summary and every complete finding out of a header object that
+    was cut off mid-way (the model hit its output-token limit). Returns (object, start)."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    frag = text[start:]
+    obj: dict[str, Any] = {}
+    if m := re.search(_KEY.format("health") + r'"([^"\\]*)"', frag, re.IGNORECASE):
+        obj["health"] = m.group(1)
+    score_pat = _KEY.format("score") + r'("[^"]*"|-?\d+(?:\.\d+)?)(?=\s*[,}\]\n])'
+    if m := re.search(score_pat, frag, re.IGNORECASE):
+        with contextlib.suppress(ValueError):
+            obj["score"] = json.loads(m.group(1))
+    if m := re.search(_KEY.format("summary") + r'("(?:[^"\\]|\\.)*")', frag, re.IGNORECASE):
+        with contextlib.suppress(ValueError):
+            obj["summary"] = json.loads(m.group(1))
+    if m := re.search(_KEY.format("findings") + r"\[", frag, re.IGNORECASE):
+        items: list[Any] = []
+        pos = m.end()
+        while True:
+            brace = frag.find("{", pos)
+            if brace < 0:
+                break
+            end = _balanced_end(frag, brace)
+            if end is None:
+                break  # the item that was cut off
+            item = _loads(frag[brace:end])
+            if item is not None:
+                items.append(item)
+            pos = end
+        obj["findings"] = items
+    return (
+        (obj, start) if any(k in obj for k in ("health", "score", "summary", "findings")) else None
+    )
 
 
 def parse_report(text: str, flags: list[Flag]) -> ParsedReport:
     text = strip_reasoning(text).strip()
     found = _find_object(text)
     if found is None:
+        salvaged = _salvage_truncated(text)
+        if salvaged is not None:
+            return _from_truncated(salvaged[0], text[: salvaged[1]], flags)
+        health = worst_severity(flags)
         return ParsedReport(
-            health=worst_severity(flags),
+            health=health,
             score=score_from_flags(flags),
-            summary=_first_sentence(text),
+            summary=_first_sentence(text) or _generated_summary(health, flags),
             findings=[f.to_dict() for f in flags if f.severity != "info" or len(flags) <= 5],
             markdown=text,
             parsed=False,
@@ -216,7 +291,43 @@ def parse_report(text: str, flags: list[Flag]) -> ParsedReport:
     if score is None:
         score = score_from_flags(findings or flags)
         notes.append("score missing or invalid; derived")
-    summary = str(low.get("summary") or "").strip() or _first_sentence(markdown)
+    summary = (
+        str(low.get("summary") or "").strip()
+        or _first_sentence(markdown)
+        or _generated_summary(health, findings or flags)
+    )
+    return ParsedReport(
+        health=health,
+        score=score,
+        summary=summary[:300],
+        findings=findings,
+        markdown=markdown,
+        parsed=True,
+        notes=notes,
+    )
+
+
+def _from_truncated(obj: dict[str, Any], before: str, flags: list[Flag]) -> ParsedReport:
+    """A report whose JSON header was cut off: keep what survived, fill the rest from the
+    rule flags, and say so in the Markdown."""
+    findings = _norm_findings(obj.get("findings"))
+    notes = ["header truncated (output token limit); salvaged"]
+    health = _norm_health(obj.get("health"))
+    if health is None:
+        health = worst_severity(findings) if findings else worst_severity(flags)
+        notes.append("health missing; derived")
+    score = _norm_score(obj.get("score"))
+    if score is None:
+        score = score_from_flags(findings or flags)
+        notes.append("score missing; derived")
+    summary = str(obj.get("summary") or "").strip() or _generated_summary(health, findings or flags)
+    lines = ["## Overview", summary, ""]
+    if findings:
+        lines += ["## Findings", *(f"- **{f['title']}** {f['detail']}".rstrip() for f in findings)]
+        lines.append("")
+    lines.append(_TRUNCATED_NOTE)
+    prose = re.sub(r"```[a-zA-Z]*\s*$", "", before.rstrip()).strip()
+    markdown = (prose + "\n\n" if prose else "") + "\n".join(lines)
     return ParsedReport(
         health=health,
         score=score,

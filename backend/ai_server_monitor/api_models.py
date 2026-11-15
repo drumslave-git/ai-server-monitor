@@ -173,3 +173,13 @@ class SettingsResponse(BaseModel):
 
 class SettingsValues(BaseModel):
     values: Settings
+
+
+class ConnectionTestResult(BaseModel):
+    """Outcome of a Settings → Test button."""
+
+    ok: bool
+    message: str
+    """What to tell the user: what answered, or what is wrong, in plain words."""
+    details: dict[str, Any] = Field(default_factory=dict)
+    """Structured extras: app, version, latency_ms, per-chat results, ..."""

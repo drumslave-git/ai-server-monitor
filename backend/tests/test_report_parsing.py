@@ -96,3 +96,46 @@ def test_fallback_without_flags_is_ok() -> None:
     p = parse_report("Everything looks good.", [])
     assert not p.parsed and p.health == "ok" and p.score == 100 and p.findings == []
     assert p.markdown == "Everything looks good." and p.summary == "Everything looks good."
+
+
+# The live report that hit the output-token limit (completion_tokens == max): the header
+# is cut off in the middle of a finding, the fence never closes.
+TRUNCATED = (
+    '```json\n{\n  "health": "crit",\n  "score": 28,\n'
+    '  "summary": "Disk / is almost full and a container keeps crashing.",\n'
+    '  "findings": [\n'
+    '    {"severity": "crit", "title": "Disk / 96% full", "detail": "growing 2 GB/day"},\n'
+    '    {"severity": "warn", "title": "web restarting", "detail": "5 restarts"},\n'
+    '    {"severity": "wa'
+)
+
+
+def test_truncated_header_is_salvaged() -> None:
+    p = parse_report(TRUNCATED, [Flag("warn", "Unit a failed")])
+    assert p.parsed
+    assert p.health == "crit" and p.score == 28
+    assert p.summary == "Disk / is almost full and a container keeps crashing."
+    assert [f["title"] for f in p.findings] == ["Disk / 96% full", "web restarting"]
+    assert "```" not in p.summary and "```" not in p.markdown
+    assert "cut off" in p.markdown and "Disk / 96% full" in p.markdown
+    assert any("truncated" in n for n in p.notes)
+
+
+def test_truncated_inside_the_summary_generates_one_from_the_flags() -> None:
+    p = parse_report('```json\n{"health": "warn", "score": 61, "summary": "Disk is fill', FLAGS)
+    assert p.health == "warn" and p.score == 61
+    assert p.summary.startswith("WARN: Disk / almost full")  # generated, never "```json"
+
+
+def test_truncated_mid_score_derives_the_score() -> None:
+    p = parse_report('```json\n{"health": "crit", "score": 2', FLAGS)
+    assert p.parsed and p.health == "crit"
+    assert p.score < 50  # derived from the flags: a crit is present
+
+
+def test_fence_line_is_never_the_summary() -> None:
+    p = parse_report("```json\n{ not json at all", FLAGS)
+    assert not p.parsed
+    assert p.summary.startswith("CRIT: Disk / almost full")
+    p = parse_report("```json\n```\nThe server is fine overall. More text.", [])
+    assert p.summary == "The server is fine overall. More text."

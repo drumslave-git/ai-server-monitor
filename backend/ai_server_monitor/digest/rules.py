@@ -384,6 +384,14 @@ def approvals(c: Context) -> list[Flag]:
     return [Flag("info", f"{n} action(s) waiting for your approval", "see Approvals in the UI")]
 
 
+# Messages that repeat all the time on a healthy host. Kept as info, never a warning.
+_LOG_NOISE = re.compile(r"kauditd_printk_skb.*callbacks suppressed|audit: backlog limit", re.I)
+
+
+def _is_log_noise(message: dict[str, Any]) -> bool:
+    return bool(_LOG_NOISE.search(str(message.get("sample") or "")))
+
+
 def journal(c: Context) -> list[Flag]:
     j = c.journal
     if j is None:
@@ -403,7 +411,15 @@ def journal(c: Context) -> list[Flag]:
         flags.append(Flag("warn", f"Journal error burst: {j.errors} errors {c.journal_label}", ""))
     for m in j.messages[:3]:
         count = int(num(m.get("count")))
-        if count >= c.cfg.log_error_burst and m.get("priority") in (
+        if count >= c.cfg.log_error_burst and _is_log_noise(m):
+            flags.append(
+                Flag(
+                    "info",
+                    f"Repeated log message x{count} from {m.get('source')} (known noise)",
+                    str(m.get("sample"))[:160],
+                )
+            )
+        elif count >= c.cfg.log_error_burst and m.get("priority") in (
             "emerg",
             "alert",
             "crit",

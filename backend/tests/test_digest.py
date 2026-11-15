@@ -197,6 +197,24 @@ async def test_journal_bursts_and_kernel_events(db: Database) -> None:
     assert "System journal" in d.text and "connection refused" in d.text
 
 
+async def test_audit_rate_limit_noise_is_info_not_warn(db: Database) -> None:
+    noise = "kauditd_printk_skb: 61 callbacks suppressed"
+    window = {
+        "window_start": NOW - 60,
+        "window_end": NOW,
+        "entries": 498,
+        "by_priority": {"warning": 498},
+        "top_messages": [
+            {"source": "kernel", "priority": "warning", "count": 498, "sample": noise},
+            {"source": "app", "priority": "warning", "count": 25, "sample": "disk slow"},
+        ],
+    }
+    found = titles(await digest_of(db, snapshot(journal=entry(window))))
+    assert ("info", "Repeated log message x498 from kernel (known noise)") in found
+    assert not any(sev == "warn" and "from kernel" in t for sev, t in found)
+    assert ("warn", "Repeated log message x25 from app") in found  # real repeats still warn
+
+
 async def test_collector_failure_and_unavailable(db: Database) -> None:
     snap = snapshot(
         docker=entry({}, ok=False),
