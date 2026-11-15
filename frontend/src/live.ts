@@ -10,6 +10,8 @@ const EVENT_TYPES = [
   "report.done",
   "report.failed",
   "llm.call",
+  "bench.progress",
+  "bench.done",
   "metrics.tick",
   "collector.status",
   "action.suggested",
