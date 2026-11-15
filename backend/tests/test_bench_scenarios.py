@@ -43,7 +43,7 @@ KNOWN_TOOLS = (
     {t.name for t in READ_TOOLS}
     | {t.name for t in host_tools()}
     | set(REGISTRY)
-    | {"api_call", "api_endpoints", "mcp_call"}
+    | {"api_call", "api_endpoints", "mcp_call", "diagnose_service"}
 )
 API_SERVICES = {
     "radarr",
