@@ -412,5 +412,6 @@ def summarize(attempts: list[dict[str, Any]]) -> dict[str, Any]:
             "tokens_in": sum(a.get("tokens_in") or 0 for a in attempts),
             "tokens_out": sum(a.get("tokens_out") or 0 for a in attempts),
             "overlapped": sum(1 for a in attempts if a.get("report_overlap")),
+            "reload_suspected": sum(1 for a in attempts if a.get("reload_suspected")),
         },
     }

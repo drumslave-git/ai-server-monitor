@@ -25,7 +25,7 @@ from ..llm import LLMClient, LLMError
 from ..tracing import Tracing
 from ..tracing.config import TraceConfig
 from . import judge as judge_mod
-from .probe import probe_backend
+from .probe import ollama_loaded, probe_backend
 from .runner import AttemptRunner, OverlapWatch, summarize
 from .schema import (
     GROUP_TITLES,
@@ -36,6 +36,7 @@ from .schema import (
     scenario_set_hash,
 )
 from .store import BenchStore
+from .warmup import reload_suspects, warm_up
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -55,12 +56,17 @@ class BenchNotReady(Exception):
 
 
 class BenchService:
+    warmup_enabled = True
+    """The cold-start request before the first attempt (tests switch it off)."""
+
     def __init__(self, ctx: AppContext, *, llm_transport: httpx.AsyncBaseTransport | None = None):
         self.ctx = ctx
         self.store = BenchStore(ctx.db)
         self._llm_transport = llm_transport
         self._judge_transport: httpx.AsyncBaseTransport | None = None
         self._probe_transport: httpx.AsyncBaseTransport | None = None
+        self._ps_transport: httpx.AsyncBaseTransport | None = None
+        self._watch_ps = False
         self._task: asyncio.Task[None] | None = None
         self.progress: dict[str, Any] | None = None
         self._cancelled = False
@@ -206,9 +212,14 @@ class BenchService:
             for scenario in scenarios:
                 for attempt in range(1, repeats + 1):
                     self._progress(scenario, attempt)
+                    gone = await self._model_gone(llm_cfg)
                     row = await runner.run(scenario, attempt, float(scenario.timeout_s or budget_s))
                     outcome = row.pop("outcome")
                     attempt_id = await self.store.add_attempt(run_id, row)
+                    row["id"] = attempt_id
+                    if gone:
+                        await self.store.flag_reload(attempt_id, gone)
+                        row["reload_suspected"] = gone
                     await runner.relink_traces(
                         run_id, scenario.id, attempt, list(row.get("trace_ids") or [])
                     )
@@ -230,6 +241,18 @@ class BenchService:
             await self._finish(run_id, status, error, attempts)
             await llm.aclose()
             await tracing.flush()
+
+    async def _model_gone(self, llm_cfg: Any) -> str | None:
+        """Before an attempt: did the backend unload the model since the last one? (Ollama only)"""
+        if not self._watch_ps:
+            return None
+        try:
+            state = await ollama_loaded(llm_cfg, transport=self._ps_transport)
+        except Exception:
+            return None
+        if state is not None and not state["loaded"]:
+            return "the model was not loaded when this attempt started (Ollama /api/ps)"
+        return None
 
     async def _prepare(
         self,
@@ -292,13 +315,24 @@ class BenchService:
             context_length=probed.get("context_length"),
             meta=meta,
         )
-        return AttemptRunner(
+        runner = AttemptRunner(
             llm,
             tracing,
             auto_tool_mode=mode,
             private_snapshot=self.store.snapshot_doc,
             overlap=self._overlap,
         )
+        if self.warmup_enabled:
+            assert self.progress is not None
+            self.progress.update(stage="warming up")
+            self._publish()
+            cold, scope = await warm_up(llm, llm_cfg, ps_transport=self._ps_transport)
+            await tracing.flush()
+            await runner.relink_traces(run_id, "warmup", 0, sorted(set(scope.call_ids)))
+            self._watch_ps = bool(cold.get("supported"))
+            meta["cold_start"] = cold
+            await self.store.update_run(run_id, meta=meta)
+        return runner
 
     def _progress(self, scenario: Scenario, attempt: int) -> None:
         assert self.progress is not None
@@ -333,6 +367,11 @@ class BenchService:
         self, run_id: int, status: str, error: str | None, attempts: list[dict[str, Any]]
     ) -> None:
         try:
+            for attempt_id, why in reload_suspects(attempts).items():
+                await self.store.flag_reload(attempt_id, why)
+                for a in attempts:
+                    if a.get("id") == attempt_id and not a.get("reload_suspected"):
+                        a["reload_suspected"] = why
             summary = summarize(attempts) if attempts else {}
             await self.store.update_run(
                 run_id,

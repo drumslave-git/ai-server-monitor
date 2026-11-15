@@ -207,6 +207,14 @@ into it, because a judge is itself a model.
 ## Running
 
 - One run at a time, in the background; progress, cancel and a per-attempt time budget.
+- **Cold start:** every run begins with a warm-up request (the real chat system prompt plus "Reply with OK",
+  no tools, a few tokens; one retry after a long timeout) so a freshly switched model is loaded before
+  anything is measured. Its time, first-token time and, on Ollama (`/api/ps`), whether the model was
+  already loaded and its VRAM size are stored as the run's cold start. It is left out of every score,
+  median, pass rate and speed. Its LLM call appears in Logs as a benchmark call linked `<run>/warmup/0`.
+- **Reload suspected:** an attempt is flagged (never re-run, never hidden) when Ollama's `/api/ps` shows
+  the model gone just before it, or when its first token took more than 5× the run's median (and at
+  least 2 s, with at least 4 timed attempts in the run).
 - Every scenario runs N times (default 3); the app's own reports keep running meanwhile, so
   timings may be slower while a report is being written. Each attempt records whether a report
   overlapped it.

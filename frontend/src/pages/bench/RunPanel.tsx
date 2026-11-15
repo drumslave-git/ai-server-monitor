@@ -82,7 +82,7 @@ export function RunPanel({ status, catalog, reload }: { status: BenchStatus | nu
       {running && p && (
         <div className="bench-progress" role="status" data-now={Math.round(now)}>
           <div className="bench-progress-head">
-            <strong>{p.stage === "preparing" ? "Preparing…" : `Run #${p.run_id}`}</strong>
+            <strong>{p.stage === "preparing" ? "Preparing…" : p.stage === "warming up" ? "Loading the model…" : `Run #${p.run_id}`}</strong>
             <span className="muted small">
               {p.done} of {p.total} attempts · {elapsed(p.started, null)}
             </span>
@@ -96,7 +96,7 @@ export function RunPanel({ status, catalog, reload }: { status: BenchStatus | nu
                 {p.last_score !== undefined && <> · last attempt scored {Math.round(p.last_score * 100)}%</>}
               </>
             ) : (
-              "Checking the backend and the tool mode…"
+              p.stage === "warming up" ? "Warm-up request: the model is loaded first and this is not scored." : "Checking the backend and the tool mode…"
             )}
           </p>
         </div>

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../../api";
 import { Badge, Empty, Markdown, Panel } from "../../ui";
 import { ScenarioDetail } from "./Catalog";
-import { GROUP_SHORT, backendLabel, elapsed, ms, score, scoreLevel, shortDate, sizeLabel, statusLevel, tps } from "./format";
+import { GROUP_SHORT, backendLabel, coldStartText, elapsed, ms, score, scoreLevel, shortDate, sizeLabel, statusLevel, tps } from "./format";
 import type { Attempt, AttemptRow, Catalog, GpuInfo, Run, ScenarioInfo } from "./types";
 
 export function ScoreBar({ value }: { value: number | null | undefined }) {
@@ -92,6 +92,11 @@ export function RunDetail({ id, scenarioId, attemptId, catalog }: { id: number; 
                 {String(llm.tool_mode ?? "—")}
                 {meta.tool_mode && llm.tool_mode !== meta.tool_mode && <> → used <strong>{meta.tool_mode}</strong></>}
               </dd>
+              <dt>Cold start</dt>
+              <dd>
+                {coldStartText(meta.cold_start)}
+                <span className="muted small block">Warm-up request before the first attempt; not part of any score or timing below.</span>
+              </dd>
               <dt>Scenarios</dt>
               <dd>
                 {run.scope === "all" ? "all" : run.scope.replace("group:", "group ")} · {run.repeats} attempt(s) each · set <span className="mono">{run.scenario_hash}</span> · app {run.app_version}
@@ -109,6 +114,11 @@ export function RunDetail({ id, scenarioId, attemptId, catalog }: { id: number; 
                 </>
               )}
             </dl>
+            {run.summary && (run.summary.reload_suspected ?? 0) > 0 && (
+              <p className="help warn-text">
+                {run.summary.reload_suspected} attempt(s) are marked "reload suspected": the backend may have unloaded the model meanwhile. They are included in the numbers; open the scenario to see which.
+              </p>
+            )}
             {run.summary && run.summary.overlapped > 0 && (
               <p className="help">
                 {run.summary.overlapped} attempt(s) overlapped a report being written by the monitor; their timings can be slower than they would be on an idle backend.
@@ -240,6 +250,7 @@ function AttemptLine({ a, run, active }: { a: AttemptRow; run: Run; active: bool
       <td data-label="Status">
         <Badge level={a.status === "ok" ? "ok" : "crit"}>{a.status}</Badge>
         {a.report_overlap && <span className="block muted small" title="A report was being written meanwhile">report overlapped</span>}
+        {a.reload_suspected && <span className="block warn-text small" title={a.reload_suspected}>reload suspected</span>}
       </td>
       <td data-label="TTFT" className="num">{ms(a.ttft_ms)}</td>
       <td data-label="Total" className="num">{ms(a.total_ms)}</td>
@@ -272,6 +283,7 @@ function AttemptDetail({ run, row }: { run: Run; row: AttemptRow }) {
     <>
       <Panel title={`Attempt #${a.attempt}: checks`} aside={<span className="muted small">{passed} of {checks.length} passed · score {score(a.score)}</span>}>
         {a.error && <p className="error">{a.error}</p>}
+        {a.reload_suspected && <p className="warn-text">Reload suspected: {a.reload_suspected}. The attempt is counted as it is; its timings may include loading the model.</p>}
         <ul className="check-results">
           {checks.map((c, i) => (
             <li key={i} className={c.passed ? "pass" : "fail"}>

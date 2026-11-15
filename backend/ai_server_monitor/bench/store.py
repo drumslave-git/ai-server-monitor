@@ -13,7 +13,7 @@ _ATTEMPT_JSON = ("checks", "trace_ids", "detail")
 _ATTEMPT_LIST = (
     "id, run_id, scenario_id, grp, attempt, started, status, score, error, ttft_ms, total_ms, "
     "tokens_in, tokens_out, tokens_per_s, llm_calls, tool_calls, tool_mode, report_overlap, "
-    "judge_score"
+    "judge_score, json_extract(detail, '$.reload_suspected') AS reload_suspected"
 )
 
 
@@ -39,6 +39,7 @@ def _run(row: Any, *, full: bool) -> dict[str, Any]:
         out["gpu"] = meta.get("gpu")
         out["tool_mode"] = meta.get("tool_mode")
         out["temperature"] = (meta.get("llm") or {}).get("temperature")
+        out["cold_start"] = meta.get("cold_start")
     return out
 
 
@@ -110,6 +111,14 @@ class BenchStore:
         await self.db.execute(
             "UPDATE bench_attempts SET judge_score = ?, judge_reason = ? WHERE id = ?",
             (score, reason, attempt_id),
+        )
+
+    async def flag_reload(self, attempt_id: int, reason: str) -> None:
+        """Mark an attempt as "the model may have been (re)loaded meanwhile" (kept in `detail`)."""
+        await self.db.execute(
+            "UPDATE bench_attempts SET detail = json_set(coalesce(detail, '{}'), "
+            "'$.reload_suspected', ?) WHERE id = ?",
+            (reason, attempt_id),
         )
 
     async def attempts(self, run_id: int) -> list[dict[str, Any]]:

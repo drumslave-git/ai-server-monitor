@@ -1,5 +1,5 @@
 import { ms } from "../logs/format";
-import type { Run } from "./types";
+import type { ColdStart, Run } from "./types";
 
 export { ms };
 
@@ -29,6 +29,13 @@ export const backendLabel = (r: Pick<Run, "backend_kind" | "backend_version" | "
 
 export const sizeLabel = (r: Pick<Run, "params" | "quantization" | "context_length">): string =>
   [r.params, r.quantization, r.context_length ? `${Math.round(r.context_length / 1024)}k ctx` : null].filter(Boolean).join(" · ") || "—";
+
+/** "8.4 s (model was not loaded)" for the warm-up request of a run. */
+export const coldStartText = (c: ColdStart | null | undefined): string => {
+  if (!c || !c.ok) return "—";
+  const state = c.loaded_before === null ? "load state unknown" : c.loaded_before ? "model was already loaded" : "model was not loaded";
+  return `${ms(c.total_ms ?? null)} (${state})`;
+};
 
 export const GROUP_SHORT: Record<string, string> = { report: "Reports", chat: "Chat", prom_plan: "Prom", robust: "Robust" };
 

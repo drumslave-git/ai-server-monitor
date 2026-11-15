@@ -14,6 +14,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from ai_server_monitor.bench.service import BenchService
 from ai_server_monitor.collectors.base import Collector
 from ai_server_monitor.config import Bootstrap, Settings
 from ai_server_monitor.main import create_app
@@ -34,6 +35,12 @@ OLLAMA_PROBE = {
         "model_info": {"gemma.context_length": 131072, "general.architecture": "gemma"},
     },
 }
+
+
+@pytest.fixture(autouse=True)
+def _no_warmup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Most tests script the model's answers one by one: no cold-start request in them."""
+    monkeypatch.setattr(BenchService, "warmup_enabled", False)
 
 
 def probe_transport(routes: dict[str, Any] | None = None) -> httpx.MockTransport:

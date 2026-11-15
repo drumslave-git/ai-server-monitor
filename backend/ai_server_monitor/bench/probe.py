@@ -151,3 +151,33 @@ async def probe_backend(
             if "context_length" not in result and entry.get("max_model_len"):
                 result["context_length"] = entry["max_model_len"]
     return result
+
+
+async def ollama_loaded(
+    cfg: LLMSettings, *, transport: httpx.AsyncBaseTransport | None = None
+) -> dict[str, Any] | None:
+    """Is the configured model in memory right now? Ollama's `/api/ps` → {loaded, size,
+    size_vram}; None when the backend has no such endpoint (not Ollama) or does not answer."""
+    base = cfg.base_url.strip()
+    if not base:
+        return None
+    headers = {}
+    key = cfg.api_key.get_secret_value().strip()
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    async with httpx.AsyncClient(
+        headers=headers, timeout=TIMEOUT_S, transport=transport, follow_redirects=True
+    ) as client:
+        data = await _get(client, f"{_root(base)}/api/ps")
+    if not isinstance(data, dict) or not isinstance(data.get("models"), list):
+        return None
+    wanted = cfg.model.strip()
+    for entry in data["models"]:
+        names = {str(entry.get("name", "")), str(entry.get("model", ""))}
+        if wanted in names or f"{wanted}:latest" in names:
+            return {
+                "loaded": True,
+                "size": entry.get("size"),
+                "size_vram": entry.get("size_vram"),
+            }
+    return {"loaded": False, "size": None, "size_vram": None}

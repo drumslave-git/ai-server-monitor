@@ -60,7 +60,7 @@ export function linkHref(call: Pick<LlmCallSummary, "link_kind" | "link_id">): s
   if (call.link_kind === "chat") return "#/chat";
   if (call.link_kind === "bench" && call.link_id) {
     const [run, scenario] = call.link_id.split("/");
-    return `#/bench/run/${run}${scenario ? `/${scenario}` : ""}`;
+    return `#/bench/run/${run}${scenario && scenario !== "warmup" ? `/${scenario}` : ""}`;
   }
   return null;
 }

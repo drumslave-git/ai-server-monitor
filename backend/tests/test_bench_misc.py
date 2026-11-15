@@ -15,7 +15,14 @@ from ai_server_monitor.bench.schema import Scenario
 from ai_server_monitor.config import BenchJudgeSettings, LLMSettings, Settings
 
 from .fake_llm import CANNED_REPORT
-from .test_bench_run import StubSystem, make_app, probe_transport, run_bench, wait_done  # noqa: F401
+from .test_bench_run import (  # noqa: F401
+    StubSystem,
+    _no_warmup,
+    make_app,
+    probe_transport,
+    run_bench,
+    wait_done,
+)
 from .test_chat import FakeLLM, say
 
 # --------------------------------------------------------------------------- probe

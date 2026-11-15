@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { Empty, Panel } from "../../ui";
-import { GROUP_SHORT, backendLabel, ms, runLabel, score, scoreLevel, shortDate, sizeLabel, tps } from "./format";
+import { GROUP_SHORT, backendLabel, coldStartText, ms, runLabel, score, scoreLevel, shortDate, sizeLabel, tps } from "./format";
 import type { Catalog, Run } from "./types";
 
 type Cell = { text: string; raw: number | null };
@@ -99,6 +99,7 @@ export function Compare({ ids, catalog }: { ids: number[]; catalog: Catalog | nu
               <tr className="cmp-section"><th colSpan={runs.length + 1}>Speed</th></tr>
               <Row label="Median first token" high={false} cells={runs.map((r) => msCell(r.summary?.median_ttft_ms))} />
               <Row label="Median attempt time" high={false} cells={runs.map((r) => msCell(r.summary?.median_total_ms))} />
+              <Row label="Cold start (not in the numbers)" high={false} cells={runs.map((r) => ({ text: coldStartText(r.meta?.cold_start), raw: null }))} />
               <Row label="Generation speed" high cells={runs.map((r) => ({ text: tps(r.summary?.median_tokens_per_s), raw: num(r.summary?.median_tokens_per_s) }))} />
               <tr className="cmp-section"><th colSpan={runs.length + 1}>Per scenario: score · median time</th></tr>
               {scenarioIds.map((id) => (

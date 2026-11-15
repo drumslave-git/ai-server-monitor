@@ -67,12 +67,24 @@ export type RunSummaryData = {
   tokens_in: number;
   tokens_out: number;
   overlapped: number;
+  reload_suspected?: number;
 };
 
 export type GpuInfo = {
   driver?: string | null;
   gpus?: { name?: string; mem_total?: number; mem_used?: number; util_percent?: number; temperature_c?: number; power_w?: number }[];
 } | null;
+
+export type ColdStart = {
+  ok: boolean;
+  supported: boolean;
+  loaded_before: boolean | null;
+  size_vram_before?: number | null;
+  size_vram?: number | null;
+  total_ms?: number;
+  ttft_ms?: number | null;
+  tries?: number;
+};
 
 export type Run = {
   id: number;
@@ -96,10 +108,12 @@ export type Run = {
   summary: RunSummaryData | null;
   // list view
   gpu?: GpuInfo;
+  cold_start?: ColdStart | null;
   tool_mode?: string | null;
   temperature?: number | null;
   // detail view
   meta?: {
+    cold_start?: ColdStart | null;
     llm?: Record<string, unknown>;
     tool_mode?: string;
     backend?: Record<string, unknown>;
@@ -129,6 +143,8 @@ export type AttemptRow = {
   tool_mode: string | null;
   report_overlap: boolean;
   judge_score: number | null;
+  /** Why the model may have been (re)loaded during this attempt; null = no sign of it. */
+  reload_suspected: string | null;
 };
 
 export type CheckResult = { type: string; describe: string; weight: number; passed: boolean; reason: string };
