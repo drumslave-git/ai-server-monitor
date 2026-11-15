@@ -42,6 +42,39 @@ def error_text(response: httpx.Response) -> str:
     return text[:MAX_ERROR_LENGTH] or response.reason_phrase
 
 
+def looks_like_html(response: httpx.Response) -> bool:
+    return (
+        "html" in response.headers.get("content-type", "").lower()
+        or response.text.lstrip()[:1] == "<"
+    )
+
+
+def denied_text(response: httpx.Response, label: str, *, key_sent: bool = True) -> str:
+    """What a 401/403 from an *arr app means, from the answer itself: the app refusing the
+    API key looks different from a reverse proxy / SSO page in front of it."""
+    status = response.status_code
+    body = " ".join(response.text.split())[:200] or "(empty)"
+    fact = f'HTTP {status}, body "{body}"'
+    if looks_like_html(response):
+        why = (
+            f"the answer is a web page, so a reverse proxy / SSO login in front of {label} "
+            "refused the request; the API key was probably never checked. Let the proxy pass "
+            "API calls (or use the internal URL, e.g. http://<container>:<port>)"
+        )
+    elif status == 401:
+        why = (
+            f"{label} itself rejected the API key"
+            + (" we sent in the X-Api-Key header" if key_sent else "")
+            + f": copy it again from {label} → Settings → General → API Key"
+        )
+    else:
+        why = (
+            f"403 Forbidden: {label}'s authentication, or a proxy/IP allow-list in front of it, "
+            "refused this client; the API key is only one possible cause"
+        )
+    return f"{label} refused access ({fact}): {why}."
+
+
 class HttpClient:
     """A thin JSON client for one base URL."""
 
@@ -52,7 +85,9 @@ class HttpClient:
         headers: dict[str, str] | None = None,
         timeout: float = 15.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        label: str = "the service",
     ):
+        self.label = label
         self.base_url = url.strip().rstrip("/")
         self._http = httpx.AsyncClient(
             headers=headers,
@@ -78,8 +113,7 @@ class HttpClient:
         response = await self.send(method, path, **kwargs)
         if response.status_code in (401, 403):
             raise ArrError(
-                f"{self.base_url}: access denied (HTTP {response.status_code}); "
-                "check the API key / credentials",
+                f"{self.base_url}: " + denied_text(response, self.label),
                 status=response.status_code,
             )
         if response.status_code >= 400:

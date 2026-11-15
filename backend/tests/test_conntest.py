@@ -15,6 +15,7 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 
+from ai_server_monitor.arr import qbit_auth
 from ai_server_monitor.config import SECRET_MASK, Bootstrap, Settings
 from ai_server_monitor.conntest import describe_error, scrub
 from ai_server_monitor.main import create_app
@@ -125,7 +126,8 @@ def test_arr_wrong_application_is_reported(client: TestClient, app: str) -> None
 def test_arr_wrong_key(client: TestClient) -> None:
     respx.get(f"{RADARR}/api/v3/system/status").respond(401, json={"error": "Unauthorized"})
     r = post(client, "radarr", ARR_BODY)
-    assert r["ok"] is False and "rejected the API key (HTTP 401)" in r["message"]
+    assert r["ok"] is False and "Radarr itself rejected the API key" in r["message"]
+    assert "HTTP 401" in r["message"] and "Unauthorized" in r["message"]
     assert KEY not in r["message"]
 
 
@@ -185,14 +187,54 @@ def test_qbit_wrong_credentials_ban_and_unreachable(client: TestClient) -> None:
     login = respx.post(f"{QBIT}/api/v2/auth/login")
     login.respond(200, text="Fails.")
     r = post(client, "qbittorrent", body)
-    assert r["ok"] is False and r["message"] == "Login failed: wrong username or password."
+    assert r["ok"] is False and "answered 'Fails.'" in r["message"]
+    assert 'HTTP 200, body "Fails."' in r["message"] and "Referer: " in r["message"]
+    assert "paused until" in r["message"]
+    assert "nope" not in r["message"]
+    # retried with the same credentials: not sent again (that would only add a failed attempt)
+    calls = login.call_count
+    again = post(client, "qbittorrent", body)
+    assert "Not tried again" in again["message"] and login.call_count == calls
+    # other credentials = new key = a fresh attempt
+    qbit_auth.reset()
     login.respond(403, text="Your IP address has been banned")
     r = post(client, "qbittorrent", body)
-    assert "IP is banned" in r["message"] and "wrong username" not in r["message"]
+    assert "banned" in r["message"] and "extends the ban" in r["message"]
+    assert r["details"]["http_status"] == 403 and r["details"]["kind"] == "banned"
+    qbit_auth.reset()
     login.mock(side_effect=dns_failure())
     assert "DNS name not found: qbit.test" in post(client, "qbittorrent", body)["message"]
     login.respond(404)
-    assert "not a qBittorrent WebUI" in post(client, "qbittorrent", body)["message"]
+    assert "does not look like qBittorrent" in post(client, "qbittorrent", body)["message"]
+
+
+@respx.mock
+def test_qbit_401_is_host_validation_not_wrong_password(client: TestClient) -> None:
+    body = {"url": QBIT, "username": "admin", "password": "good-password"}
+    login = respx.post(f"{QBIT}/api/v2/auth/login").respond(401, text="Unauthorized")
+    r = post(client, "qbittorrent", body)
+    assert r["ok"] is False
+    assert "NOT a wrong password" in r["message"] and "Server domains" in r["message"]
+    assert "http://<qbittorrent container>:8080" in r["message"]
+    assert 'HTTP 401, body "Unauthorized"' in r["message"]
+    sent = login.calls.last.request.headers
+    assert sent["origin"] == QBIT
+    assert sent["referer"] == QBIT
+    assert r["details"]["headers_sent"]["Host"] == "qbit.test:8080"
+    assert "good-password" not in str(r)
+
+
+@respx.mock
+def test_qbit_html_page_in_front(client: TestClient) -> None:
+    body = {"url": QBIT, "username": "admin", "password": "pw-123456"}
+    respx.post(f"{QBIT}/api/v2/auth/login").respond(
+        200,
+        text="<html><body>Sign in to continue</body></html>",
+        headers={"content-type": "text/html"},
+    )
+    r = post(client, "qbittorrent", body)
+    assert "web page, not qBittorrent's API" in r["message"]
+    assert "Sign in to continue" in r["message"] and "paused" not in r["message"]
 
 
 # --------------------------------------------------------------------------- Prometheus

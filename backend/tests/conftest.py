@@ -24,6 +24,14 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(key, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _fresh_qbit_backoff() -> None:
+    """The qBittorrent login back-off is process-wide state: no test may inherit another's."""
+    from ai_server_monitor.arr import qbit_auth
+
+    qbit_auth.reset()
+
+
 @pytest.fixture
 def llm_cfg() -> LLMSettings:
     return LLMSettings(base_url=LLM_URL, model="test-model", api_key="sk-test", max_retries=1)

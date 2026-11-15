@@ -1,4 +1,7 @@
-"""qBittorrent WebUI API v2 client: cookie login, one transparent re-login on 403."""
+"""qBittorrent WebUI API v2 client: cookie login, one transparent re-login on 403.
+
+Login failures are reported as what happened (HTTP status, body, headers sent, what it means)
+and paused with a back-off shared across all clients: see `qbit_auth`."""
 
 from __future__ import annotations
 
@@ -6,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from . import qbit_auth
 from .base import ArrError, HttpClient, error_text
 
 
@@ -21,10 +25,12 @@ class QBittorrent:
     ):
         self._username = username
         self._password = password
-        # qBittorrent rejects state-changing requests whose Referer is not its own origin.
+        self._url = url.strip().rstrip("/")
+        self._key = qbit_auth.backoff_key(url, username, password)
+        # qBittorrent rejects state-changing requests whose Referer/Origin is not its own.
         self._http = HttpClient(
             url,
-            headers={"Referer": url.strip().rstrip("/")},
+            headers=qbit_auth.request_headers(url),
             timeout=timeout,
             transport=transport,
         )
@@ -34,18 +40,21 @@ class QBittorrent:
         await self._http.close()
 
     async def _login(self) -> None:
+        if paused := qbit_auth.paused_message(self._key):
+            raise ArrError(paused, status=401)
         response = await self._http.send(
             "POST",
             "/api/v2/auth/login",
             data={"username": self._username, "password": self._password},
         )
-        if response.status_code == 403:
-            raise ArrError(
-                "qBittorrent refused the login (IP banned after failed attempts?)", status=403
-            )
-        if response.status_code != 200 or response.text.strip() != "Ok.":
-            raise ArrError("qBittorrent login failed: wrong username or password", status=401)
-        self._logged_in = True
+        diagnosis = qbit_auth.diagnose_login(response, self._url)
+        if diagnosis.ok:
+            qbit_auth.record_success(self._key)
+            self._logged_in = True
+            return
+        until = qbit_auth.record_failure(self._key, diagnosis)
+        status = 403 if diagnosis.kind == "banned" else 401
+        raise ArrError(diagnosis.message() + qbit_auth.pause_note(until), status=status)
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         if not self._logged_in:

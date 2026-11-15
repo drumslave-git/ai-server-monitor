@@ -623,3 +623,29 @@ async def test_metric_history_trend_from_samples(db: Database) -> None:
     assert len(out["series"]) <= history.MAX_POINTS + 1
     empty = await history.metric_history(db, "system", "memory.percent", None, 24, now=now)
     assert empty["samples"] == 0
+
+
+QBIT_CONF = r"""[Preferences]
+WebUI\Address=*
+WebUI\CSRFProtection=true
+WebUI\HostHeaderValidation=true
+WebUI\Password_PBKDF2="@ByteArray(Zq3t1xT5Zm9YkQ==:Qm9ndXNIYXNoVmFsdWU9PQ==)"
+WebUI\Port=8080
+WebUI\ServerDomains=qb.example.test
+WebUI\Username=admin
+"""
+
+
+def test_qbittorrent_conf_is_readable_but_its_password_hash_is_scrubbed() -> None:
+    """The chat looks at the WebUI settings (host header validation, server domains) of the
+    qBittorrent container through its bind mount; the password hash must not reach the model."""
+    path = "/srv/qbit/config/qBittorrent/qBittorrent.conf"
+    plan = parse_pipeline(f"grep -i webui {path}")
+    assert path in plan.stages[0]  # not on the deny list
+    shown = scrub_output(QBIT_CONF)
+    assert "ByteArray" not in shown and "Zq3t1x" not in shown
+    assert r"WebUI\HostHeaderValidation=true" in shown
+    assert r"WebUI\ServerDomains=qb.example.test" in shown
+    assert r"WebUI\Username=admin" in shown
+    unquoted = scrub_output("WebUI\\Password_PBKDF2=@ByteArray(abc:def)\n")
+    assert "abc" not in unquoted

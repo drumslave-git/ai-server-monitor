@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from .base import ArrError, HttpClient, error_text
+from .base import ArrError, HttpClient, denied_text, error_text
 
 PAGE_SIZE = 200
 MAX_PAGES = 10
@@ -46,7 +46,11 @@ class ArrApp:
         self.kind = kind
         self.name = name
         self._http = HttpClient(
-            url, headers={"X-Api-Key": api_key}, timeout=timeout, transport=transport
+            url,
+            headers={"X-Api-Key": api_key},
+            timeout=timeout,
+            transport=transport,
+            label=kind.capitalize(),
         )
 
     async def close(self) -> None:
@@ -186,7 +190,11 @@ class Prowlarr:
     ):
         self.name = name
         self._http = HttpClient(
-            url, headers={"X-Api-Key": api_key}, timeout=timeout, transport=transport
+            url,
+            headers={"X-Api-Key": api_key},
+            timeout=timeout,
+            transport=transport,
+            label="Prowlarr",
         )
 
     async def close(self) -> None:
@@ -214,7 +222,5 @@ class Prowlarr:
         if response.status_code < 300:
             return True, []
         if response.status_code in (401, 403):
-            raise ArrError(
-                f"access denied (HTTP {response.status_code})", status=response.status_code
-            )
+            raise ArrError(denied_text(response, "Prowlarr"), status=response.status_code)
         return False, [error_text(response)]

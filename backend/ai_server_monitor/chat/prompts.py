@@ -52,6 +52,18 @@ API_NOTE = (
     "For *arr, qBittorrent, Docker and Prometheus data beyond the other tools, use "
     "`api_endpoints` to find the call and `api_call` to make it."
 )
+TROUBLESHOOT_NOTE = (
+    "When a configured service (qBittorrent, Radarr, Sonarr, Prowlarr...) fails or is "
+    "unreachable, INVESTIGATE before you answer: 1) `diagnose_service` (HTTP status, body, "
+    "what it means), 2) the service's container logs (`api_call` service=docker GET "
+    "/containers/NAME/logs, tail=200) and 3) its config file as `diagnose_service` names it "
+    "(`run_command`). End with the concrete cause and concrete fix steps. Never state a fact "
+    "the tools did not show (qBittorrent has no API key, only a user name and password) and "
+    "never just answer 'check your credentials': the same credentials working in a browser "
+    "means the cause is elsewhere (Host header / CSRF check, proxy, IP ban). Do not offer to "
+    "look something up: look it up, quote the telling log line, and answer follow-up "
+    "questions from what the tools showed (HTTP status and body, log lines)."
+)
 PROM_NOTE = (
     "Prometheus queries already collected for this server (run them with promql_query, or "
     "write your own):"
@@ -87,6 +99,8 @@ def system_prompt(
         text += "\n" + NO_TOOLS_NOTE
     if "api_call" in tool_names:
         text += "\n" + API_NOTE
+    if "diagnose_service" in tool_names:
+        text += "\n" + TROUBLESHOOT_NOTE
     if prom_queries and "promql_query" in tool_names:
         text += "\n" + PROM_NOTE + "\n" + "\n".join(prom_lines(prom_queries))
     if "mcp_call" in tool_names or any("__" in name for name in tool_names):

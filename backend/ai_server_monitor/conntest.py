@@ -26,6 +26,8 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from .arr import qbit_auth
+from .arr.base import denied_text
 from .collectors.base import HostEnv
 from .collectors.docker import DEFAULT_SOCKET
 from .config import (
@@ -230,8 +232,8 @@ async def check_arr(kind: str, cfg: ArrInstance) -> ConnResult:
         raise failure
     if response.status_code in (401, 403):
         raise ConnFailure(
-            f"{label} rejected the API key (HTTP {response.status_code}). "
-            f"Copy it again from {label} → Settings → General → API Key."
+            denied_text(response, label),
+            {"http_status": response.status_code, "url": f"{base}{api}/system/status"},
         )
     if response.status_code != 200:
         raise _not_the_app(response, label)
@@ -260,30 +262,40 @@ async def check_arr(kind: str, cfg: ArrInstance) -> ConnResult:
 
 async def check_qbittorrent(cfg: QbitSettings) -> ConnResult:
     base = cfg.url.strip().rstrip("/")
-    async with _client(headers={"Referer": base}) as client:
+    password = cfg.password.get_secret_value()
+    key = qbit_auth.backoff_key(base, cfg.username, password)
+    state = qbit_auth.state_of(key)
+    if state["paused"] and state.get("last_failure_kind") in ("bad_credentials", "banned"):
+        # Trying again with the same credentials would only add a failed attempt (and extend
+        # a ban); changing the URL or the credentials makes a new key and a fresh test.
+        raise ConnFailure(
+            f"Not tried again: the last login with these credentials failed and retries are "
+            f"paused until {state['paused_until']}, so this IP is not banned or kept banned. "
+            f"Last failure: {state['last_failure']}",
+            {"retry_state": state},
+        )
+    async with _client(headers=qbit_auth.request_headers(base)) as client:
         login, _ = await _request(
             client,
             "POST",
             f"{base}/api/v2/auth/login",
-            data={"username": cfg.username, "password": cfg.password.get_secret_value()},
+            data={"username": cfg.username, "password": password},
         )
-        if failure := _redirect_failure(login):
-            raise failure
-        if login.status_code == 403:
+        diagnosis = qbit_auth.diagnose_login(login, base)
+        if not diagnosis.ok:
+            until = qbit_auth.record_failure(key, diagnosis)
             raise ConnFailure(
-                "qBittorrent refused the login: this server's IP is banned after too many "
-                "failed attempts. Wait (default: 1 hour) or restart qBittorrent, then fix the "
-                "credentials."
+                diagnosis.message() + qbit_auth.pause_note(until), diagnosis.details()
             )
-        if login.status_code != 200:
-            raise _not_the_app(login, "a qBittorrent WebUI")
-        if login.text.strip() != "Ok.":
-            raise ConnFailure("Login failed: wrong username or password.")
+        qbit_auth.record_success(key)
         version, ms = await _request(client, "GET", f"{base}/api/v2/app/version")
     if version.status_code != 200:
+        excerpt = " ".join(version.text.split())[:200]
         raise ConnFailure(
-            f"Logged in, but asking for the version was refused (HTTP {version.status_code}). "
-            "Check qBittorrent's WebUI security settings (CSRF, host header validation)."
+            f"Logged in, but asking for the version was refused (HTTP {version.status_code}, "
+            f'body "{excerpt}"). Check the WebUI security settings of qBittorrent '
+            "(CSRF protection, host header validation).",
+            {"http_status": version.status_code},
         )
     number = version.text.strip()
     return ConnResult(

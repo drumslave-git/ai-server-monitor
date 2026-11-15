@@ -24,6 +24,7 @@ from typing import Any
 
 import httpx
 
+from ..arr import qbit_auth
 from .errors import ApiAccessError
 from .redact import Redactor
 from .shaping import DEFAULT_LIMIT, MAX_RESULT_CHARS, paged_meta, shape
@@ -322,18 +323,22 @@ class ApiGateway:
         async with self._login_lock:
             if target.name in self._logged_in:
                 return
+            key = qbit_auth.backoff_key(target.base_url, *target.login)
+            if paused := qbit_auth.paused_message(key):
+                raise ApiAccessError(paused, status=401)
             client = self._client(target)
             response = await client.post(
                 target.base_url + "/api/v2/auth/login",
                 data={"username": target.login[0], "password": target.login[1]},
             )
-            if response.status_code == 403:
-                raise ApiAccessError("qBittorrent refused the login (IP banned?)", status=403)
-            if response.status_code != 200 or response.text.strip() != "Ok.":
+            diagnosis = qbit_auth.diagnose_login(response, target.base_url)
+            if not diagnosis.ok:
+                until = qbit_auth.record_failure(key, diagnosis)
                 raise ApiAccessError(
-                    "qBittorrent login failed: check the user name and password in Settings",
-                    status=401,
+                    self.redactor.text(diagnosis.message()) + qbit_auth.pause_note(until),
+                    status=403 if diagnosis.kind == "banned" else 401,
                 )
+            qbit_auth.record_success(key)
             self._logged_in.add(target.name)
 
     # ------------------------------------------------------------------ answers
@@ -401,11 +406,21 @@ def _error_message(
         message = "; ".join(str(b.get("errorMessage") or b.get("message") or b) for b in body[:3])
     message = gateway.redactor.text(" ".join(message.split()))[:MAX_ERROR_LENGTH]
     if status in (401, 403):
-        extra = (
-            "denied by the Docker socket proxy (it allows only some GET endpoints)"
-            if target.kind == "docker"
-            else "access denied: the API key or credentials in Settings may be wrong"
-        )
+        if target.kind == "docker":
+            extra = "denied by the Docker socket proxy (it allows only some GET endpoints)"
+        elif text[:1] == "<":
+            extra = (
+                "access denied by a web page, not by the app: a reverse proxy / SSO login in "
+                "front of it answers (the API key was probably never checked)"
+            )
+        elif target.kind == "qbittorrent" and status == 401:
+            extra = (
+                "qBittorrent's Host-header validation or CSRF check rejected the request "
+                "(not a wrong password); use the internal URL or add the domain to its "
+                "WebUI 'Server domains'"
+            )
+        else:
+            extra = "access denied: the API key or credentials in Settings may be wrong"
         return f"HTTP {status}: {extra}" + (f" ({message})" if message else "")
     hint = (
         "; no such endpoint or id: check the path with api_endpoints"

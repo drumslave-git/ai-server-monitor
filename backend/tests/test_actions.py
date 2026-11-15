@@ -300,7 +300,7 @@ async def test_failures_are_audited_and_never_leak_secrets(
     denied = await svc.request(
         "arr_remove_queue_item", {"app": "radarr", "instance": "radarr", "queue_id": 1}, "x"
     )
-    assert denied["status"] == "failed" and "access denied" in denied["result"]["error"]
+    assert denied["status"] == "failed" and "rejected the API key" in denied["result"]["error"]
 
     world.fail_hosts.add("qbit.test")
     down = await svc.request(DELETE, {"hash": HASH_A}, "scheduler")

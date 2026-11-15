@@ -263,8 +263,12 @@ DOCKER_RECIPES: list[Recipe] = [
         "target: Destination, rw: RW}}",
     },
     {
-        "for": "last log lines of a container",
-        "call": "GET /containers/NAME/logs?stdout=true&stderr=true&tail=50",
+        "for": "container logs: last log lines of a container (why a service fails, "
+        "login errors, bans)",
+        "call": "GET /containers/NAME/logs?stdout=true&stderr=true&tail=200&timestamps=true",
+        "note": "NAME = container name from container_inspect; the answer is plain text lines "
+        "(stdout+stderr decoded), newest last. For qBittorrent look for WebAPI login failure / "
+        "banned lines.",
     },
     {
         "for": "restart count, state and exit code of a container",

@@ -5,7 +5,7 @@ import time
 import pytest
 from pydantic import ValidationError
 
-from ai_server_monitor.arr import ArrError, Clients, QBittorrent
+from ai_server_monitor.arr import ArrError, Clients, QBittorrent, qbit_auth
 from ai_server_monitor.collectors.arr import ArrCollector, is_stalled_candidate, torrent_row
 from ai_server_monitor.collectors.base import CollectorUnavailable, HostEnv
 from ai_server_monitor.config import ArrSettings, Settings
@@ -38,6 +38,7 @@ async def test_qbit_logs_in_once_and_relogs_in_on_403() -> None:
     assert world.logins == 1
     login = world.calls("qbit.test", "POST")[0]
     assert login["headers"]["referer"] == "http://qbit.test:8080"
+    assert login["headers"]["origin"] == "http://qbit.test:8080"
     world.session_valid = False  # the session expired
     assert len(await client.torrents()) == 1
     assert world.logins == 2  # transparently logged in again, once
@@ -47,8 +48,9 @@ async def test_qbit_logs_in_once_and_relogs_in_on_403() -> None:
 async def test_qbit_wrong_password_and_unreachable() -> None:
     world = FakeArrWorld()
     client = QBittorrent("http://qbit.test:8080", "admin", "wrong", transport=world.transport())
-    with pytest.raises(ArrError, match="wrong username or password"):
+    with pytest.raises(ArrError, match=r"answered 'Fails.'"):
         await client.version()
+    qbit_auth.reset()  # (a paused login is not retried; see test_qbit_auth)
     world.fail_hosts.add("qbit.test")
     with pytest.raises(ArrError) as info:
         await client.version()
@@ -66,7 +68,7 @@ async def test_arr_queue_paging_and_auth_error() -> None:
     capped, total = await app.queue(max_items=50)
     assert len(capped) == 50 and total == 450
     world.deny_arr_key = True
-    with pytest.raises(ArrError, match="access denied") as info:
+    with pytest.raises(ArrError, match="Radarr itself rejected the API key") as info:
         await app.status()
     assert API_KEY not in str(info.value)
     await clients.close()

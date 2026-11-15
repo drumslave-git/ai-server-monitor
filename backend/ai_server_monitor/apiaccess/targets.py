@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qsl, unquote
 
+from ..arr import qbit_auth
 from .errors import ApiAccessError
 
 log = logging.getLogger(__name__)
@@ -116,7 +117,7 @@ def build_targets(settings: Any) -> dict[str, Target]:
                 "qbittorrent",
                 url,
                 "/api/v2",
-                headers={"Referer": url},  # qBittorrent insists on its own origin
+                headers=qbit_auth.request_headers(url),  # qBittorrent insists on its own origin
                 login=(arr.qbittorrent.username, arr.qbittorrent.password.get_secret_value()),
             )
         )

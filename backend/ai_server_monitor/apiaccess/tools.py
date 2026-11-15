@@ -258,7 +258,24 @@ def api_tool_specs(
             enabled,
             kind_for=_call_kind,
         ),
+        _diagnose_spec(error_cls),
     ]
+
+
+def _diagnose_spec(error_cls: type[Exception]) -> ToolSpec:
+    from .diagnose import diagnose_spec  # (imports conntest, which imports a lot: late)
+
+    name, description, args_model, handler = diagnose_spec(error_cls)
+    return ToolSpec(
+        name,
+        description,
+        args_model,
+        "read",
+        handler,
+        lambda s: bool(
+            s.arr.qbittorrent or s.arr.prowlarr or s.arr.radarr or s.arr.sonarr or s.arr.whisparr
+        ),
+    )
 
 
 async def _fan_out(
