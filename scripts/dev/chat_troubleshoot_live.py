@@ -31,6 +31,7 @@ QUESTIONS = [
     "why do you think creds are wrong?",
     "yeah, but Im using same creds to login via browser - it works",
 ]
+# `python chat_troubleshoot_live.py BASE MODEL "question" ...` asks these instead.
 
 LOG_LINES = [
     "2026-11-15T09:58:01Z (N) Peer ID: -qB5010-",
@@ -118,7 +119,28 @@ class Stub(Collector):
         return {"hostname": "box"}
 
 
-async def main(base_url: str, model: str) -> None:
+async def fake_run_command(ctx: Any, args: Any) -> Any:
+    """`run_command` as on the owner's server, without a Linux sandbox: the real parser and
+    its refusals, canned output for what the owner's chat ran (systemctl, ss)."""
+    from ai_server_monitor.chat.tools import ToolError
+    from ai_server_monitor.hostinspect.commands import Refused, parse_pipeline
+
+    try:
+        parse_pipeline(args.cmd)
+    except Refused as exc:
+        raise ToolError(f"refused: {exc}") from exc
+    word = args.cmd.split()[0]
+    if word == "systemctl":
+        return {"exit_code": 4, "output": "", "stderr": "Unit qbittorrent.service could not be found."}
+    if word == "ss":
+        return {
+            "exit_code": 0,
+            "output": "LISTEN 0 4096 0.0.0.0:8080 0.0.0.0:* users:((\"docker-proxy\",pid=812,fd=4))",
+        }
+    return {"exit_code": 1, "output": "", "stderr": f"{word}: nothing to show in this replay"}
+
+
+async def main(base_url: str, model: str, questions: list[str] | None = None) -> None:
     world = World()
     base = api_settings()
     settings: Settings = base.model_copy(
@@ -131,6 +153,13 @@ async def main(base_url: str, model: str) -> None:
         seed_settings=settings,
     )
     await app.start()
+    import functools
+
+    from ai_server_monitor.chat import host_tools
+    from ai_server_monitor.chat.tools import build_tools
+
+    host_tools._run_command = fake_run_command  # (the tool list is built per question)
+    app.chat._tools_builder = functools.partial(build_tools, assume_linux=True)
     # The connection test builds its own HTTP client: route it to the fake world as well, and
     # give the chat the Docker API (the fake home server's) it would get from the collector.
     from types import SimpleNamespace
@@ -161,7 +190,7 @@ async def main(base_url: str, model: str) -> None:
     )
     try:
         session: str | None = None
-        for question in QUESTIONS:
+        for question in questions or QUESTIONS:
             print(f"## Q: {question}\n")
             async for event in app.chat.run(question, session):
                 kind = event["type"]
@@ -188,4 +217,4 @@ async def main(base_url: str, model: str) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main(sys.argv[1], sys.argv[2]))
+    asyncio.run(main(sys.argv[1], sys.argv[2], sys.argv[3:] or None))

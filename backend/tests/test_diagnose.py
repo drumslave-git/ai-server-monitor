@@ -109,7 +109,7 @@ async def test_diagnose_qbit_401_gives_cause_config_container_and_next_steps(
     assert d["container"]["name"] == "qbittorrent"
     assert d["container"]["config_file_on_host"] == "/srv/qbit/config/qBittorrent/qBittorrent.conf"
     steps = " ".join(d["next_steps"])
-    assert "/containers/qbittorrent/logs" in steps and "grep -i webui /srv/qbit" in steps
+    assert "container_logs name=qbittorrent" in steps and "grep -i webui /srv/qbit" in steps
     assert QBIT_PASSWORD not in str(out)
     shown = d["container"]["relevant_log_lines"]
     assert len(shown) == 2 and "Invalid Host header" in shown[0]
@@ -145,6 +145,13 @@ async def test_chat_gets_the_tool_from_build_tools_only_when_a_service_is_config
 
     assert "diagnose_service" in build_tools(make_settings())
     assert "diagnose_service" not in build_tools(Settings())
+
+
+def test_prompt_says_diagnose_first_and_never_offer_what_a_tool_can_do() -> None:
+    text = system_prompt("en", tool_names={"diagnose_service", "container_logs"})
+    assert "`diagnose_service` your FIRST tool" in text and "`container_logs`" in text
+    assert "NEVER end with an offer" in system_prompt("en", tool_names=set())
+    assert "do not exist here" in system_prompt("en")  # docker/podman/kubectl
 
 
 def test_prompt_has_the_troubleshooting_rule_only_with_the_tool() -> None:

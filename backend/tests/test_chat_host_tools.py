@@ -21,7 +21,17 @@ from ai_server_monitor.config import Settings
 from ai_server_monitor.db import Database
 from ai_server_monitor.hostinspect import disk
 
+from .apifakes import docker_log_frames
+
 posix_only = pytest.mark.skipif(os.name != "posix", reason="needs Linux")
+
+
+RADARR_LOG = [
+    "2026-11-15T10:00:00Z info: started",
+    "2026-11-15T10:00:05Z warn: login failed from 10.0.0.5",
+    "2026-11-15T10:00:06Z warn: Password=hunter2value was rejected",
+    "2026-11-15T10:00:09Z info: all quiet",
+]
 
 
 class FakeDocker:
@@ -53,6 +63,9 @@ class FakeDocker:
             ]
         if path == "/info":
             return {"DockerRootDir": "/var/lib/docker"}
+        if path == "/containers/radarr/logs":
+            self.log_params = params
+            return docker_log_frames(RADARR_LOG)
         if path in ("/containers/radarr/json", f"/containers/{'a' * 64}/json"):
             return {
                 "Id": "a" * 64,
@@ -122,6 +135,17 @@ async def test_run_command_refuses_and_audits(cmd: str, tmp_path: Path, db: Data
     rows = await db.kv_get(audit.AUDIT_KEY)
     assert rows[-1]["cmd"] == cmd and "refused" in rows[-1]
     assert rows[-1]["session"] == "sess-1" and rows[-1]["kind"] == "shell"
+
+
+@pytest.mark.parametrize("cmd", ["docker logs qbittorrent", "podman ps", "kubectl logs x"])
+async def test_container_clients_are_refused_with_the_replacement_tools(
+    cmd: str, tmp_path: Path, db: Database
+) -> None:
+    ctx = make_ctx(tmp_path, db)
+    with pytest.raises(ToolError) as caught:
+        await call("run_command", ctx, cmd=cmd)
+    for tool in ("container_logs", "container_inspect", "diagnose_service"):
+        assert f"`{tool}`" in str(caught.value)
 
 
 @posix_only
@@ -255,6 +279,52 @@ async def test_container_inspect_tool(tmp_path: Path, db: Database) -> None:
         await call("container_inspect", ctx, name="zzz")
 
 
+async def test_container_logs_demuxed_scrubbed_and_audited(tmp_path: Path, db: Database) -> None:
+    docker = FakeDocker(tmp_path)
+    ctx = make_ctx(tmp_path, db, docker=docker)
+    out = await call("container_logs", ctx, name="rada", tail=3)  # partial name resolves
+    assert out["container"] == "radarr" and out["lines_read"] == 4
+    assert len(out["lines"]) == 3 and out["lines"][-1].endswith("all quiet")
+    assert "hunter2value" not in json.dumps(out) and "login failed" in out["lines"][0]
+    assert docker.log_params["tail"] == "3" and docker.log_params["timestamps"] == "1"
+    rows = await db.kv_get(audit.AUDIT_KEY)
+    assert rows[-1]["cmd"] == "container_logs radarr"
+
+
+async def test_container_logs_filter_since_and_errors(tmp_path: Path, db: Database) -> None:
+    docker = FakeDocker(tmp_path)
+    ctx = make_ctx(tmp_path, db, docker=docker)
+    out = await call("container_logs", ctx, name="radarr", contains="LOGIN", since="30m")
+    assert out["lines"] == [RADARR_LOG[1]]
+    assert docker.log_params["tail"] == "2000" and int(docker.log_params["since"]) > 1_000_000_000
+    none = await call("container_logs", ctx, name="radarr", contains="zebra")
+    assert none["lines"] == [] and "none of the 4 lines" in none["notes"][0]
+    with pytest.raises(ToolError, match="since must look like"):
+        await call("container_logs", ctx, name="radarr", since="yesterday")
+    with pytest.raises(ToolError, match=r"no container 'zzz'.*radarr"):
+        await call("container_logs", ctx, name="zzz")
+
+
+async def test_container_logs_output_fits_the_result_limit(tmp_path: Path, db: Database) -> None:
+    class Many(FakeDocker):
+        async def get(self, path: str, **params: Any) -> Any:
+            if path == "/containers/radarr/logs":
+                return docker_log_frames([f"line {i} " + "x" * 200 for i in range(500)])
+            return await super().get(path, **params)
+
+    ctx = make_ctx(tmp_path, db, docker=Many(tmp_path))
+    out = await call("container_logs", ctx, name="radarr", tail=500)
+    limit = ctx.settings.chat.max_tool_result_chars
+    assert len(json.dumps(out)) <= limit
+    assert out["lines"][-1].startswith("line 499") and "oldest" in out["notes"][0]
+
+
+async def test_container_logs_without_docker(tmp_path: Path, db: Database) -> None:
+    ctx = make_ctx(tmp_path, db, docker=None)
+    with pytest.raises(ToolError, match="Docker API is not available"):
+        await call("container_logs", ctx, name="radarr")
+
+
 async def test_container_inspect_without_docker(tmp_path: Path, db: Database) -> None:
     ctx = make_ctx(tmp_path, db, docker=None)
     with pytest.raises(ToolError, match="Docker API is not available"):
@@ -288,13 +358,14 @@ async def test_metric_history_tool(tmp_path: Path, db: Database) -> None:
 
 def test_tools_are_registered_as_read_tools_with_small_schemas() -> None:
     tools = build_tools(Settings())
-    for name in ("metric_history", "container_inspect"):
+    for name in ("metric_history", "container_inspect", "container_logs"):
         assert tools[name].kind == "read"
     if os.name == "posix":
         assert tools["run_command"].kind == "read" and tools["disk_usage"].kind == "read"
     size = sum(
         len(json.dumps(tools[n].definition(), separators=(",", ":")))
         for n in tools
-        if n in ("run_command", "disk_usage", "container_inspect", "metric_history")
+        if n
+        in ("run_command", "disk_usage", "container_inspect", "container_logs", "metric_history")
     )
-    assert size < 2600  # ~650 tokens: a 4B model has to read all of it on every call
+    assert size < 3400  # ~850 tokens: a 4B model has to read all of it on every call

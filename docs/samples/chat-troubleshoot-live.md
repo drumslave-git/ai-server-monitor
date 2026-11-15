@@ -90,3 +90,62 @@ Therefore, the solution remains the same: you must either tell qBittorrent that 
 - `POST qbit.test/api/v2/auth/login` []
 - `GET docker.test/containers/json` [('all', 'true')]
 - `GET docker.test/containers/qbittorrent/logs` [('stdout', '1'), ('stderr', '1'), ('tail', '200'), ('timestamps', '1')]
+
+
+---
+
+# Follow-up: the owner's real chat ("why cant you connect to qbit?"), with `container_logs`
+
+What happened on the owner's server: gemma4:e4b ran `systemctl status`, `container_inspect`, `ss`, then `docker logs ...`, was refused with "For Docker use the container_inspect tool", concluded it "cannot retrieve the container logs" and ended with "Would you like me to...". Changes: a named `container_logs` tool, refusals for `docker`/`podman`/`kubectl` that name `container_logs` / `container_inspect` / `diagnose_service`, "diagnose_service first" and "never end with an offer" in the system prompt.
+
+Replay (2 conversations, the cap): same model `gemma4:e4b`, the real engine and system prompt, all tools incl. `run_command` offered as on Linux (a fake executor: the real command parser and its refusals, canned output for `systemctl` and `ss`), fake qBittorrent answering 401, fake container log with the Host-header warnings. The log wording is fabricated but plausible. One question, verbatim.
+
+## Run A (before the last prompt tweak)
+
+why cant you connect to qbit?
+
+- **tool call** `diagnose_service` `{"service": "qbittorrent"}`
+  - result (ok, 3594 chars): `'{"diagnosis":[{"service":"qbittorrent","kind":"qbittorrent","config":{"url":"http://qbit.test:8080","username":"admin","pw_configured":true,"settings_last_saved":"6 s ago (all settings are saved together)"},"connection_test":{"ok":false,"message":"qBittorrent answered 401 Unauthorized before checkin'`
+
+**Answer** (2 steps, 10026 prompt tokens):
+
+The connection failure is due to **Host-header validation or CSRF protection** within qBittorrent, which is typical when the service is running behind a reverse proxy. It is **not** an incorrect password.
+
+qBittorrent rejected the connection because the Host header sent (`qbit.test:8080`) did not match the expected host (`localhost:8080`).
+
+To fix this, you have a few options:
+
+1.  **Update Settings:** Use the internal URL (`http://<qbittorrent container>:8080`) in qBittorrent's settings.
+2.  **Configure WebUI:** In qBittorrent's WebUI, add `qbit.test` to the 'Server domains' list, or switch off 'Enable Host header validation' / 'CSRF protection'.
+3.  **Proxy Configuration:** Ensure your reverse proxy passes the Host, Origin, and Referer headers unchanged.
+
+I recommend checking the container logs for more details, or checking the configuration file if you want to investigate further.
+
+Verdict: first tool `diagnose_service`, right cause and fix steps, but it ended by telling the owner to check the logs/config (which `diagnose_service` had already read). Prompt tweak: quote the telling log line, never tell the owner to check logs or config.
+
+## Run B (final prompt)
+
+why cant you connect to qbit?
+
+- **tool call** `diagnose_service` `{"service": "qbittorrent"}`
+  - result (ok, 3594 chars): `'{"diagnosis":[{"service":"qbittorrent","kind":"qbittorrent","config":{"url":"http://qbit.test:8080","username":"admin","pw_configured":true,"settings_last_saved":"6 s ago (all settings are saved together)"},"connection_test":{"ok":false,"message":"qBittorrent answered 401 Unauthorized before checkin'`
+
+**Answer** (2 steps, 10126 prompt tokens):
+
+The connection failure is not due to incorrect credentials. The issue is related to **Host-header validation or CSRF protection**, which is typical when the service is running behind a reverse proxy.
+
+The qBittorrent WebUI is rejecting the connection because the `Host` header it is receiving (`qbit.test:8080`) does not match the host it expects (`localhost:8080`). The container logs confirm this with the message: "Invalid Host header, port mismatch."
+
+To fix this, you have three options:
+
+1.  **Update qBittorrent Settings:** Use the internal URL (`http://<qbittorrent container>:8080`) in qBittorrent's Settings.
+2.  **Configure WebUI:** In the qBittorrent WebUI, add `qbit.test` to the 'Server domains' list, or alternatively, switch off 'Enable Host header validation' / 'CSRF protection'.
+3.  **Proxy Configuration:** Ensure your reverse proxy passes the `Host`, `Origin`, and `Referer` headers unchanged to the qBittorrent container.
+
+What the fake services saw in run B:
+
+- `POST qbit.test/api/v2/auth/login` []
+- `GET docker.test/containers/json` [('all', 'true')]
+- `GET docker.test/containers/qbittorrent/logs` [('stdout', '1'), ('stderr', '1'), ('tail', '200'), ('timestamps', '1')]
+
+Verdict: `diagnose_service` first (it includes the matching log lines, so `container_logs` was not needed this time), quotes "Invalid Host header, port mismatch", names the cause and three fix steps, no offer at the end. `container_logs` itself, and the refusal text, are covered by unit tests only, not by these live runs (the model did not try `docker logs` this time).

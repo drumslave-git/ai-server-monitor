@@ -13,6 +13,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -21,6 +23,7 @@ import httpx
 from pydantic import Field
 
 from ..collectors.base import CollectorUnavailable
+from ..collectors.docker import demux_logs
 from ..hostinspect import attribution, disk
 from ..hostinspect.commands import PathGuard, Refused, monitor_data_dirs, parse_pipeline
 from ..hostinspect.containers import summarize_inspect, summarize_list
@@ -246,6 +249,90 @@ async def _container_inspect(ctx: ToolContext, args: ContainerArgs) -> Any:
     return summarize_inspect(raw)
 
 
+class ContainerLogsArgs(_Args):
+    name: str = Field(description="Container name or id.")
+    tail: int = Field(default=200, ge=1, le=2000, description="Newest lines to return.")
+    contains: str | None = Field(
+        default=None,
+        max_length=200,
+        description="Only lines containing this text, e.g. 'login'.",
+    )
+    since: str | None = Field(
+        default=None,
+        max_length=20,
+        description="Only the last 30m, 2h, 1d...",
+    )
+
+
+_SINCE = re.compile(r"^\s*(\d+)\s*([smhd])\s*$", re.I)
+_SINCE_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+LOG_LINE_CHARS = 400
+
+
+def _since_timestamp(text: str) -> int:
+    match = _SINCE.match(text)
+    if not match:
+        raise ToolError(f"since must look like 30m, 2h or 1d, not {text!r}")
+    return int(time.time()) - int(match.group(1)) * _SINCE_SECONDS[match.group(2).lower()]
+
+
+async def _resolve_container(api: Any, name: str) -> str:
+    """The name Docker knows: the given one, or the single container whose name contains it."""
+    listing = await api.get("/containers/json", all="true")
+    names = [n.lstrip("/") for c in listing for n in c.get("Names", [])[:1]]
+    if name.lstrip("/") in names:
+        return name.lstrip("/")
+    like = [n for n in names if name.lower() in n.lower()]
+    if len(like) == 1:
+        return like[0]
+    shown = ", ".join(like or names)[:400]
+    raise ToolError(f"no container {name!r}; {'matches' if like else 'containers'}: {shown}")
+
+
+async def _container_logs(ctx: ToolContext, args: ContainerLogsArgs) -> Any:
+    api = await _docker_api(ctx)
+    params: dict[str, Any] = {
+        "stdout": "1",
+        "stderr": "1",
+        "timestamps": "1",
+        # (a filter reads further back: the matches are what counts, not the newest lines)
+        "tail": str(max(args.tail, 2000) if args.contains else args.tail),
+    }
+    if args.since:
+        params["since"] = str(_since_timestamp(args.since))
+    try:
+        name = await _resolve_container(api, args.name)
+        raw = await api.get(f"/containers/{quote(name, safe='')}/logs", **params)
+    except (CollectorUnavailable, PermissionError, httpx.HTTPError) as exc:
+        raise ToolError(f"Docker API: {exc}"[:300]) from exc
+    lines = demux_logs(bytes(raw)) if isinstance(raw, bytes | bytearray) else []
+    read = len(lines)
+    if args.contains:
+        needle = args.contains.lower()
+        lines = [line for line in lines if needle in line.lower()]
+    lines = lines[-args.tail :]
+    budget = int(ctx.settings.chat.max_tool_result_chars * RESULT_SHARE)
+    kept: list[str] = []
+    used = 0
+    for line in reversed(lines):  # the newest lines matter most: drop the oldest first
+        text = scrub_output(line[:LOG_LINE_CHARS])
+        if used + len(text) + 1 > budget:
+            break
+        kept.append(text)
+        used += len(text) + 1
+    kept.reverse()
+    await _audit(ctx, "docker", cmd=f"container_logs {name}", lines=len(kept))
+    out: dict[str, Any] = {"container": name, "lines_read": read, "lines": kept}
+    notes = []
+    if args.contains and not lines:
+        notes.append(f"none of the {read} lines read contain {args.contains!r}")
+    if len(kept) < len(lines):
+        notes.append(f"output too long: the oldest {len(lines) - len(kept)} lines were left out")
+    if notes:
+        out["notes"] = notes
+    return out
+
+
 # --------------------------------------------------------------------------- history
 
 
@@ -308,6 +395,15 @@ def host_tools(assume_linux: bool = False) -> list[Tool]:
             ContainerArgs,
             "read",
             _container_inspect,
+            enabled=lambda s: s.collectors.docker.enabled is not False,
+        ),
+        Tool(
+            "container_logs",
+            "Newest log lines of a Docker container (errors, failed logins, bans). "
+            "Use this instead of `docker logs`.",
+            ContainerLogsArgs,
+            "read",
+            _container_logs,
             enabled=lambda s: s.collectors.docker.enabled is not False,
         ),
         Tool(

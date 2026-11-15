@@ -26,7 +26,6 @@ _ALIASES = {"qbit": "qbittorrent", "qb": "qbittorrent", "qbittorrent": "qbittorr
 _CONTAINER_WORDS = {"qbittorrent": ("qbittorrent", "qbit")}
 # Where each app keeps its config inside the container (the usual /config mount).
 _CONFIG_FILES = {"qbittorrent": "qBittorrent/qBittorrent.conf", "arr": "config.xml"}
-LOGS_QUERY = {"stdout": True, "stderr": True, "tail": 200, "timestamps": True}
 
 
 class DiagnoseArgs(BaseModel):
@@ -198,9 +197,8 @@ def _next_steps(kind: str, container: dict[str, Any] | None) -> list[str]:
     steps = []
     if container and container.get("name"):
         steps.append(
-            "Container logs: api_call service=docker GET "
-            f"/containers/{quote(container['name'], safe='')}/logs "
-            f"query={LOGS_QUERY} (what the service itself says happened)"
+            f"Container logs: container_logs name={container['name']} (what the service itself "
+            "says happened; add contains='login' to filter)"
         )
         if path := container.get("config_file_on_host"):
             grep = "grep -i webui" if kind == "qbittorrent" else "cat"

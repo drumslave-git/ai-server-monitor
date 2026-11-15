@@ -504,6 +504,27 @@ def _grep_excludes(argv: list[str]) -> list[str]:
     return [argv[0], *extra, *argv[1:]]
 
 
+CONTAINER_CLIENTS = frozenset(
+    {"docker", "podman", "nerdctl", "crictl", "kubectl", "docker-compose"}
+)
+CONTAINER_HINT = (
+    "Containers are not reachable with a command here, but with tools: container logs -> "
+    "`container_logs`; container state, config, mounts, ports -> `container_inspect` (no name "
+    "lists all containers); a configured service (qBittorrent, *arr...) that cannot be reached "
+    "-> `diagnose_service`."
+)
+
+
+def refusal_for(command: str) -> str:
+    """Why `command` is not run, and what to use instead."""
+    if command in CONTAINER_CLIENTS:
+        return f"`{command}` is not available. {CONTAINER_HINT}"
+    return (
+        f"`{command}` is not available. Allowed commands: {', '.join(sorted(ALLOWED))}. "
+        f"{CONTAINER_HINT}"
+    )
+
+
 def parse_pipeline(line: str, guard: PathGuard | None = None) -> Plan:
     """Validate `line` and return the stages to execute (argument rules applied, globs
     expanded, defaults added) or raise Refused."""
@@ -516,10 +537,7 @@ def parse_pipeline(line: str, guard: PathGuard | None = None) -> Plan:
         if "/" in command:
             raise Refused("use the bare command name (e.g. `ls`, not `/bin/ls`)")
         if command not in ALLOWED:
-            raise Refused(
-                f"`{command}` is not available. Allowed commands: {', '.join(sorted(ALLOWED))}. "
-                "For Docker use the container_inspect tool."
-            )
+            raise Refused(refusal_for(command))
         argv = RULES[command](words) if command in RULES else list(words)
         positions = set(_path_positions(command, argv))
         final: list[str] = []
