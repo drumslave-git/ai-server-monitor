@@ -43,6 +43,7 @@ SECTION_TITLES = {
     "collectors": "Collectors",
     "outputs": "Outputs",
     "arr": "*arr & downloads",
+    "mcp": "MCP servers",
 }
 
 

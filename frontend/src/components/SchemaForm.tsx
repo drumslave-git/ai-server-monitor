@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { McpToolPicker, mcpTools } from "./McpTools";
 import { api, type ConnectionTestResult, type Json, type JsonObject, type JsonSchema } from "../api";
 
 /* Renders a form from the backend's pydantic JSON schema, so every setting the backend
@@ -7,7 +8,7 @@ import { api, type ConnectionTestResult, type Json, type JsonObject, type JsonSc
 export const SECRET_MASK = "********";
 const ACRONYMS: Record<string, string> = {
   url: "URL", llm: "LLM", api: "API", id: "ID", ids: "IDs", gpu: "GPU", ttl: "TTL",
-  df: "disk usage", n: "N", promql: "PromQL", qbittorrent: "qBittorrent",
+  df: "disk usage", n: "N", mcp: "MCP", promql: "PromQL", qbittorrent: "qBittorrent",
 };
 
 export function humanize(key: string): string {
@@ -252,7 +253,7 @@ function ListOfObjects(props: FieldProps & { label: string; item: JsonSchema }) 
     >
       {list.length === 0 && <p className="muted">None.</p>}
       {list.map((entry, i) => (
-        <Tested key={i} spec={s} value={entry} index={i}>
+        <Tested key={i} spec={s} value={entry} index={i} onEdit={(v) => update(i, v)}>
           {(buttons, result) => (
             <div className="list-item">
               <div className="list-item-head">
@@ -278,13 +279,17 @@ function ListOfObjects(props: FieldProps & { label: string; item: JsonSchema }) 
     a `test` extra; any other node gets nothing extra. The values tested are the ones in the
     form right now (saved or not); secrets that are still masked are filled in by the server
     from the stored ones. */
-function Tested({ spec, value, index, children }: {
-  spec?: JsonSchema; value: Json; index?: number; children: (buttons: ReactNode, result: ReactNode) => ReactNode;
+function Tested({ spec, value, index, onEdit, children }: {
+  spec?: JsonSchema; value: Json; index?: number; onEdit?: (v: Json) => void; children: (buttons: ReactNode, result: ReactNode) => ReactNode;
 }) {
   const kind = spec?.test;
   const [running, setRunning] = useState<string | null>(null);
   const [result, setResult] = useState<ConnectionTestResult | null>(null);
-  const snapshot = JSON.stringify(value);
+  // Choosing tools of an MCP server must not discard the test result that lists them.
+  const tested = kind === "mcp" && value && typeof value === "object" && !Array.isArray(value)
+    ? { ...value, tool_filter: undefined, tool_overrides: undefined }
+    : value;
+  const snapshot = JSON.stringify(tested);
   const requestId = useRef(0);
   useEffect(() => {
     requestId.current++; // an edit makes an older answer (or a test still running) stale
@@ -332,6 +337,9 @@ function Tested({ spec, value, index, children }: {
           <strong>{result.ok ? "✓ " : "✕ "}</strong>
           {result.message}
         </p>
+      )}
+      {kind === "mcp" && onEdit && mcpTools(result) && (
+        <McpToolPicker tools={mcpTools(result)!} value={value as JsonObject} onChange={onEdit} />
       )}
     </div>
   );

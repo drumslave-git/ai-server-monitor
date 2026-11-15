@@ -1331,6 +1331,137 @@ export interface components {
             /** Ts */
             ts: number;
         };
+        /** McpHeader */
+        McpHeader: {
+            /**
+             * Name
+             * @description Header name, e.g. X-Api-Key.
+             */
+            name: string;
+            /**
+             * Value
+             * Format: password
+             * @description Header value (kept secret, like the token).
+             */
+            value: string;
+        };
+        /** McpServerSettings */
+        McpServerSettings: {
+            /**
+             * Default Policy
+             * @description For tools that change things: off = never; suggest = only record the request;
+             *     approve = ask you first (UI / Telegram); auto = just do it. Read-only tools always run.
+             * @default approve
+             * @enum {string}
+             */
+            default_policy: "off" | "suggest" | "approve" | "auto";
+            /**
+             * Enabled
+             * @description Off = never connected, its tools are not offered.
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Headers
+             * @description Extra HTTP headers (for servers that want an API key header instead of a token).
+             */
+            headers?: components["schemas"]["McpHeader"][];
+            /**
+             * Name
+             * @description Short name shown in chat and in tool names, e.g. home-assistant.
+             */
+            name: string;
+            /**
+             * Timeout
+             * Format: duration
+             * @description Connect timeout and per-call timeout.
+             * @default 30s
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            timeout: string;
+            /**
+             * Token
+             * Format: password
+             * @description Bearer token sent as `Authorization: Bearer ...`, if the server needs one.
+             * @default
+             */
+            token: string;
+            /**
+             * Tool Filter
+             * @description The tools the chat may use. Empty = none: pick them after pressing Test (small models
+             *     cope badly with dozens of tools, so choose only what you need).
+             */
+            tool_filter?: string[];
+            /**
+             * Tool Overrides
+             * @description Per-tool exceptions to the policy or to the read-only detection.
+             */
+            tool_overrides?: components["schemas"]["McpToolOverride"][];
+            /**
+             * Transport
+             * @description auto = try Streamable HTTP, fall back to the older HTTP+SSE.
+             * @default auto
+             * @enum {string}
+             */
+            transport: "auto" | "streamable_http" | "sse";
+            /**
+             * Url
+             * @description MCP endpoint, e.g. http://homeassistant.local:8123/mcp_server/sse or
+             *     https://grafana.example/mcp. Remote servers only (Streamable HTTP or the older HTTP+SSE);
+             *     servers that run as a local program (stdio) are not supported.
+             */
+            url: string;
+        };
+        /** McpSettings */
+        McpSettings: {
+            /**
+             * Dry Run
+             * @description Pretend: record write calls in the action log but send nothing to the servers.
+             * @default false
+             */
+            dry_run: boolean;
+            /**
+             * Max Inline Tool Tokens
+             * @description If the schemas of all chosen tools together are bigger than this (about 4 characters
+             *     per token), the chat gets two generic tools (list tools / call tool) instead of one tool
+             *     per MCP tool. Small models do better with fewer schemas. 0 = always use the generic pair.
+             * @default 1200
+             */
+            max_inline_tool_tokens: number;
+            /**
+             * Servers
+             * @description MCP servers whose tools the chat may use (tools only: prompts and resources of a
+             *     server are not used).
+             */
+            servers?: components["schemas"]["McpServerSettings"][];
+        };
+        /** McpToolOverride */
+        McpToolOverride: {
+            /**
+             * Kind
+             * @description auto = read-only only if the server says so; read / write = your own call. A tool
+             *     treated as read runs immediately; a write goes through the action policy.
+             * @default auto
+             * @enum {string}
+             */
+            kind: "auto" | "read" | "write";
+            /**
+             * Name
+             * @description Tool name as the server calls it.
+             */
+            name: string;
+            /**
+             * Policy
+             * @description inherit = the server's default policy; off = the chat does not get this tool at all;
+             *     suggest / approve / auto as for the server (only used for tools that change things).
+             * @default inherit
+             * @enum {string}
+             */
+            policy: "inherit" | "off" | "suggest" | "approve" | "auto";
+        };
         /** MetricsSettings */
         MetricsSettings: {
             /**
@@ -2019,6 +2150,14 @@ export interface components {
              *     }
              */
             llm: components["schemas"]["LLMSettings"];
+            /**
+             * @default {
+             *       "dry_run": false,
+             *       "max_inline_tool_tokens": 1200,
+             *       "servers": []
+             *     }
+             */
+            mcp: components["schemas"]["McpSettings"];
             /**
              * @default {
              *       "metrics": {

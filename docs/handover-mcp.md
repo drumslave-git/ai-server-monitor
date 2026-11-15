@@ -28,39 +28,28 @@ Nothing outside the package, `tests/` and `pyproject.toml` (`mcp>=1.27,<2`) is t
   server's own token/header values, and (by the engine) wrapped as untrusted.
 - Prompts/resources/sampling/elicitation from servers are not used (tools only).
 
-## Shared-file edits (phase 2)
+## How it is wired (landed)
 
-1. **config.py**: move `McpHeader`, `McpToolOverride`, `McpServerSettings`, `McpSettings` from
-   `mcp_client/settings.py` into config.py (they use `_Model`, `Secret`, `Duration`, `HttpUrl`,
-   `Name`, `Policy`) and add `mcp: McpSettings = McpSettings()` to `Settings`; keep
-   `mcp_client/settings.py` as `from ..config import ...` re-exports. `servers` carries
-   `json_schema_extra={"test": "mcp"}`.
-2. **context.py**: `self.mcp = McpManager(settings.mcp, audit=...)` in `__init__` and in
-   `_start_services` (close the previous one in `_stop_services`: `await self.mcp.close()`).
-   Pass it to `ActionService` (below).
-3. **actions/service.py + registry.py**: the service hard-codes `settings.arr.actions.<key>`
-   and `execute(clients, args)`. Add to `ActionDef` optional `policy_of(settings, args) -> str`,
-   `max_per_hour_of(settings, args) -> int` (MCP: 0), `uses_dry_run(settings) -> bool`
-   (MCP: `settings.mcp.dry_run`; it must NOT follow `arr.dry_run`, which defaults to true) and
-   `run(service, args)` (MCP: `execute(service.mcp, args)`); `request`/`_run` use them when set.
-   Give `ActionService` an `mcp` attribute. Register `mcp_call` with
-   `mcp_client.actions` (`McpCallArgs`, `policy_of`, `policy_key`, `target`, `check`,
-   `execute`, `ACTION_NAME`, `DESCRIPTION`). Do not add it to `chat/tools._write_tools()` (the
-   MCP adapter already produces the chat side).
-4. **chat/tools.py `build_tools`**: `build_tools(settings, mcp=None)` appends
-   `build_mcp_tools(mcp)` when given. **chat/engine.py `_answer`**: `await app.mcp.prepare()`
-   before `build_tools` (lazy connect, never blocks more than 8 s), pass `app.mcp`; optionally
-   add `app.mcp.unavailable()` lines to the system prompt.
-5. **"used tools" line** (engine `tool_call` events / UI): show `display_name(name)`
-   (`server__tool` -> `server · tool`); the UI can split on the first `__`.
-6. **Read-call audit**: `McpManager(audit=hook)`; hook gets `{server, tool, arguments(scrubbed),
-   ok, error, duration_ms, source}`. Wire it to whatever chat-tools uses for command audit.
-7. **conntest.py `run_test`**: kind `mcp`: validate `McpServerSettings` from the merged body
-   (`headers[].value` and `token` are secrets: un-mask against the stored server by name),
-   `r = await check_mcp_server(cfg)`, return `ConnResult(r.ok, r.message, r.details)`.
-   `details.tools[]` = `{name, title, description, read_only, destructive, kind, schema_tokens,
-   selected}` for the tool picker; `details.schema_tokens_total`.
-8. **Frontend**: Settings section "MCP servers" (list form from schema) with Test button and a
-   tool picker fed by `details.tools` (checkbox -> `tool_filter`; per-tool policy/kind selects ->
-   `tool_overrides`); help text says: remote servers only, no stdio, tools only.
-9. **Docker image / README**: nothing but the new dependency.
+- `config.py`: `Settings.mcp` (`McpSettings`, `McpServerSettings`, `McpToolOverride`,
+  `McpHeader`); `mcp_client/settings.py` re-exports them. `mcp.dry_run` is its own switch.
+- `context.py`: `app.mcp` (an `McpManager`, rebuilt and the old one closed on every settings
+  change); `ActionService(mcp=app.mcp)`; read/executed calls are audited with
+  `chat.audit.audit_hook(db, "mcp")` (`GET /api/chat/audit?kind=mcp`).
+- `actions/registry.py` + `service.py`: `ActionDef` got optional hooks `policy_of(settings, args)`,
+  `max_per_hour_of(settings, args)`, `uses_dry_run(settings)`, `run(service, args)` and
+  `chat_tool=False` (documented in its docstring; the *arr actions use none of them and are
+  unchanged). `mcp_call` is registered through them. api-tools can register `api_call` the same
+  way: `policy_of`/`max_per_hour_of` to read its own settings, `run` or the old `execute`.
+- `chat/tools.py`: `build_tools(settings, mcp)` adds `build_mcp_tools(mcp)`. `chat/engine.py`:
+  `await app.mcp.prepare()` (lazy connect, at most 8 s, dead servers just stay out) and prompt
+  notes (`_mcp_notes`: servers that are down; with the generic pair also which servers/tools exist,
+  without that the 4B model never thinks of asking). `chat/prompts.py`: `MCP_NOTE`.
+- `conntest.py`: kind `mcp` -> `check_mcp_server`; the Settings Test button shows server, version,
+  transport; `details.tools[]` feeds the tool picker (`frontend/src/components/McpTools.tsx`),
+  which edits `tool_filter` / `tool_overrides` and keeps the test result while you tick.
+- Not done / ideas: the "used tools" line shows the raw `server__tool` name (use
+  `mcp_client.display_name` where it is rendered); the generic `mcp_call` has kind `write` in
+  events even for read calls; resources/prompts/sampling are not supported; connections are not
+  kept across settings changes (rebuilt, lazily reconnected).
+- Live proof: `docs/samples/mcp-live.md`, screenshot `docs/samples/ui/settings-mcp.png`,
+  script `scripts/dev/mcp_demo.py`.

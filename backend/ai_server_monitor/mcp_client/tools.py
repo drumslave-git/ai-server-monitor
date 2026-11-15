@@ -372,6 +372,20 @@ def _meta_tools(manager: McpManager, picks: list[McpPick], tool_cls: type[Tool])
     ]
 
 
+def overview_lines(manager: McpManager) -> list[str]:
+    """One line per server naming its chosen tools. Only needed with the generic pair
+    (the model cannot see the tools then, and a small model does not think of asking)."""
+    by_server: dict[str, list[str]] = {}
+    for pick in pick_tools(manager):
+        by_server.setdefault(pick.server, []).append(
+            pick.tool if pick.kind == "read" else f"{pick.tool} (write)"
+        )
+    return [
+        f"MCP server {server!r} offers: {', '.join(names)}. Use mcp_list_tools / mcp_call for it."
+        for server, names in by_server.items()
+    ]
+
+
 def schema_report(info: ToolInfo) -> int:
     """Tokens this tool's definition would cost as an individual chat tool."""
     return schema_tokens(
@@ -389,6 +403,7 @@ __all__ = [
     "inline_tokens",
     "invoke",
     "kind_of",
+    "overview_lines",
     "pick_tools",
     "schema_report",
 ]

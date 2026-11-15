@@ -192,6 +192,18 @@ button that checks what you typed, before you save, and says what answered or wh
   `expired`, `executed`, `failed`, `dry_run`) is kept permanently with who asked (`scheduler`,
   `chat:<session>`, `telegram:<chat>`), who decided (`ui`, `telegram:<user>`, `policy`, `timeout`)
   and the result. Read it on the Approvals page or at `GET /api/actions`.
+- **MCP servers** (Settings → MCP servers): the chat can use tools of remote MCP servers you add (Home
+  Assistant, Grafana, your own), over Streamable HTTP or the older HTTP+SSE, with a bearer token or
+  headers. No stdio servers (that would mean running arbitrary programs inside this container), and
+  only *tools* are used, not a server's prompts or resources. You pick which tools the chat gets
+  (press **Test**, tick them): small models break with dozens of tool definitions, so none is chosen
+  by default, and above `mcp.max_inline_tool_tokens` the chat gets a generic list/call pair instead.
+  A tool is *read* only if the server marks it `readOnlyHint` and you did not override it; reads run
+  at once and are listed under `GET /api/chat/audit?kind=mcp`. Everything else is a *write*: it is
+  requested through the action layer (`mcp_call`) with the server's policy (default `approve`, so
+  "turn off the heating" becomes an approval card in the UI or Telegram), per-tool overrides, its own
+  `mcp.dry_run` switch, and the permanent audit log. Tool results are untrusted data: capped,
+  scrubbed of secrets and delimited like everything else.
 - **Telegram** only serves the chat ids you list; button presses carry a signature, so a forged
   callback cannot approve anything. There is no web login: see [Install](#install).
 
@@ -390,6 +402,29 @@ a fresh install starts with.
 | `arr.actions.indexer_triage.max_per_hour` | integer (min 0) | `0` | Cap on how many of these actions run per hour (0 = no cap). |
 | `arr.actions.indexer_triage.interval` | duration | `1h` | How often to look for failing indexers. |
 | `arr.actions.approval_ttl` | duration | `1d` | Pending approvals expire after this. |
+
+### MCP servers (`mcp`)
+
+| Setting | Type | Default | What it does |
+|---|---|---|---|
+| **mcp.servers** | list of groups | empty | MCP servers whose tools the chat may use (tools only: prompts and resources of a server are not used). |
+| `mcp.servers[].name` | string | required | Short name shown in chat and in tool names, e.g. home-assistant. |
+| `mcp.servers[].enabled` | boolean | on | Off = never connected, its tools are not offered. |
+| `mcp.servers[].url` | string | required | MCP endpoint, e.g. http://homeassistant.local:8123/mcp_server/sse or https://grafana.example/mcp. Remote servers only (Streamable HTTP or the older HTTP+SSE); servers that run as a local program (stdio) are not supported. |
+| `mcp.servers[].transport` | auto / streamable_http / sse | `auto` | auto = try Streamable HTTP, fall back to the older HTTP+SSE. |
+| `mcp.servers[].token` | secret | empty | Bearer token sent as `Authorization: Bearer ...`, if the server needs one. |
+| **mcp.servers[].headers** | list of groups | empty | Extra HTTP headers (for servers that want an API key header instead of a token). |
+| `mcp.servers[].headers[].name` | string | required | Header name, e.g. X-Api-Key. |
+| `mcp.servers[].headers[].value` | secret | required | Header value (kept secret, like the token). |
+| `mcp.servers[].timeout` | duration | `30s` | Connect timeout and per-call timeout. |
+| `mcp.servers[].tool_filter` | list of string | empty | The tools the chat may use. Empty = none: pick them after pressing Test (small models cope badly with dozens of tools, so choose only what you need). |
+| `mcp.servers[].default_policy` | off / suggest / approve / auto | `approve` | For tools that change things: off = never; suggest = only record the request; approve = ask you first (UI / Telegram); auto = just do it. Read-only tools always run. |
+| **mcp.servers[].tool_overrides** | list of groups | empty | Per-tool exceptions to the policy or to the read-only detection. |
+| `mcp.servers[].tool_overrides[].name` | string | required | Tool name as the server calls it. |
+| `mcp.servers[].tool_overrides[].policy` | inherit / off / suggest / approve / auto | `inherit` | inherit = the server's default policy; off = the chat does not get this tool at all; suggest / approve / auto as for the server (only used for tools that change things). |
+| `mcp.servers[].tool_overrides[].kind` | auto / read / write | `auto` | auto = read-only only if the server says so; read / write = your own call. A tool treated as read runs immediately; a write goes through the action policy. |
+| `mcp.max_inline_tool_tokens` | integer (min 0) | `1200` | If the schemas of all chosen tools together are bigger than this (about 4 characters per token), the chat gets two generic tools (list tools / call tool) instead of one tool per MCP tool. Small models do better with fewer schemas. 0 = always use the generic pair. |
+| `mcp.dry_run` | boolean | off | Pretend: record write calls in the action log but send nothing to the servers. |
 
 <!-- settings-reference:end -->
 

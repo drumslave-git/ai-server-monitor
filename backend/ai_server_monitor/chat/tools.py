@@ -459,6 +459,8 @@ _WRITE_CONFIG: dict[str, Callable[[Settings], bool]] = {
 def _write_tools() -> list[Tool]:
     tools = []
     for name, definition in ACTIONS.items():
+        if not definition.chat_tool:
+            continue
         sample = _sample_args(definition)
 
         def enabled(
@@ -597,9 +599,16 @@ READ_TOOLS: list[Tool] = [
 ]
 
 
-def build_tools(settings: Settings) -> dict[str, Tool]:
-    """The tools available under these settings, by name."""
+def build_tools(settings: Settings, mcp: Any = None) -> dict[str, Tool]:
+    """The tools available under these settings, by name. `mcp` is the McpManager: the tools
+    of its connected servers (as far as chosen in the settings) are added."""
     from .host_tools import host_tools  # (imports this module: not at the top)
 
     tools = [*READ_TOOLS, *host_tools(), *_write_tools()]
-    return {t.name: t for t in tools if t.enabled(settings)}
+    found = {t.name: t for t in tools if t.enabled(settings)}
+    if mcp is not None:
+        from ..mcp_client import build_mcp_tools  # (imports this module: not at the top)
+
+        for tool in build_mcp_tools(mcp):
+            found.setdefault(tool.name, tool)
+    return found

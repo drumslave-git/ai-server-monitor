@@ -19,6 +19,7 @@ from .actions import ActionService, Notifier
 from .arr.automations import AutomationEnv
 from .arr.automations import register as register_automations
 from .chat import ChatEngine
+from .chat.audit import audit_hook
 from .collectors import Collector, CollectorManager, HostEnv
 from .collectors.base import CollectorResult
 from .config import Bootstrap, Settings
@@ -26,6 +27,7 @@ from .db import Database
 from .digest import WindowObserver
 from .events import EventBus
 from .llm import LLMClient, ToolModeResolver
+from .mcp_client import McpManager
 from .outputs.action_events import ActionEventBridge
 from .outputs.arr_metrics import arr_families
 from .outputs.live import LiveFeed
@@ -96,8 +98,13 @@ class AppContext:
         )
         self.reports = self._build_reports()
         self.promauto = Planner(self.settings, self.db, self.llm)
+        self.mcp = McpManager(self.settings.mcp, audit=audit_hook(self.db, "mcp"))
         self.actions = ActionService(
-            self.db, self.settings, notifiers=self.action_notifiers, transport=arr_transport
+            self.db,
+            self.settings,
+            notifiers=self.action_notifiers,
+            transport=arr_transport,
+            mcp=self.mcp,
         )
         self.chat = ChatEngine(self)
 
@@ -166,8 +173,9 @@ class AppContext:
             LLM_PROBE_RETRY,
             timeout=timedelta(seconds=s.llm.timeout.total_seconds() * 2 + 30),
         )
+        self.mcp = McpManager(s.mcp, audit=audit_hook(self.db, "mcp"))
         self.actions = ActionService(
-            self.db, s, notifiers=self.action_notifiers, transport=self._arr_transport
+            self.db, s, notifiers=self.action_notifiers, transport=self._arr_transport, mcp=self.mcp
         )
         self.scheduler.add("approvals:sweep", self.actions.sweep_expired, APPROVAL_SWEEP)
         register_automations(
@@ -236,6 +244,7 @@ class AppContext:
         await self.scheduler.stop()
         await self.collectors.close()
         await self.actions.close()
+        await self.mcp.close()
         await self.llm.aclose()
 
     # ------------------------------------------------------------------ reports

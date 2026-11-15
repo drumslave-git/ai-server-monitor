@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..arr import SEARCH_COMMANDS, ArrError, Clients
 from ..config import Settings
+from ..mcp_client import actions as mcp_actions
 
 ArrKind = Literal["radarr", "sonarr", "whisparr"]
 TORRENT_HASH = r"^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"
@@ -81,16 +82,44 @@ Executor = Callable[[Clients, Any], Awaitable[dict[str, Any]]]
 
 @dataclass(frozen=True)
 class ActionDef:
+    """One kind of write. The *arr actions only need `policy_key` (their policy lives in
+    `settings.arr.actions.<key>`), `target`, `check` and `execute`. Actions of other
+    subsystems (MCP tools, generic API calls) plug in through the optional hooks:
+
+        ActionDef(
+            name="mcp_call", description=..., args_model=McpCallArgs,
+            policy_key=lambda a: f"mcp:{a.server}",          # label stored in the audit row
+            target=..., check=lambda settings, args: reason or None,
+            policy_of=lambda settings, args: "approve",      # off | suggest | approve | auto
+            max_per_hour_of=lambda settings, args: 0,        # 0 = no cap
+            uses_dry_run=lambda settings: settings.mcp.dry_run,
+            run=lambda service, args: <awaitable dict>,      # instead of `execute`
+            chat_tool=False,                                 # the subsystem has its own chat tools
+        )
+
+    All hooks are optional; `run` replaces `execute` and gets the ActionService (so it can
+    reach `service.mcp` and the like). A raised `ActionError` is recorded as `failed`."""
+
     name: str
     description: str
     args_model: type[_Args]
     policy_key: Callable[[Any], str]
     """Which `arr.actions.<key>` settings (policy, per-hour cap) govern this action."""
     target: Callable[[Any], str]
-    execute: Executor
+    execute: Executor | None = None
     check: Callable[[Settings, Any], str | None] = lambda settings, args: None
     """Returns a reason when the request cannot be carried out (unknown instance, ...)."""
     kind: str = "write"
+    policy_of: Callable[[Settings, Any], str] | None = None
+    """The policy for this request; default: `settings.arr.actions.<policy_key>.policy`."""
+    max_per_hour_of: Callable[[Settings, Any], int] | None = None
+    """The per-hour cap; default: `settings.arr.actions.<policy_key>.max_per_hour`."""
+    uses_dry_run: Callable[[Settings], bool] = lambda settings: settings.arr.dry_run
+    """Whether the global dry-run switch of this action's subsystem is on."""
+    run: Callable[[Any, Any], Awaitable[dict[str, Any]]] | None = None
+    """`run(service, args)` instead of `execute(clients, args)`."""
+    chat_tool: bool = True
+    """False = no generic chat tool is made for this action (its subsystem has its own)."""
 
     def schema(self) -> dict[str, Any]:
         return self.args_model.model_json_schema()
@@ -261,6 +290,19 @@ _ACTIONS = (
         target=lambda a: f"prowlarr: {a.title or f'indexer {a.indexer_id}'}",
         check=_check_prowlarr,
         execute=_prowlarr_test,
+    ),
+    ActionDef(
+        name=mcp_actions.ACTION_NAME,
+        description=mcp_actions.DESCRIPTION,
+        args_model=mcp_actions.McpCallArgs,  # type: ignore[arg-type]
+        policy_key=mcp_actions.policy_key,
+        target=mcp_actions.target,
+        check=lambda settings, args: mcp_actions.check(settings.mcp, args),
+        policy_of=lambda settings, args: mcp_actions.policy_of(settings.mcp, args),
+        max_per_hour_of=lambda settings, args: 0,
+        uses_dry_run=lambda settings: settings.mcp.dry_run,
+        run=lambda service, args: mcp_actions.execute(service.mcp, args),
+        chat_tool=False,
     ),
 )
 

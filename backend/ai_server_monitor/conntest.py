@@ -28,12 +28,20 @@ from pydantic import BaseModel, ValidationError
 
 from .collectors.base import HostEnv
 from .collectors.docker import DEFAULT_SOCKET
-from .config import ArrInstance, OptionalHttpUrl, QbitSettings, Secret, Settings
+from .config import (
+    ArrInstance,
+    McpServerSettings,
+    OptionalHttpUrl,
+    QbitSettings,
+    Secret,
+    Settings,
+)
+from .mcp_client.discovery import check_mcp_server
 from .settings_store import merge_secrets
 
 TEST_TIMEOUT = 10.0
 ARR_APPS = ("radarr", "sonarr", "whisparr", "prowlarr")
-KINDS = ("prometheus", "docker", *ARR_APPS, "qbittorrent", "telegram")
+KINDS = ("prometheus", "docker", *ARR_APPS, "qbittorrent", "telegram", "mcp")
 TELEGRAM_API = "https://api.telegram.org"
 TELEGRAM_TEST_TEXT = (
     "✅ AI Server Monitor: test message. This chat is set up to receive reports and alerts."
@@ -513,6 +521,12 @@ def _current_node(
         return items[index] if index is not None and 0 <= index < len(items) else {}
     if kind in ("prowlarr", "qbittorrent"):
         return arr[kind] or {}
+    if kind == "mcp":
+        items = stored["mcp"]["servers"]
+        for item in items:
+            if item.get("name") == body.get("name"):
+                return item
+        return items[index] if index is not None and 0 <= index < len(items) else {}
     if kind == "prometheus":
         return stored["collectors"]["prometheus"]
     if kind == "telegram":
@@ -533,6 +547,10 @@ def _friendly_errors(exc: ValidationError) -> str:
     return "Fix this first: " + "; ".join(parts) + "."
 
 
+async def _done(result: ConnResult) -> ConnResult:
+    return result
+
+
 async def run_test(
     kind: str,
     body: dict[str, Any],
@@ -548,7 +566,7 @@ async def run_test(
     secrets = [
         v
         for k, v in _walk_strings(merged)
-        if k in ("api_key", "token", "password", "bearer_token") and v
+        if k in ("api_key", "token", "password", "bearer_token", "value") and v
     ]
     run: Awaitable[ConnResult]
     try:
@@ -566,6 +584,10 @@ async def run_test(
         elif kind == "docker":
             docker_cfg = DockerConn.model_validate(_pick(merged, ("url",)))
             run = check_docker(docker_cfg, env)
+        elif kind == "mcp":
+            mcp_cfg = McpServerSettings.model_validate(merged)
+            mcp_result = await check_mcp_server(mcp_cfg)
+            run = _done(ConnResult(mcp_result.ok, mcp_result.message, mcp_result.details))
         elif kind == "telegram":
             tg_cfg = TelegramConn.model_validate(
                 _pick(merged, ("token", "allowed_chat_ids", "api_url"))

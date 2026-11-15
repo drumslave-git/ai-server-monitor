@@ -69,6 +69,7 @@ class ActionService:
         registry: dict[str, ActionDef] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         clock: Callable[[], float] = time.time,
+        mcp: Any = None,
     ):
         self.db = db
         self.settings = settings
@@ -76,6 +77,8 @@ class ActionService:
         self.registry = registry if registry is not None else REGISTRY
         self._transport = transport
         self._clock = clock
+        self.mcp = mcp
+        """The MCP manager (None when unused); `ActionDef.run` hooks reach it from here."""
         self._clients: Clients | None = None
         self._lock = asyncio.Lock()
 
@@ -123,7 +126,11 @@ class ActionService:
             raise ActionError("source is required")
 
         key = definition.policy_key(parsed)
-        policy = getattr(self.settings.arr.actions, key).policy
+        policy = (
+            definition.policy_of(self.settings, parsed)
+            if definition.policy_of
+            else getattr(self.settings.arr.actions, key).policy
+        )
         fields: dict[str, Any] = {
             "action": action,
             "target": definition.target(parsed),
@@ -309,7 +316,11 @@ class ActionService:
         definition = self.registry[record["action"]]
         args = definition.args_model.model_validate(record["args"])
         async with self._lock:
-            cap = getattr(self.settings.arr.actions, record["policy_key"]).max_per_hour
+            cap = (
+                definition.max_per_hour_of(self.settings, args)
+                if definition.max_per_hour_of
+                else getattr(self.settings.arr.actions, record["policy_key"]).max_per_hour
+            )
             if cap:
                 since = self._clock() - HOUR
                 row = await self.db.fetchone(
@@ -323,14 +334,18 @@ class ActionService:
                         "rejected",
                         {"detail": f"limit reached: {cap} per hour for {record['policy_key']}"},
                     )
-            if self.settings.arr.dry_run:
+            if definition.uses_dry_run(self.settings):
                 return await self._set(
                     action_id,
                     "dry_run",
                     {"dry_run": True, "would": f"{record['action']} → {record['target']}"},
                 )
             try:
-                result = await definition.execute(self.clients, args)
+                if definition.run is not None:
+                    result = await definition.run(self, args)
+                else:
+                    assert definition.execute is not None
+                    result = await definition.execute(self.clients, args)
             except (ActionError, ArrError) as exc:
                 return await self._set(action_id, "failed", {"error": str(exc)})
             except Exception as exc:

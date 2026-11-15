@@ -312,6 +312,14 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .btn-test { display: inline-flex; align-items: center; gap: 8px; }
 .test-result p { margin: 0; padding: 4px 0 8px; overflow-wrap: anywhere; }
 .test-result:empty { display: none; }
+.mcp-tools { margin-top: 8px; }
+.mcp-tools .help { margin: 0 0 8px; }
+.mcp-tools .table-scroll { overflow-x: auto; }
+.mcp-tools .table td { vertical-align: top; }
+.mcp-tools .mcp-off strong, .mcp-tools .mcp-off .details { opacity: 0.6; }
+.mcp-tools .tag { font-size: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 0 8px; white-space: nowrap; }
+.mcp-tools .tag-write { color: var(--warn, var(--text)); }
+.mcp-tools select { max-width: 130px; }
 .spinner {
   width: 12px; height: 12px; border-radius: 50%;
   border: 2px solid var(--border); border-top-color: var(--accent);

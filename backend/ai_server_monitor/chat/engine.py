@@ -116,6 +116,16 @@ class ChatEngine:
             if title:
                 yield {"type": "title", "session_id": session_id, "title": title}
 
+    def _mcp_notes(self, tools: dict[str, Tool]) -> list[str]:
+        """Prompt lines about MCP: servers that are down and, with the generic list/call
+        pair, which servers and tools exist."""
+        from ..mcp_client.tools import overview_lines
+
+        notes = self.app.mcp.unavailable()
+        if "mcp_call" in tools:
+            notes = [*overview_lines(self.app.mcp), *notes]
+        return notes
+
     async def _prom_queries(self, tools: dict[str, Tool]) -> list[dict[str, Any]]:
         """The auto-planned Prometheus queries, so the model knows what already exists."""
         if "promql_query" not in tools:
@@ -165,7 +175,9 @@ class ChatEngine:
             yield {"type": "error", "message": "The LLM is not configured (Settings → LLM)."}
             return
         mode = await app.tool_mode.resolve()
-        tools = build_tools(settings) if mode != "none" else {}
+        if mode != "none":
+            await app.mcp.prepare()  # lazy connect; never blocks long, dead servers just stay out
+        tools = build_tools(settings, app.mcp) if mode != "none" else {}
         history = await self.store.history(session_id, settings.chat.history_messages)
         await self.store.add_message(session_id, "user", message)
 
@@ -176,6 +188,7 @@ class ChatEngine:
             tools=bool(tools),
             tool_names=tools.keys(),
             prom_queries=await self._prom_queries(tools),
+            notes=self._mcp_notes(tools) if mode != "none" else (),
         )
         definitions = [t.definition() for t in tools.values()]
         if mode == "json" and tools:
