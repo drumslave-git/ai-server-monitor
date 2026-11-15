@@ -18,6 +18,7 @@ dependencies = [
     "psutil>=6.0",
     "dbus-fast>=2.0",
     "nvidia-ml-py>=12.535",
+    "mcp>=1.27,<2",
 ]
 
 [project.optional-dependencies]
