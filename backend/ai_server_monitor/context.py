@@ -31,6 +31,7 @@ from .outputs.arr_metrics import arr_families
 from .outputs.live import LiveFeed
 from .outputs.metrics import Family, MetricsHub
 from .outputs.telegram import TelegramBot
+from .promauto import Planner, QueryStore
 from .report.engine import ReportEngine
 from .scheduler import Scheduler
 from .settings_store import SettingsStore
@@ -42,6 +43,8 @@ REPORT_INITIAL_DELAY = timedelta(seconds=45)
 """Let the collectors produce their first results before the first report."""
 OBSERVE_INTERVAL = timedelta(seconds=30)
 APPROVAL_SWEEP = timedelta(minutes=1)
+PROM_PLAN_CHECK = timedelta(hours=1)
+PROM_PLAN_INITIAL_DELAY = timedelta(minutes=2)
 
 
 class AppContext:
@@ -92,13 +95,17 @@ class AppContext:
             options=self._collector_options(),
         )
         self.reports = self._build_reports()
+        self.promauto = Planner(self.settings, self.db, self.llm)
         self.actions = ActionService(
             self.db, self.settings, notifiers=self.action_notifiers, transport=arr_transport
         )
         self.chat = ChatEngine(self)
 
     def _collector_options(self) -> dict[str, dict[str, Any]]:
-        return {"arr": {"transport": self._arr_transport}} if self._arr_transport else {}
+        options: dict[str, dict[str, Any]] = {"prometheus": {"store": QueryStore(self.db)}}
+        if self._arr_transport:
+            options["arr"] = {"transport": self._arr_transport}
+        return options
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -173,6 +180,14 @@ class AppContext:
         self.llm.stats.on_error = self.metrics.on_llm_error
         self.collectors.on_result = self._on_collector_result
         self.reports = self._build_reports()
+        self.promauto = Planner(s, self.db, self.llm)
+        self.scheduler.add(
+            "prom_plan",
+            self.promauto.run_job,
+            PROM_PLAN_CHECK,
+            initial_delay=PROM_PLAN_INITIAL_DELAY,
+            timeout=timedelta(hours=3),
+        )
         self.scheduler.add("digest_observe", self.reports.observe, OBSERVE_INTERVAL)
         self.scheduler.add(
             "report",
@@ -224,6 +239,15 @@ class AppContext:
         await self.llm.aclose()
 
     # ------------------------------------------------------------------ reports
+
+    def replan_prometheus_now(self) -> bool:
+        """Have the planner choose the Prometheus queries again. False if it is running."""
+        job = self.scheduler.jobs["prom_plan"]
+        if job.running or self.promauto.running:
+            return False
+        self.promauto.force_next = True
+        self.scheduler.trigger("prom_plan")
+        return True
 
     def run_report_now(self) -> bool:
         """Trigger the report job. False if a report is already being written."""

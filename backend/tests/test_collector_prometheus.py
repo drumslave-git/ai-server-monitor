@@ -68,6 +68,7 @@ async def test_collects_each_query_with_errors_per_query() -> None:
 
     collector = make(
         handler,
+        auto_queries=False,
         max_series=3,
         queries=[
             {"name": "down", "query": "up == 0", "description": "targets down"},

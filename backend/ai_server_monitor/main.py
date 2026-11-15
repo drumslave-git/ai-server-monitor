@@ -28,6 +28,7 @@ from .llm import LLMClient, LLMConnectionError, LLMError
 from .llm.text import strip_reasoning
 from .outputs.metrics import CONTENT_TYPE, report_families
 from .outputs.sse import SSE_HEADERS, event_stream, parse_types
+from .promauto.api import router as prometheus_router
 from .settings_store import SettingsStore, merge_secrets
 from .status import resource_summary
 
@@ -97,6 +98,7 @@ def create_app(
     app = FastAPI(title="AI Server Monitor", version=__version__, lifespan=lifespan)
     app.include_router(actions_router)
     app.include_router(chat_router)
+    app.include_router(prometheus_router)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz(request: Request) -> JSONResponse:

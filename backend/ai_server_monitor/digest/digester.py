@@ -17,6 +17,7 @@ from typing import Any
 from ..config import ReportSettings
 from ..db import Database
 from ..llm.text import estimate_tokens
+from . import prom
 from .models import (
     Flag,
     fmt_bytes,
@@ -351,6 +352,11 @@ def _gpu_section(snap: Snapshot) -> Section | None:
     return Section("gpu", "GPU", 55, lines)
 
 
+def _prometheus_section(snap: Snapshot) -> Section | None:
+    lines = prom.digest_lines(snap.data("prometheus"))
+    return Section("prometheus", "Prometheus", 58, lines) if lines else None
+
+
 def _journal_section(j: JournalSummary | None, label: str) -> Section | None:
     if j is None:
         return None
@@ -469,7 +475,7 @@ def fit_budget(
 
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 _VOLATILE_LINE = re.compile(
-    r"^(# SERVER DIGEST|Processes |Network |Hottest sensor|Top |By CPU|By RAM)"
+    r"^(# SERVER DIGEST|Processes |Network |Hottest sensor|Top |By CPU|By RAM|Metric )"
 )
 
 
@@ -541,6 +547,7 @@ async def build_digest(
             _systemd_section(snap, trends),
             _containers_section(snap, trends, cfg.digest_top_n, window_s),
             _process_section(snap, cfg.digest_top_n),
+            _prometheus_section(snap),
             _gpu_section(snap),
             _journal_section(journal, label),
             _arr_section(snap, pending),

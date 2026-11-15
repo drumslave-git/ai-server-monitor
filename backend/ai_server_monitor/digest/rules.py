@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..config import ReportSettings
+from . import prom
 from .models import SEVERITY_RANK, Flag, fmt_bytes, fmt_pct, num
 from .snapshot import Snapshot
 from .trends import JournalSummary, Trends
@@ -457,6 +458,10 @@ def updates(c: Context) -> list[Flag]:
     return flags
 
 
+def prometheus(c: Context) -> list[Flag]:
+    return _fold(prom.flags(c.snap.data("prometheus")), "Prometheus findings")
+
+
 RULES: tuple[Rule, ...] = (
     collector_failures,
     disks,
@@ -475,6 +480,7 @@ RULES: tuple[Rule, ...] = (
     approvals,
     journal,
     updates,
+    prometheus,
 )
 
 

@@ -84,6 +84,15 @@ button that checks what you typed, before you save, and says what answered or wh
    - *Prometheus*: set the URL (e.g. `http://prometheus:9090`); it turns on by itself
      (`enabled: auto`). Add queries with name, PromQL and a description of what the result means; two
      generic ones ship (`up == 0`, firing alerts). Optional bearer token or basic auth.
+     **Automatic queries** (on by default): the LLM reads what your Prometheus scrapes (one small request
+     per job) and picks queries that add to what the monitor already sees — other exporters, error and
+     saturation counters, other machines. Every query is run against Prometheus first; failures are sent
+     back to the model once, then dropped, and a model that fails leaves a few built-in checks. Chosen
+     queries are stored and run with yours; the list under *Collectors → Prometheus* shows the last value
+     or error and lets you switch off, pin or delete each one, or **Re-plan now** (it also re-plans when
+     the set of metrics changes and weekly). A query that fails 5 runs in a row is switched off. Down
+     targets and firing alerts are read straight from Prometheus and flagged without the model; results
+     from another machine (e.g. a Windows exporter) are labelled "other host" in the digest.
    - *Image updates*: needs `IMAGES: 1` on the docker proxy. It compares each running container's image digest
      with what the registry serves for the same tag (anonymously; private images show as "unknown").
 4. **\*arr & downloads** (`arr`) — add Radarr, Sonarr, Whisparr and Prowlarr instances (name, URL,
@@ -302,10 +311,16 @@ a fresh install starts with.
 | `collectors.prometheus.password` | secret | empty | Basic-auth password. |
 | `collectors.prometheus.timeout` | duration | `10s` | Per-query timeout. |
 | `collectors.prometheus.max_series` | integer (min 1, max 1000) | `50` | Max series kept per query result; the rest is only counted. |
-| **collectors.prometheus.queries** | list of groups | empty | PromQL queries run on every collection and included in reports. |
+| **collectors.prometheus.queries** | list of groups | empty | PromQL queries you wrote, run on every collection and included in reports. |
 | `collectors.prometheus.queries[].name` | string | required | Short identifier shown in reports, e.g. targets_down. |
 | `collectors.prometheus.queries[].query` | string | required | PromQL expression, evaluated as an instant query. |
 | `collectors.prometheus.queries[].description` | string | empty | What the result means, e.g. "Scrape targets that are down". Helps the report writer. |
+| `collectors.prometheus.queries[].unit` | string | empty | Unit of the value, e.g. %, bytes, seconds. Optional. |
+| `collectors.prometheus.queries[].warn_if` | string | empty | Warning when a value crosses this: an operator and a number, e.g. > 80 or == 0. |
+| `collectors.prometheus.queries[].crit_if` | string | empty | Critical when a value crosses this, same form as the warning. |
+| `collectors.prometheus.auto_queries` | boolean | on | Let the LLM choose more queries from what this Prometheus scrapes (other exporters, errors, saturation, other hosts). Also reports firing alerts and down targets. The chosen queries are listed below and can be disabled, pinned, edited or deleted. |
+| `collectors.prometheus.max_auto_queries` | integer (min 1, max 40) | `12` | Most automatically chosen queries. |
+| `collectors.prometheus.replan_interval` | duration | `7d` | Choose queries again at least this often (also when the set of metrics changes). |
 | **collectors.arr** | group |  | Radarr/Sonarr/Whisparr queues and health, Prowlarr indexers, qBittorrent torrents (the apps themselves are configured under \*arr & downloads). |
 | `collectors.arr.enabled` | on / off / auto | `auto` | auto = on as soon as an \*arr app, Prowlarr or qBittorrent is configured under \*arr & downloads. |
 | `collectors.arr.interval` | duration | `2m` | How often this collector gathers fresh data. |

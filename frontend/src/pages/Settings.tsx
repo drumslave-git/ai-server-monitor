@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, type FieldError, type JsonObject, type LlmTestResult, type SettingsDoc } from "../api";
+import { PromAuto } from "../components/PromAuto";
 import { ObjectFields, resolve, type FormContext } from "../components/SchemaForm";
 
 export function SettingsPage() {
@@ -107,6 +108,7 @@ export function SettingsPage() {
           ctx={ctx}
         />
         {section === "llm" && <LlmTest llm={values.llm as JsonObject} onModels={setModels} />}
+        {section === "collectors" && <PromAuto />}
 
         <div className={`savebar${dirty || status ? " visible" : ""}`}>
           {status && <span className={status.kind === "ok" ? "ok" : "error"}>{status.text}</span>}

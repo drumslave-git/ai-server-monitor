@@ -419,3 +419,18 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .session-delete { opacity: 1; }
   .approval-card { flex-direction: column; align-items: stretch; }
 }
+
+/* Settings → Collectors → Prometheus: automatic queries */
+.promauto .table-scroll { overflow-x: auto; }
+.promauto-table td:first-child { max-width: 560px; }
+.promauto-table .promql {
+  display: block; margin-top: 4px; font-size: 12px; color: var(--muted);
+  overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.promauto-table .tag {
+  display: inline-block; margin-left: 6px; padding: 0 8px; border-radius: 10px;
+  border: 1px solid var(--border); color: var(--muted); font-size: 12px; line-height: 18px;
+}
+.promauto-table .disabled-row strong, .promauto-table .disabled-row .promql { opacity: 0.55; }
+.promauto-table .row-actions { white-space: nowrap; text-align: right; }
+.promauto-table .error { margin: 0; }

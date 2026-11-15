@@ -87,7 +87,7 @@ async def test_transaction_rollback(db: Database) -> None:
     assert await db.ping()
 
 
-async def test_database_at_schema_4_migrates_to_5(tmp_path: Path) -> None:
+async def test_database_at_schema_4_migrates_to_latest(tmp_path: Path) -> None:
     import sqlite3
 
     path = tmp_path / "v4.db"
@@ -102,10 +102,31 @@ async def test_database_at_schema_4_migrates_to_5(tmp_path: Path) -> None:
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 5
+        assert await db.schema_version() == 6
         info = await db.fetchall("PRAGMA table_info(telegram_approval_messages)")
         cols = {r["name"] for r in info}
         assert cols == {"approval_id", "chat_id", "message_id", "created_ts"}
         assert await db.kv_get("keep") == 1
+    finally:
+        await db.close()
+
+
+async def test_database_at_schema_5_gets_the_prometheus_query_table(tmp_path: Path) -> None:
+    import sqlite3
+
+    path = tmp_path / "v5.db"
+    conn = sqlite3.connect(path)
+    for _, _, sql in load_migrations()[:5]:
+        conn.executescript(sql)
+    conn.execute("PRAGMA user_version = 5")
+    conn.commit()
+    conn.close()
+
+    db = Database(path)
+    await db.connect()
+    try:
+        assert await db.schema_version() == 6
+        cols = {r["name"] for r in await db.fetchall("PRAGMA table_info(prom_queries)")}
+        assert {"name", "query", "source", "enabled", "pinned", "edited", "fail_count"} <= cols
     finally:
         await db.close()

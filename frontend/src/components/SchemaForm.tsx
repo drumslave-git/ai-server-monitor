@@ -13,7 +13,10 @@ const ACRONYMS: Record<string, string> = {
 export function humanize(key: string): string {
   const words = key.split("_").map((w) => ACRONYMS[w] ?? w);
   const text = words.join(" ");
-  return text.charAt(0).toUpperCase() + text.slice(1);
+  // A word with its own capitalisation (qBittorrent, PromQL) keeps it at the start too.
+  const first = words[0];
+  const mixedCase = first !== first.toLowerCase() && first[0] === first[0].toLowerCase();
+  return mixedCase ? text : text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 export type FormContext = {

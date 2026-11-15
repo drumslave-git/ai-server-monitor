@@ -34,6 +34,8 @@ from pydantic import (
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .thresholds import normalize_threshold
+
 SECRET_MASK = "********"
 """What the API returns for a secret that is set. Sending it back means "unchanged"."""
 
@@ -307,6 +309,17 @@ class PromQuery(_Model):
     """PromQL expression, evaluated as an instant query."""
     description: str = ""
     """What the result means, e.g. "Scrape targets that are down". Helps the report writer."""
+    unit: str = Field(default="", max_length=12)
+    """Unit of the value, e.g. %, bytes, seconds. Optional."""
+    warn_if: str | None = None
+    """Warning when a value crosses this: an operator and a number, e.g. > 80 or == 0."""
+    crit_if: str | None = None
+    """Critical when a value crosses this, same form as the warning."""
+
+    @field_validator("warn_if", "crit_if")
+    @classmethod
+    def _threshold(cls, value: str | None) -> str | None:
+        return normalize_threshold(value)
 
 
 class PrometheusCollectorSettings(CollectorSettings):
@@ -340,7 +353,15 @@ class PrometheusCollectorSettings(CollectorSettings):
             ),
         ]
     )
-    """PromQL queries run on every collection and included in reports."""
+    """PromQL queries you wrote, run on every collection and included in reports."""
+    auto_queries: bool = True
+    """Let the LLM choose more queries from what this Prometheus scrapes (other exporters,
+    errors, saturation, other hosts). Also reports firing alerts and down targets. The
+    chosen queries are listed below and can be disabled, pinned, edited or deleted."""
+    max_auto_queries: int = Field(default=12, ge=1, le=40)
+    """Most automatically chosen queries."""
+    replan_interval: Duration = timedelta(days=7)
+    """Choose queries again at least this often (also when the set of metrics changes)."""
 
     @field_validator("queries", mode="before")
     @classmethod

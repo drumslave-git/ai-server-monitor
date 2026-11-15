@@ -152,8 +152,20 @@ class PromQL:
     async def close(self) -> None:
         await self._http.aclose()
 
+    async def get_data(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        """GET any read-only API path (targets, metadata, alerts, ...) and return `data`."""
+        body = await self._request(path, dict(params or {}))
+        return body.get("data")
+
     async def _call(self, path: str, params: dict[str, Any]) -> QueryResult:
-        params = {**params, "timeout": f"{self.timeout:g}s"}
+        body = await self._request(path, {**params, "timeout": f"{self.timeout:g}s"})
+        result = normalize(
+            body.get("data") or {}, max_series=self.max_series, max_points=self.max_points
+        )
+        result.warnings = [str(w)[:MAX_ERROR_LENGTH] for w in body.get("warnings") or []]
+        return result
+
+    async def _request(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         try:
             response = await self._http.get(self.url + path, params=params)
         except httpx.TimeoutException as exc:
@@ -179,8 +191,4 @@ class PromQL:
             kind = body.get("errorType")
             text = str(body.get("error") or f"HTTP {response.status_code}")
             raise PromQLError((f"{kind}: " if kind else "") + text[:MAX_ERROR_LENGTH])
-        result = normalize(
-            body.get("data") or {}, max_series=self.max_series, max_points=self.max_points
-        )
-        result.warnings = [str(w)[:MAX_ERROR_LENGTH] for w in body.get("warnings") or []]
-        return result
+        return body
