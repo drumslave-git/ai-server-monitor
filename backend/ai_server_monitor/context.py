@@ -21,6 +21,7 @@ from .arr.automations import AutomationEnv
 from .arr.automations import register as register_automations
 from .chat import ChatEngine
 from .chat.audit import audit_hook
+from .chat.safety import Scrubber
 from .collectors import Collector, CollectorManager, HostEnv
 from .collectors.base import CollectorResult
 from .config import Bootstrap, Settings
@@ -38,6 +39,7 @@ from .promauto import Planner, QueryStore
 from .report.engine import ReportEngine
 from .scheduler import Scheduler
 from .settings_store import SettingsStore
+from .tracing import Tracing
 
 log = logging.getLogger(__name__)
 
@@ -86,8 +88,12 @@ class AppContext:
         Survives settings changes; the event bus subscribes here."""
         # Built in start() / apply_settings():
         self.settings = Settings()
+        self.tracing = Tracing(
+            self.db, scrubber=lambda: Scrubber(self.settings), events=self.events
+        )
+        """The LLM trace and the app log; survives settings changes like the event bus."""
         self.scheduler = Scheduler()
-        self.llm = LLMClient(self.settings.llm, transport=llm_transport)
+        self.llm = LLMClient(self.settings.llm, transport=llm_transport, tracing=self.tracing)
         self.tool_mode = ToolModeResolver(self.llm, self.db, self.settings.llm.tool_mode)
         self.collectors = CollectorManager(
             self.settings,
@@ -128,6 +134,8 @@ class AppContext:
 
     async def start(self) -> None:
         await self.db.connect()
+        self.tracing.applog.install()
+        self.tracing.applog.start()
         self._start_metrics_consumer()
         if self._seed is not None:
             await self.store.save(self._seed)
@@ -142,6 +150,7 @@ class AppContext:
             self._metrics_task.cancel()
             await asyncio.gather(self._metrics_task, return_exceptions=True)
             self._metrics_task = None
+        await self.tracing.stop()
         await self.db.close()
         log.info("stopped")
 
@@ -160,7 +169,8 @@ class AppContext:
         s = self.settings
         logging.getLogger().setLevel(s.general.log_level.upper())
         self.scheduler = Scheduler()
-        self.llm = LLMClient(s.llm, transport=self._llm_transport)
+        self.tracing.apply_settings(s.logs)
+        self.llm = LLMClient(s.llm, transport=self._llm_transport, tracing=self.tracing)
         self.tool_mode = ToolModeResolver(self.llm, self.db, s.llm.tool_mode)
         self.collectors = CollectorManager(
             s,
@@ -175,6 +185,12 @@ class AppContext:
             lambda: self.db.prune(s.storage.retention),
             s.storage.prune_interval,
             initial_delay=timedelta(seconds=30),
+        )
+        self.scheduler.add(
+            "trace_prune",
+            self.tracing.prune,
+            s.storage.prune_interval,
+            initial_delay=timedelta(seconds=60),
         )
         # Retries until the LLM is reachable; a no-op once resolved or if not configured.
         self.scheduler.add(
@@ -250,7 +266,13 @@ class AppContext:
 
     def _build_reports(self) -> ReportEngine:
         return ReportEngine(
-            self.settings, self.db, self.llm, self.collectors, self.events, self.observer
+            self.settings,
+            self.db,
+            self.llm,
+            self.collectors,
+            self.events,
+            self.observer,
+            tracing=self.tracing,
         )
 
     async def _stop_services(self) -> None:

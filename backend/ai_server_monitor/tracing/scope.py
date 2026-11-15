@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -96,3 +97,37 @@ def trace_call() -> Iterator[CallGroup]:
         yield group
     finally:
         _group.reset(token)
+
+
+async def scoped_iter(
+    source: AsyncIterator[Any],
+    purpose: str | None = None,
+    *,
+    call: bool = False,
+    **scope: Any,
+) -> AsyncIterator[Any]:
+    """Iterate `source` (an async generator that talks to the LLM) with a trace scope and/or
+    a call group active only while it runs, never while the consumer holds the item.
+
+    Scopes set with `with` inside an async generator would stay set across its `yield`s, in
+    the consumer's context, and could even be reset from another one when the generator is
+    closed. This brackets each step of the source instead: the variables are set and reset in
+    the same frame, around one `await`."""
+    group = CallGroup() if call else None
+    iterator = source.__aiter__()
+    try:
+        while True:
+            token = _group.set(group) if group is not None else None
+            try:
+                with trace_scope(purpose, **scope):
+                    item = await iterator.__anext__()
+            except StopAsyncIteration:
+                return
+            finally:
+                if token is not None:
+                    _group.reset(token)
+            yield item
+    finally:
+        aclose = getattr(iterator, "aclose", None)
+        if aclose is not None:
+            await aclose()

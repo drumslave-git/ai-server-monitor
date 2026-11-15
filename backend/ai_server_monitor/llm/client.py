@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 
 from ..config import LLMSettings
+from ..tracing.scope import scoped_iter, trace_call
 from .text import estimate_tokens
 
 log = logging.getLogger(__name__)
@@ -219,8 +220,17 @@ def _parse_tool_calls(raw: Any) -> list[ToolCall]:
 
 
 class LLMClient:
-    def __init__(self, cfg: LLMSettings, *, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(
+        self,
+        cfg: LLMSettings,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        tracing: Any = None,
+    ):
+        """`tracing` (a `tracing.Tracing`) records every request at the transport level."""
         self.cfg = cfg
+        if tracing is not None:
+            transport = tracing.wrap_transport(transport)
         self.stats = LLMStats()
         headers = {"Content-Type": "application/json"}
         api_key = cfg.api_key.get_secret_value()
@@ -303,7 +313,8 @@ class LLMClient:
         )
         started = time.perf_counter()
         try:
-            data = await self._post(payload)
+            with trace_call():
+                data = await self._post(payload)
             choices = data.get("choices") or []
             if not choices:
                 raise LLMError(f"response has no choices: {json.dumps(data)[:200]}")
@@ -348,8 +359,9 @@ class LLMClient:
         started = time.perf_counter()
         text_parts: list[str] = []
         try:
-            async for chunk in self._stream_with_retries(
-                messages, temperature, max_tokens, tools, tool_choice
+            async for chunk in scoped_iter(
+                self._stream_with_retries(messages, temperature, max_tokens, tools, tool_choice),
+                call=True,
             ):
                 if chunk.done:
                     chunk.latency_s = time.perf_counter() - started

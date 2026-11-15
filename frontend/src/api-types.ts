@@ -197,6 +197,172 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/logs/app": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * App Log
+         * @description Newest first. `memory` is the last few thousand records since the process started,
+         *     `stored` the persisted WARNING-and-above records. `before` pages back (a `seq` for memory,
+         *     an `id` for stored).
+         */
+        get: operations["app_log_api_logs_app_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/app/loggers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** App Loggers */
+        get: operations["app_loggers_api_logs_app_loggers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/app/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * App Log Stream
+         * @description Live tail: `event: log` frames carrying {records: [...], skipped}. At most two frames a
+         *     second and 100 records per frame; `skipped` counts what the rate limit left out.
+         */
+        get: operations["app_log_stream_api_logs_app_stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/llm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Llm Calls
+         * @description Newest first. `q` searches the stored text (messages, answer, reasoning, tool calls) of
+         *     the newest 2,000 matching rows.
+         */
+        get: operations["list_llm_calls_api_logs_llm_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/llm/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Llm Stats */
+        get: operations["llm_stats_api_logs_llm_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/llm/{call_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Llm Call */
+        get: operations["get_llm_call_api_logs_llm__call_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/llm/{call_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Llm Call */
+        get: operations["export_llm_call_api_logs_llm__call_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/llm/{call_id}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Llm Timeline */
+        get: operations["llm_timeline_api_logs_llm__call_id__timeline_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/tools/{tool_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Tool Call */
+        get: operations["get_tool_call_api_logs_tools__tool_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/metrics/recent": {
         parameters: {
             query?: never;
@@ -552,6 +718,37 @@ export interface components {
              *     }
              */
             stalled_cleanup: components["schemas"]["StalledCleanupSettings"];
+        };
+        /** AppLogList */
+        AppLogList: {
+            /** Items */
+            items: components["schemas"]["AppLogRecord"][];
+            /** Newest */
+            newest?: number | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "memory" | "stored";
+        };
+        /** AppLogRecord */
+        AppLogRecord: {
+            /** Exc */
+            exc?: string | null;
+            /** Id */
+            id?: number | null;
+            /** Level */
+            level: string;
+            /** Levelno */
+            levelno: number;
+            /** Logger */
+            logger: string;
+            /** Message */
+            message: string;
+            /** Seq */
+            seq?: number | null;
+            /** Ts */
+            ts: number;
         };
         /** ArrCollectorSettings */
         ArrCollectorSettings: {
@@ -1345,6 +1542,272 @@ export interface components {
             /** Ts */
             ts: number;
         };
+        /** LlmCall */
+        LlmCall: {
+            /**
+             * Attempt
+             * @default 1
+             */
+            attempt: number;
+            /** Base Url */
+            base_url?: string | null;
+            /**
+             * Bodies
+             * @default true
+             */
+            bodies: boolean;
+            /** Completion Tokens */
+            completion_tokens?: number | null;
+            /** Content */
+            content?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Finish Reason */
+            finish_reason?: string | null;
+            /** Group Id */
+            group_id?: string | null;
+            /** Http Status */
+            http_status?: number | null;
+            /** Id */
+            id: number;
+            /** Link Id */
+            link_id?: string | null;
+            /** Link Kind */
+            link_kind?: string | null;
+            /** Link Step */
+            link_step?: number | null;
+            /** Messages */
+            messages?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Messages Count */
+            messages_count?: number | null;
+            /** Model */
+            model?: string | null;
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            };
+            /** Prompt Tokens */
+            prompt_tokens?: number | null;
+            /** Purpose */
+            purpose: string;
+            /** Queued Ms */
+            queued_ms?: number | null;
+            /** Reasoning */
+            reasoning?: string | null;
+            /** Request Bytes */
+            request_bytes?: number | null;
+            /** Request Preview */
+            request_preview?: string | null;
+            /** Response Chars */
+            response_chars?: number | null;
+            /** Response Preview */
+            response_preview?: string | null;
+            /**
+             * Size Bytes
+             * @default 0
+             */
+            size_bytes: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "cancelled";
+            /**
+             * Stream
+             * @default false
+             */
+            stream: boolean;
+            /** Tokens Per S */
+            tokens_per_s?: number | null;
+            /** Tool Calls */
+            tool_calls?: {
+                [key: string]: unknown;
+            }[] | null;
+            /**
+             * Tool Calls Count
+             * @default 0
+             */
+            tool_calls_count: number;
+            /** Tools */
+            tools?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Tools Count */
+            tools_count?: number | null;
+            /** Tools Tokens */
+            tools_tokens?: number | null;
+            /** Total Ms */
+            total_ms?: number | null;
+            /** Truncated */
+            truncated?: string[];
+            /** Ts */
+            ts: number;
+            /** Ttft Ms */
+            ttft_ms?: number | null;
+            /** Turn */
+            turn?: string | null;
+            /**
+             * Usage Estimated
+             * @default false
+             */
+            usage_estimated: boolean;
+        };
+        /** LlmCallList */
+        LlmCallList: {
+            /**
+             * Complete
+             * @default true
+             */
+            complete: boolean;
+            /** Items */
+            items: components["schemas"]["LlmCallSummary"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** LlmCallSummary */
+        LlmCallSummary: {
+            /**
+             * Attempt
+             * @default 1
+             */
+            attempt: number;
+            /** Base Url */
+            base_url?: string | null;
+            /**
+             * Bodies
+             * @default true
+             */
+            bodies: boolean;
+            /** Completion Tokens */
+            completion_tokens?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Finish Reason */
+            finish_reason?: string | null;
+            /** Group Id */
+            group_id?: string | null;
+            /** Http Status */
+            http_status?: number | null;
+            /** Id */
+            id: number;
+            /** Link Id */
+            link_id?: string | null;
+            /** Link Kind */
+            link_kind?: string | null;
+            /** Link Step */
+            link_step?: number | null;
+            /** Messages Count */
+            messages_count?: number | null;
+            /** Model */
+            model?: string | null;
+            /** Prompt Tokens */
+            prompt_tokens?: number | null;
+            /** Purpose */
+            purpose: string;
+            /** Queued Ms */
+            queued_ms?: number | null;
+            /** Request Bytes */
+            request_bytes?: number | null;
+            /** Request Preview */
+            request_preview?: string | null;
+            /** Response Chars */
+            response_chars?: number | null;
+            /** Response Preview */
+            response_preview?: string | null;
+            /**
+             * Size Bytes
+             * @default 0
+             */
+            size_bytes: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "cancelled";
+            /**
+             * Stream
+             * @default false
+             */
+            stream: boolean;
+            /** Tokens Per S */
+            tokens_per_s?: number | null;
+            /**
+             * Tool Calls Count
+             * @default 0
+             */
+            tool_calls_count: number;
+            /** Tools Count */
+            tools_count?: number | null;
+            /** Tools Tokens */
+            tools_tokens?: number | null;
+            /** Total Ms */
+            total_ms?: number | null;
+            /** Truncated */
+            truncated?: string[];
+            /** Ts */
+            ts: number;
+            /** Ttft Ms */
+            ttft_ms?: number | null;
+            /** Turn */
+            turn?: string | null;
+            /**
+             * Usage Estimated
+             * @default false
+             */
+            usage_estimated: boolean;
+        };
+        /**
+         * LogsSettings
+         * @description The Logs page: what is kept of every request to the language model, and of the app's own
+         *     log.
+         */
+        LogsSettings: {
+            /**
+             * Keep App Log
+             * @description Save warnings and errors of the app log in the database so they survive a restart.
+             *     The Logs page always shows the newest few thousand lines since the last start.
+             * @default true
+             */
+            keep_app_log: boolean;
+            /**
+             * Llm Trace
+             * @description Record every request to the language model: what was sent, what came back, how long it
+             *     took. Shown on the Logs page. Off = new calls are not recorded.
+             * @default true
+             */
+            llm_trace: boolean;
+            /**
+             * Max Total Mb
+             * @description Upper limit for the recorded calls on disk; the oldest go first when it is exceeded.
+             * @default 200
+             */
+            max_total_mb: number;
+            /**
+             * Retention
+             * Format: duration
+             * @description How long recorded calls and saved warnings stay.
+             * @default 7d
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            retention: string;
+            /**
+             * Store Bodies
+             * @description Keep the full text of prompts, tool definitions, answers and reasoning. Off = only the
+             *     numbers are kept (timings, token counts, status), and the page cannot show what was sent.
+             *     Passwords, API keys and tokens are removed from stored text either way.
+             * @default true
+             */
+            store_bodies: boolean;
+        };
         /** McpHeader */
         McpHeader: {
             /**
@@ -1667,6 +2130,13 @@ export interface components {
              * @default
              */
             username: string;
+        };
+        /** PurposeCount */
+        PurposeCount: {
+            /** Count */
+            count: number;
+            /** Purpose */
+            purpose: string;
         };
         /** QbitSettings */
         QbitSettings: {
@@ -2170,6 +2640,16 @@ export interface components {
             llm: components["schemas"]["LLMSettings"];
             /**
              * @default {
+             *       "keep_app_log": true,
+             *       "llm_trace": true,
+             *       "max_total_mb": 200,
+             *       "retention": "7d",
+             *       "store_bodies": true
+             *     }
+             */
+            logs: components["schemas"]["LogsSettings"];
+            /**
+             * @default {
              *       "dry_run": false,
              *       "max_inline_tool_tokens": 1200,
              *       "servers": []
@@ -2429,6 +2909,123 @@ export interface components {
              * @default
              */
             token: string;
+        };
+        /** Timeline */
+        Timeline: {
+            /** Entries */
+            entries: components["schemas"]["TimelineEntry"][];
+            /** Selected */
+            selected: number;
+        };
+        /** TimelineEntry */
+        TimelineEntry: {
+            /** Attempt */
+            attempt?: number | null;
+            /** Completion Tokens */
+            completion_tokens?: number | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Finish Reason */
+            finish_reason?: string | null;
+            /** Id */
+            id: number;
+            /** Link Step */
+            link_step?: number | null;
+            /** Model */
+            model?: string | null;
+            /** Ok */
+            ok?: boolean | null;
+            /** Prompt Tokens */
+            prompt_tokens?: number | null;
+            /** Purpose */
+            purpose?: string | null;
+            /** Queued Ms */
+            queued_ms?: number | null;
+            /** Response Preview */
+            response_preview?: string | null;
+            /** Result Size */
+            result_size?: number | null;
+            /** Status */
+            status?: string | null;
+            /** Tool */
+            tool?: string | null;
+            /** Tool Calls Count */
+            tool_calls_count?: number | null;
+            /** Total Ms */
+            total_ms?: number | null;
+            /** Ts */
+            ts: number;
+            /** Ttft Ms */
+            ttft_ms?: number | null;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "llm" | "tool";
+        };
+        /** ToolCallDetail */
+        ToolCallDetail: {
+            /** Args */
+            args?: unknown;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Id */
+            id: number;
+            /** Link Id */
+            link_id?: string | null;
+            /** Link Kind */
+            link_kind?: string | null;
+            /** Link Step */
+            link_step?: number | null;
+            /** Ok */
+            ok: boolean;
+            /** Result */
+            result?: unknown;
+            /** Result Size */
+            result_size?: number | null;
+            /**
+             * Size Bytes
+             * @default 0
+             */
+            size_bytes: number;
+            /** Tool */
+            tool: string;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+            /** Ts */
+            ts: number;
+            /** Turn */
+            turn?: string | null;
+        };
+        /** TraceStats */
+        TraceStats: {
+            /** Bytes */
+            bytes: number;
+            /** Calls */
+            calls: number;
+            /** Enabled */
+            enabled: boolean;
+            /** Failed */
+            failed: number;
+            /** Max Total Mb */
+            max_total_mb: number;
+            /** Oldest */
+            oldest?: number | null;
+            /** Purposes */
+            purposes: components["schemas"]["PurposeCount"][];
+            /** Retention Days */
+            retention_days: number;
+            /** Store Bodies */
+            store_bodies: boolean;
+            /** Tool Calls */
+            tool_calls: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -2777,6 +3374,279 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    app_log_api_logs_app_get: {
+        parameters: {
+            query?: {
+                source?: "memory" | "stored";
+                level?: ("DEBUG" | "INFO" | "WARNING" | "ERROR" | "CRITICAL") | null;
+                logger?: string | null;
+                q?: string | null;
+                limit?: number;
+                before?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppLogList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    app_loggers_api_logs_app_loggers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+        };
+    };
+    app_log_stream_api_logs_app_stream_get: {
+        parameters: {
+            query?: {
+                level?: ("DEBUG" | "INFO" | "WARNING" | "ERROR" | "CRITICAL") | null;
+                logger?: string | null;
+                q?: string | null;
+                after?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_llm_calls_api_logs_llm_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                purpose?: string | null;
+                status?: ("ok" | "error" | "cancelled") | null;
+                since?: number | null;
+                until?: number | null;
+                link_kind?: string | null;
+                link_id?: string | null;
+                turn?: string | null;
+                model?: string | null;
+                q?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmCallList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    llm_stats_api_logs_llm_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraceStats"];
+                };
+            };
+        };
+    };
+    get_llm_call_api_logs_llm__call_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                call_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmCall"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_llm_call_api_logs_llm__call_id__export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                call_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    llm_timeline_api_logs_llm__call_id__timeline_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                call_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Timeline"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_tool_call_api_logs_tools__tool_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tool_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolCallDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

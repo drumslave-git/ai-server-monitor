@@ -140,3 +140,7 @@ a.call-row:hover { background: var(--hover); text-decoration: none; }
   .tl-kind { min-width: 0; }
   .pager { padding: 12px 16px; }
 }
+
+/* link under a chat answer */
+.trace-link { align-self: flex-start; font-size: 12px; color: var(--faint); }
+.trace-link:hover { color: var(--accent); }

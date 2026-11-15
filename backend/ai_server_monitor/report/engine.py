@@ -20,6 +20,7 @@ from ..digest import Digest, WindowObserver, build_digest, collectors_snapshot
 from ..events import EventBus
 from ..llm import LLMClient, LLMError
 from ..llm.text import strip_reasoning
+from ..tracing import trace_scope
 from .parsing import ParsedReport, parse_report
 from .prompts import previous_report_note, system_prompt, user_prompt
 from .store import ReportStore
@@ -58,6 +59,7 @@ class ReportEngine:
         collectors: CollectorManager,
         events: EventBus,
         observer: WindowObserver,
+        tracing: Any = None,
     ):
         self.settings = settings
         self.db = db
@@ -65,6 +67,7 @@ class ReportEngine:
         self.collectors = collectors
         self.events = events
         self.observer = observer
+        self.tracing = tracing
         self.store = ReportStore(db)
         self.force_next = False
         """Set by a manual run: ignore skip_if_unchanged once."""
@@ -97,20 +100,31 @@ class ReportEngine:
         force, self.force_next = self.force_next, False
         started_ts = time.time()
         limit = self.time_limit()
-        try:
-            async with asyncio.timeout(limit):
-                outcome = await self._run(force, started_ts)
-        except asyncio.CancelledError:
-            raise
-        except TimeoutError:
-            outcome = await self._problem(
-                "failed", f"Report generation timed out after {limit:.0f}s", started_ts, None, None
-            )
-        except Exception as exc:  # a bug must not kill the job loop or lose the reason
-            log.exception("report run failed")
-            outcome = await self._problem(
-                "failed", f"{type(exc).__name__}: {exc}", started_ts, None, None
-            )
+        with trace_scope("report") as scope:
+            try:
+                async with asyncio.timeout(limit):
+                    outcome = await self._run(force, started_ts)
+            except asyncio.CancelledError:
+                raise
+            except TimeoutError:
+                outcome = await self._problem(
+                    "failed",
+                    f"Report generation timed out after {limit:.0f}s",
+                    started_ts,
+                    None,
+                    None,
+                )
+            except Exception as exc:  # a bug must not kill the job loop or lose the reason
+                log.exception("report run failed")
+                outcome = await self._problem(
+                    "failed", f"{type(exc).__name__}: {exc}", started_ts, None, None
+                )
+        if self.tracing is not None and outcome.report_id is not None:
+            # The row only exists now; link the LLM calls made for it (Logs ↔ report page).
+            try:
+                await self.tracing.attach(scope, "report", outcome.report_id)
+            except Exception:
+                log.warning("could not link the report to its LLM calls", exc_info=True)
         self.last_outcome = outcome
         return outcome
 

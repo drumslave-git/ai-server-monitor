@@ -2,6 +2,7 @@ import type { LlmCallSummary } from "./types";
 
 export function ms(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
+  if (value < 1) return "<1 ms";
   if (value < 1000) return `${Math.round(value)} ms`;
   if (value < 60_000) return `${(value / 1000).toFixed(value < 10_000 ? 2 : 1)} s`;
   const minutes = Math.floor(value / 60_000);

@@ -7,6 +7,7 @@ import time
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
+from ..tracing import trace_scope
 from .client import LLMClient, LLMError, LLMStatusError
 from .jsontools import json_tool_system_prompt, parse_tool_request
 
@@ -42,6 +43,11 @@ async def probe_tool_mode(client: LLMClient) -> ResolvedToolMode:
 
     Connection/auth errors propagate so the caller can retry later.
     """
+    with trace_scope("probe"):
+        return await _probe_tool_mode(client)
+
+
+async def _probe_tool_mode(client: LLMClient) -> ResolvedToolMode:
     native_messages = [
         {"role": "system", "content": "You are an assistant with tools. Use them when needed."},
         {"role": "user", "content": _QUESTION},

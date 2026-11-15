@@ -124,7 +124,13 @@ button that checks what you typed, before you save, and says what answered or wh
   and the full text of each report. **Approvals** — what is waiting for your decision, with the
   audit log. **\*arr** — queues, indexers, torrents. **Chat** — ask questions about the server, with
   conversation history, streamed answers and approval cards for changes
-  (screenshot: `docs/samples/ui/chat-desktop.png`).
+  (screenshot: `docs/samples/ui/chat-desktop.png`). **Logs** — every request to the language
+  model exactly as sent and received (the full messages, tool definitions, answer, reasoning, tool
+  calls, token counts and timings: queue, time to first token, generation), a timeline per chat
+  question (LLM call → tool → LLM call → answer) and the app's own log with a live tail
+  (screenshots: `docs/samples/ui/logs-*.png`). Each report and each chat answer links to its
+  calls. Passwords, keys and tokens are removed from what is stored; retention and size limits
+  are in Settings → Logs.
 - **Telegram** — reports and alerts arrive by themselves. Write a plain question to chat
   ("what is using the most disk and memory?"); the model looks at live data with read-only tools
   and answers. Commands: `/status` (health and open flags), `/report` (write one now),
@@ -280,6 +286,16 @@ a fresh install starts with.
 | `storage.retention` | duration | `30d` | How long metrics history, reports and chats are kept. The action log is permanent. |
 | `storage.sample_interval` | duration | `5m` | Resolution of stored history. Live data is always fresh. |
 | `storage.prune_interval` | duration | `1h` | How often old data is deleted. |
+
+### Logs (`logs`)
+
+| Setting | Type | Default | What it does |
+|---|---|---|---|
+| `logs.llm_trace` | boolean | on | Record every request to the language model: what was sent, what came back, how long it took. Shown on the Logs page. Off = new calls are not recorded. |
+| `logs.store_bodies` | boolean | on | Keep the full text of prompts, tool definitions, answers and reasoning. Off = only the numbers are kept (timings, token counts, status), and the page cannot show what was sent. Passwords, API keys and tokens are removed from stored text either way. |
+| `logs.retention` | duration | `7d` | How long recorded calls and saved warnings stay. |
+| `logs.max_total_mb` | integer (min 10, max 10000) | `200` | Upper limit for the recorded calls on disk; the oldest go first when it is exceeded. |
+| `logs.keep_app_log` | boolean | on | Save warnings and errors of the app log in the database so they survive a restart. The Logs page always shows the newest few thousand lines since the last start. |
 
 ### Collectors (`collectors`)
 

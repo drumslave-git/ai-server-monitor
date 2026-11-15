@@ -23,6 +23,7 @@ from ..llm import LLMClient, LLMError
 from ..llm.text import strip_reasoning
 from ..promql import PromQL, PromQLError
 from ..thresholds import GRAMMAR_HELP, breaches, normalize_threshold
+from ..tracing import trace_scope
 from .catalog import _TOKEN, Catalog, JobSlice, build_catalog, mentions_known_metric
 from .store import KV_PLAN, MAX_QUERY, Proposal, QueryStore, clean_name
 
@@ -531,9 +532,10 @@ class Planner:
     # ------------------------------------------------------------------ one job
 
     async def _ask(self, messages: list[dict[str, Any]]) -> str:
-        completion = await self.llm.complete(
-            messages, max_tokens=min(self.llm.cfg.max_output_tokens, 2000)
-        )
+        with trace_scope("prom_plan"):
+            completion = await self.llm.complete(
+                messages, max_tokens=min(self.llm.cfg.max_output_tokens, 2000)
+            )
         return completion.content
 
     async def _plan_job(

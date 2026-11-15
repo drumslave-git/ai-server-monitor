@@ -212,9 +212,9 @@ async def test_http_error_is_recorded_with_body_and_each_retry_is_a_row(make_rig
         return httpx.Response(status, json={"error": {"message": "model is loading"}})
 
     rig: Rig = await make_rig(handler)
-    with trace_scope("report"), trace_call() as group:
+    with trace_scope("report"):
         completion = await rig.client.complete(MESSAGES)
-    assert completion.content == "finally" and group.attempt == 3
+    assert completion.content == "finally"
     rows = await rig.rows()
     assert [(r["attempt"], r["status"], r["http_status"]) for r in rows] == [
         (1, "error", 503),
@@ -222,7 +222,7 @@ async def test_http_error_is_recorded_with_body_and_each_retry_is_a_row(make_rig
         (3, "ok", 200),
     ]
     assert "model is loading" in rows[0]["error"] and rows[0]["error"].startswith("HTTP 503")
-    assert len({r["group_id"] for r in rows}) == 1 and rows[0]["group_id"] == group.id
+    assert len({r["group_id"] for r in rows}) == 1 and rows[0]["group_id"]
     assert all(r["purpose"] == "report" for r in rows)
 
 

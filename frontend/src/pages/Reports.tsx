@@ -144,6 +144,8 @@ function Detail({ id }: { id: number }) {
             {report.tokens_in != null && ` · ${report.tokens_in}/${report.tokens_out} tokens`}
             {report.latency_ms != null && ` · ${(report.latency_ms / 1000).toFixed(0)}s`}
             {!report.parsed && " · header unreadable, values derived from rules"}
+            {" · "}
+            <a href={`#/logs/llm/for/report/${report.id}`}>LLM call</a>
           </p>
         </div>
       </header>

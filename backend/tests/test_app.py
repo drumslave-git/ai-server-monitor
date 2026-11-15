@@ -31,6 +31,7 @@ def test_healthz_and_info(bootstrap: Bootstrap, settings: Settings) -> None:
     assert info["llm"]["model"] == "test-model" and info["llm"]["configured"] is True
     assert {job["name"] for job in info["jobs"]} == {
         "prune",
+        "trace_prune",
         "llm_probe",
         "digest_observe",
         "report",

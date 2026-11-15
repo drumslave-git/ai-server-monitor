@@ -164,6 +164,15 @@ class Tracing:
 
     # ------------------------------------------------------------------ lifecycle
 
+    def apply_settings(self, logs: Any) -> None:
+        """Take over the `logs` settings section (a `config.LogsSettings`)."""
+        cfg = self.config
+        cfg.enabled = logs.llm_trace
+        cfg.store_bodies = logs.store_bodies
+        cfg.retention_days = logs.retention.total_seconds() / 86400
+        cfg.max_total_mb = logs.max_total_mb
+        self.applog.keep_stored(logs.keep_app_log)
+
     async def prune(self) -> dict[str, int]:
         return await self.store.prune()
 

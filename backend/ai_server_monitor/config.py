@@ -264,6 +264,26 @@ class StorageSettings(_Model):
     """How often old data is deleted."""
 
 
+class LogsSettings(_Model):
+    """The Logs page: what is kept of every request to the language model, and of the app's own
+    log."""
+
+    llm_trace: bool = True
+    """Record every request to the language model: what was sent, what came back, how long it
+    took. Shown on the Logs page. Off = new calls are not recorded."""
+    store_bodies: bool = True
+    """Keep the full text of prompts, tool definitions, answers and reasoning. Off = only the
+    numbers are kept (timings, token counts, status), and the page cannot show what was sent.
+    Passwords, API keys and tokens are removed from stored text either way."""
+    retention: Duration = timedelta(days=7)
+    """How long recorded calls and saved warnings stay."""
+    max_total_mb: int = Field(default=200, ge=10, le=10_000)
+    """Upper limit for the recorded calls on disk; the oldest go first when it is exceeded."""
+    keep_app_log: bool = True
+    """Save warnings and errors of the app log in the database so they survive a restart.
+    The Logs page always shows the newest few thousand lines since the last start."""
+
+
 class CollectorSettings(_Model):
     enabled: bool | Literal["auto"] = True
     """auto = use it if available on this host, silently skip otherwise."""
@@ -708,6 +728,7 @@ class Settings(_Model):
     report: ReportSettings = ReportSettings()
     chat: ChatSettings = ChatSettings()
     storage: StorageSettings = StorageSettings()
+    logs: LogsSettings = LogsSettings()
     collectors: CollectorsSettings = CollectorsSettings()
     outputs: OutputsSettings = OutputsSettings()
     arr: ArrSettings = ArrSettings()

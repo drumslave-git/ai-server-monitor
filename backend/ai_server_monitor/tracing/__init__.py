@@ -11,7 +11,7 @@ Hook points for the rest of the app (the API router is `tracing.api.router`):
 """
 
 from .config import TraceConfig
-from .scope import TraceScope, current_scope, trace_call, trace_scope
+from .scope import TraceScope, current_scope, scoped_iter, trace_call, trace_scope
 from .service import ToolTimer, Tracing
 
 __all__ = [
@@ -20,6 +20,7 @@ __all__ = [
     "TraceScope",
     "Tracing",
     "current_scope",
+    "scoped_iter",
     "trace_call",
     "trace_scope",
 ]

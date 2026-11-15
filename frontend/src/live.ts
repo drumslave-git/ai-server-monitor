@@ -9,6 +9,7 @@ const EVENT_TYPES = [
   "report.token",
   "report.done",
   "report.failed",
+  "llm.call",
   "metrics.tick",
   "collector.status",
   "action.suggested",

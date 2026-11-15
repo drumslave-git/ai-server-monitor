@@ -31,6 +31,8 @@ from .outputs.sse import SSE_HEADERS, event_stream, parse_types
 from .promauto.api import router as prometheus_router
 from .settings_store import SettingsStore, merge_secrets
 from .status import resource_summary
+from .tracing import trace_scope
+from .tracing.api import router as logs_router
 
 JsonBody = Annotated[dict[str, Any], Body()]
 
@@ -40,6 +42,7 @@ SECTION_TITLES = {
     "report": "Reports",
     "chat": "Chat",
     "storage": "Data retention",
+    "logs": "Logs",
     "collectors": "Collectors",
     "outputs": "Outputs",
     "arr": "*arr & downloads",
@@ -90,6 +93,7 @@ def create_app(
             telegram_transport=telegram_transport,
         )
         app.state.ctx = ctx
+        app.state.tracing = ctx.tracing
         await ctx.start()
         try:
             yield
@@ -100,6 +104,7 @@ def create_app(
     app.include_router(actions_router)
     app.include_router(chat_router)
     app.include_router(prometheus_router)
+    app.include_router(logs_router)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz(request: Request) -> JSONResponse:
@@ -303,18 +308,23 @@ def create_app(
             raise _validation_error(exc) from exc
         if not cfg.configured:
             return {"ok": False, "error": "Set the base URL and model first."}
-        client = LLMClient(cfg.model_copy(update={"max_retries": 0}), transport=llm_transport)
+        client = LLMClient(
+            cfg.model_copy(update={"max_retries": 0}),
+            transport=llm_transport,
+            tracing=ctx.tracing,
+        )
         models: list[str] | None = None
         try:
             try:
                 models = await client.list_models()
             except LLMError:
                 models = None  # not all servers implement /models
-            completion = await client.complete(
-                [{"role": "user", "content": "Reply with the single word OK."}],
-                temperature=0,
-                max_tokens=256,
-            )
+            with trace_scope("test"):
+                completion = await client.complete(
+                    [{"role": "user", "content": "Reply with the single word OK."}],
+                    temperature=0,
+                    max_tokens=256,
+                )
             return {
                 "ok": True,
                 "reply": strip_reasoning(completion.content)[:200],

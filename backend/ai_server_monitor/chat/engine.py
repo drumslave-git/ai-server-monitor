@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import re
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -27,6 +28,7 @@ from ..llm import LLMError
 from ..llm.client import Usage, new_tool_call_id
 from ..llm.jsontools import json_tool_system_prompt, parse_tool_request
 from ..llm.text import strip_reasoning
+from ..tracing import scoped_iter, trace_scope
 from .prompts import STEP_LIMIT_NOTE, system_prompt
 from .safety import Scrubber, shrink, wrap_untrusted
 from .store import ChatStore
@@ -63,6 +65,8 @@ class _Turn:
     model: str | None = None
     streamed: str = ""
     """Text of the current model turn that was already sent to the client."""
+    trace_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    """Ties this question's LLM calls and tool calls together on the Logs page."""
 
 
 class ChatEngine:
@@ -103,7 +107,9 @@ class ChatEngine:
                     if event["type"] == "done" and is_new:
                         # Started before `done` goes out, so the model works while the client
                         # reads the answer; nothing below waits for it.
-                        title_task = self._start_title(session_id, message, event["text"])
+                        title_task = self._start_title(
+                            session_id, message, event["text"], event.get("trace_turn")
+                        )
                     yield event
             except LLMError as exc:
                 log.warning("chat: LLM failed: %s", exc)
@@ -140,20 +146,27 @@ class ChatEngine:
 
     # ------------------------------------------------------------------ titles
 
-    def _start_title(self, session_id: str, question: str, answer: str) -> asyncio.Task[str | None]:
-        task = asyncio.create_task(self._make_title(session_id, question, answer))
+    def _start_title(
+        self, session_id: str, question: str, answer: str, trace_turn: str | None = None
+    ) -> asyncio.Task[str | None]:
+        task = asyncio.create_task(self._make_title(session_id, question, answer, trace_turn))
         self._background.add(task)
         task.add_done_callback(self._background.discard)
         return task
 
-    async def _make_title(self, session_id: str, question: str, answer: str) -> str | None:
+    async def _make_title(
+        self, session_id: str, question: str, answer: str, trace_turn: str | None = None
+    ) -> str | None:
         """Ask the LLM for a short title and store it. Any failure, timeout or unusable reply
         leaves the title cut from the first message in place (returns None)."""
         try:
             async with asyncio.timeout(TITLE_TIMEOUT_S):
-                completion = await self.app.llm.complete(
-                    title_messages(question, answer), temperature=0.2, max_tokens=40
-                )
+                with trace_scope(
+                    "chat_title", link_kind="chat", link_id=session_id, turn=trace_turn
+                ):
+                    completion = await self.app.llm.complete(
+                        title_messages(question, answer), temperature=0.2, max_tokens=40
+                    )
             title = clean_title(completion.content)
             if title is None:
                 log.info("chat: unusable title reply %r", completion.content[:80])
@@ -246,6 +259,7 @@ class ChatEngine:
                 "completion_tokens": turn.usage.completion_tokens,
             },
             "stopped": stopped,
+            "trace_turn": turn.trace_id,
         }
         message_id = await self.store.add_message(session_id, "assistant", final, meta=meta)
         yield {
@@ -276,8 +290,14 @@ class ChatEngine:
         turn.streamed = ""
         text = ""
         tool_calls: list[Any] = []
-        async for chunk in self.app.llm.stream(
-            messages, tools=defs, tool_choice="auto" if defs else None
+        calls = self.app.llm.stream(messages, tools=defs, tool_choice="auto" if defs else None)
+        async for chunk in scoped_iter(
+            calls,
+            "chat",
+            link_kind="chat",
+            link_id=turn.session_id,
+            turn=turn.trace_id,
+            step=turn.steps,
         ):
             if chunk.done:
                 if chunk.usage:
@@ -410,7 +430,16 @@ class ChatEngine:
             "args": turn.scrub.clean(args),
             "kind": tool.call_kind(args) if tool else None,
         }
-        ok, text, truncated = await self._execute(turn, tool, name, args, problem)
+        with trace_scope(
+            "chat",
+            link_kind="chat",
+            link_id=turn.session_id,
+            turn=turn.trace_id,
+            step=turn.steps,
+        ):
+            timer = self.app.tracing.start_tool(name, args)
+            ok, text, truncated = await self._execute(turn, tool, name, args, problem)
+            timer.finish(ok=ok, result=text, error=None if ok else text, result_size=len(text))
         await self.store.add_message(
             turn.session_id,
             "tool",

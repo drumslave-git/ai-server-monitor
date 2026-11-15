@@ -18,7 +18,17 @@ type ToolUse = {
 };
 type Turn =
   | { role: "user"; text: string }
-  | { role: "assistant"; text: string; tools: ToolUse[]; live?: boolean; error?: string; stopped?: boolean };
+  | {
+      role: "assistant";
+      text: string;
+      tools: ToolUse[];
+      live?: boolean;
+      error?: string;
+      stopped?: boolean;
+      /** Logs page link: the session and the turn id of this answer. */
+      session?: string;
+      trace?: string;
+    };
 
 /** A write tool's result mentions the audit record it created: {"action_id": 7, "status": "pending", ...}. */
 function approvalOf(text: string | undefined): ToolUse["approval"] {
@@ -46,6 +56,11 @@ function toTurns(doc: SessionDoc): Turn[] {
       }
       if (!(m.tool_calls && m.tool_calls.length) && m.content) {
         turn.text = m.content;
+        const traceTurn = (m.meta as any)?.trace_turn;
+        if (typeof traceTurn === "string") {
+          turn.trace = traceTurn;
+          turn.session = doc.id;
+        }
         turns.push(turn);
         current = null;
       }
@@ -177,6 +192,10 @@ export function ChatPage() {
             finished = true;
           } else if (type === "done") {
             finished = true;
+            patchLast((t) => {
+              t.trace = data.trace_turn;
+              t.session = data.session_id;
+            });
             setBusy(false); // the title event may still follow: the composer need not wait for it
           } else if (type === "title") {
             sessions.reload();
@@ -328,6 +347,11 @@ function AssistantBubble({ turn }: { turn: Extract<Turn, { role: "assistant" }> 
       ))}
       {turn.text ? <Markdown text={turn.text} /> : turn.live && !turn.error ? <p className="muted">Thinking…</p> : null}
       {turn.live && turn.text && <span className="cursor" aria-hidden />}
+      {!turn.live && turn.trace && turn.session && (
+        <a className="trace-link" href={`#/logs/llm/for/chat/${turn.session}/${turn.trace}`}>
+          Trace
+        </a>
+      )}
       {turn.stopped && <p className="muted small">Stopped.</p>}
       {turn.error && <p className="error">{turn.error}</p>}
     </div>

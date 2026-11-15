@@ -142,6 +142,10 @@ class AppLog:
         self._installed = False
         self._root = logging.getLogger()
 
+    def keep_stored(self, keep: bool) -> None:
+        """Whether WARNING+ records are queued for SQLite."""
+        self.ring.sink = self._queue if keep else None
+
     def install(self, root: logging.Logger | None = None) -> None:
         if not self._installed:
             (root or logging.getLogger()).addHandler(self.ring)
