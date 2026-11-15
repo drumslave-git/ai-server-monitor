@@ -12,7 +12,8 @@ The action layer / *arr series are added by `outputs/arr_metrics.py` (a provider
 `outputs/action_events.py` (the `asm_actions_total` counter):
 
     asm_actions_total{action,result}          counter  actions by type and status
-    asm_pending_approvals                     gauge    approvals waiting for a decision
+    asm_pending_approvals                     gauge    action items waiting for a decision
+    asm_pending_approval_batches              gauge    approvals (batches of items) waiting
     asm_arr_queue_size{app}                   gauge    items in each *arr queue
     asm_arr_stalled_downloads{app}            gauge    stalled/failed downloads found
     asm_arr_up{app}                           gauge    1 if the app's API answered
@@ -158,7 +159,7 @@ class MetricsHub:
             "asm_actions_total",
             "counter",
             "Actions by type and status (suggested, pending, executed, failed, dry_run, "
-            "rejected, expired).",
+            "rejected, deferred, expired).",
         )
         for result in ("ok", "failed", "skipped"):
             self.inc("asm_reports_total", {"result": result}, 0)

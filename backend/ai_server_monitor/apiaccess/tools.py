@@ -43,6 +43,9 @@ _NOTES = {
     "dry_run": "Dry-run mode is on: nothing was sent. It has NOT been done.",
     "failed": "The request failed (see result.error). It has NOT been done.",
     "rejected": "Rejected (see result.detail). It has NOT been done.",
+    "queued": "Approved, but held back by the hourly limit; it runs by itself when the limit "
+    "frees up. It has NOT been done yet.",
+    "deferred": "Held back by the hourly limit (see result.detail). It has NOT been done.",
 }
 
 
@@ -362,11 +365,14 @@ async def _request_approval(
             {k: v for k, v in payload.items() if v is not None},
             _source(ctx),
             reason="requested in chat",
+            run_key=f"turn:{ctx.turn}" if getattr(ctx, "turn", None) else None,
+            label="Chat",
         )
     except Exception as exc:  # ActionError: unknown action / invalid arguments
         raise error_cls(str(exc)) from exc
     return {
         "action_id": record["id"],
+        "approval_id": record.get("batch_id"),
         "status": record["status"],
         "policy": record["policy"],
         "target": record["target"],

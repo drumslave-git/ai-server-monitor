@@ -36,6 +36,7 @@ def test_healthz_and_info(bootstrap: Bootstrap, settings: Settings) -> None:
         "digest_observe",
         "report",
         "approvals:sweep",
+        "approvals:drain",
         "prom_plan",
     }
     assert (bootstrap.data_dir / "monitor.db").exists()

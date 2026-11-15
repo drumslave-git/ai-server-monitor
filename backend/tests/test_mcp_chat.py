@@ -208,7 +208,7 @@ async def test_action_hooks_policy_cap_dry_run_and_run(db: Any) -> None:
     assert first["status"] == "executed" and first["result"]["echo"] == "a"
     await service.request("echo", {"text": "b"}, "t")
     capped = await service.request("echo", {"text": "c"}, "t")
-    assert capped["status"] == "rejected" and "2 per hour" in capped["result"]["detail"]
+    assert capped["status"] == "queued" and "2 per hour" in capped["result"]["detail"]
     assert calls == ["a", "b"]
     cap["n"] = 0
     policy["value"] = "approve"

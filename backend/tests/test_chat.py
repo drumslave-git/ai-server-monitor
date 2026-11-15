@@ -344,8 +344,10 @@ def test_write_tool_only_yields_a_pending_approval(bootstrap: Bootstrap) -> None
         assert approvals[0]["args"]["tmdb_id"] == 603
 
         # Only the owner's approval makes it happen.
-        done = client.post(f"/api/approvals/{approvals[0]['id']}", json={"decision": "approve"})
-        assert done.json()["status"] == "executed" and len(world.added) == 1
+        done = client.post(
+            f"/api/approvals/{approvals[0]['batch_id']}", json={"decision": "approve"}
+        )
+        assert done.json()["counts"] == {"executed": 1} and len(world.added) == 1
 
 
 def test_write_tools_follow_policy_and_configuration(bootstrap: Bootstrap) -> None:

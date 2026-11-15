@@ -9,6 +9,7 @@ an `ActionService.request(..., source="chat:<session>")` and report what policy 
 from __future__ import annotations
 
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -42,6 +43,8 @@ class ToolContext:
     promql_transport: Any = None
     source: str | None = None
     """Who asks, for the audit log of write actions. Default: chat:<session>."""
+    turn: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    """Identifies this chat turn: the write requests of one turn share an approval batch."""
 
     @property
     def settings(self) -> Settings:
@@ -468,7 +471,18 @@ class RecentActionsArgs(_Args):
 def _action_view(record: dict[str, Any]) -> dict[str, Any]:
     return {
         k: record.get(k)
-        for k in ("id", "ts", "action", "target", "status", "policy", "source", "reason", "result")
+        for k in (
+            "id",
+            "batch_id",
+            "ts",
+            "action",
+            "target",
+            "status",
+            "policy",
+            "source",
+            "reason",
+            "result",
+        )
     }
 
 
@@ -484,14 +498,18 @@ async def _recent_actions(ctx: ToolContext, args: RecentActionsArgs) -> Any:
 # --------------------------------------------------------------------------- write tools
 
 _NOTES = {
-    "pending": "Waiting for the user's approval (approval id {id}). Tell the user to approve "
-    "or reject it in the approvals list; it has NOT been done yet.",
+    "pending": "Waiting for the user's approval (approval id {id}); the requests of this "
+    "turn are shown to the user as one approval. Tell the user to approve or reject it in the "
+    "approvals list; it has NOT been done yet.",
     "suggested": "Recorded as a suggestion only; the policy does not let it run. "
     "It has NOT been done.",
     "executed": "Done.",
     "dry_run": "Dry-run mode is on: nothing was sent. It has NOT been done.",
     "failed": "The request failed (see result.error). It has NOT been done.",
     "rejected": "Rejected (see result.detail). It has NOT been done.",
+    "queued": "Approved, but held back by the hourly limit; it runs by itself when the limit "
+    "frees up. It has NOT been done yet.",
+    "deferred": "Held back by the hourly limit (see result.detail). It has NOT been done.",
 }
 
 
@@ -503,11 +521,14 @@ def _write_handler(action: str) -> Handler:
                 args.model_dump(exclude_none=True),
                 ctx.source or f"chat:{ctx.session_id}",
                 reason="requested in chat",
+                run_key=f"turn:{ctx.turn}",
+                label="Chat",
             )
         except ActionError as exc:
             raise ToolError(str(exc)) from exc
         return {
             "action_id": record["id"],
+            "approval_id": record.get("batch_id"),
             "status": record["status"],
             "policy": record["policy"],
             "target": record["target"],

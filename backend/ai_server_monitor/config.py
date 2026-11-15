@@ -507,6 +507,9 @@ class TelegramSettings(_Model):
     sent every time)."""
     api_url: OptionalHttpUrl = ""
     """Bot API server. Empty = https://api.telegram.org."""
+    web_url: OptionalHttpUrl = ""
+    """Address of this web UI as you open it, e.g. https://monitor.example.com. Approval
+    messages get a "Review" button that opens the approval there. Empty = no button."""
 
 
 class MetricsSettings(_Model):

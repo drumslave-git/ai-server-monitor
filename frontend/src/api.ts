@@ -130,4 +130,25 @@ export type ActionRecord = {
   result: Record<string, any> | null;
   decided_by: string | null;
   expires_at: number | null;
+  batch_id: number | null;
+};
+
+/** One approval: the items an automation run (or a chat turn) asked for, decided together. */
+export type ApprovalBatch = {
+  id: number;
+  ts: number;
+  action: string;
+  label: string | null;
+  title: string;
+  summary: string;
+  source: string;
+  expires_at: number | null;
+  total: number;
+  pending: number;
+  queued: number;
+  next_in_s: number | null;
+  queue_note: string;
+  counts: Record<string, number>;
+  outcome: string;
+  items: ActionRecord[];
 };

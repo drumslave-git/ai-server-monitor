@@ -137,8 +137,12 @@ button that checks what you typed, before you save, and says what answered or wh
   `/approvals` (open requests, with buttons), `/id` (this chat's id: works in any chat, also for
   chats that are not allowed yet, once per 10 s), `/new` (start a fresh chat), `/help`. When an
   action needs approval, the bot sends
-  a message with **Approve** and **Reject** buttons; the message is edited to the outcome, also when
-  you decide in the web UI.
+  ONE message per approval (all the items one automation run, or one chat turn, asked for: the
+  first ten are listed, then "+N more") with **Approve all**, **Reject all** and, when
+  `outputs.telegram.web_url` is set, **Review** (opens the approval in the web UI). Requests of the
+  same run that arrive within 30 s end up in the same message. The message is edited to the
+  outcome ("Approved by @name: 37 executed, 2 failed"), also when you decide in the
+  web UI.
   Each Telegram chat is one conversation; the model sees only its last
   `chat.history_messages` (12) messages. A fresh conversation starts with `/new` or by itself after
   `outputs.telegram.new_session_after` (6 h) without a message (0 = never); the older ones stay in
@@ -194,14 +198,19 @@ button that checks what you typed, before you save, and says what answered or wh
 - **Policies**, per action group (stalled-download cleanup, missing search, upgrade search, add media,
   indexer tests): `off` = never (the request is only logged), `suggest` = recorded and mentioned,
   never executed, `approve` = waits for your button press (expires after `approval_ttl`, default
-  1 day), `auto` = executes by itself within the caps. *Max per hour* limits how often an action group
+  1 day), `auto` = executes by itself within the caps. Approvals are grouped: everything one
+  automation run (or one chat turn) asks for with the same action is ONE approval with a checklist
+  on the Approvals page: approve or reject all of it, or only the items you tick. Every item
+  keeps its own row in the audit log (linked by its approval number). The hourly cap is applied
+  when items are executed; items beyond it stay approved as `queued` and run by themselves as the cap frees up (nobody is
+  asked a second time; the card and the Telegram message show "10 executed, 30 queued, next in ~N min"). *Max per hour* limits how often an action group
   may run, counted from the audit log; searches also have a batch size.
 - **Dry run** (on by default) is a global brake over all of it: nothing is sent to your apps; actions
   that would have run are logged with the status `dry_run`.
 - **Not-owned torrents** are never removed automatically: a stalled torrent that no *arr owns (for
   example one you added by hand) is only ever suggested for removal.
 - **Audit log**: every request and its outcome (`suggested`, `pending`, `approved`, `rejected`,
-  `expired`, `executed`, `failed`, `dry_run`) is kept permanently with who asked (`scheduler`,
+  `expired`, `executed`, `failed`, `queued`, `dry_run`) is kept permanently with who asked (`scheduler`,
   `chat:<session>`, `telegram:<chat>`), who decided (`ui`, `telegram:<user>`, `policy`, `timeout`)
   and the result. Read it on the Approvals page or at `GET /api/actions`.
 - **MCP servers** (Settings → MCP servers): the chat can use tools of remote MCP servers you add (Home
@@ -375,6 +384,7 @@ a fresh install starts with.
 | `outputs.telegram.new_session_after` | duration | `6h` | Start a fresh chat after this long without a message in a Telegram chat (the old one stays in the Chat list on the web page). 0 = never: one chat until you send /new. |
 | `outputs.telegram.alerts` | boolean | on | Send a short alert whenever the health status changes (also when reports are not sent every time). |
 | `outputs.telegram.api_url` | string | empty | Bot API server. Empty = https://api.telegram.org. |
+| `outputs.telegram.web_url` | string | empty | Address of this web UI as you open it, e.g. https://monitor.example.com. Approval messages get a "Review" button that opens the approval there. Empty = no button. |
 | `outputs.metrics.enabled` | boolean | on | Expose Prometheus metrics at /metrics. |
 | `outputs.metrics.bearer_token` | secret | empty | If set, scrapers must send "Authorization: Bearer &lt;token>" (Prometheus: authorization in the scrape config). Empty = open to anyone who can reach the port. |
 

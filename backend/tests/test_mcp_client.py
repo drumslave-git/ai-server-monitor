@@ -79,11 +79,19 @@ class FakeActions:
         self.requests: list[dict[str, Any]] = []
 
     async def request(
-        self, action: str, args: dict[str, Any], source: str, *, reason: str | None = None
+        self,
+        action: str,
+        args: dict[str, Any],
+        source: str,
+        *,
+        reason: str | None = None,
+        run_key: str | None = None,
+        label: str | None = None,
     ) -> dict[str, Any]:
         self.requests.append({"action": action, "args": args, "source": source})
         return {
             "id": len(self.requests),
+            "batch_id": len(self.requests),
             "status": self.status,
             "policy": "approve",
             "target": f"{args['server']} · {args['tool']}",

@@ -215,6 +215,7 @@ class AppContext:
             api=self.api_gateway,
         )
         self.scheduler.add("approvals:sweep", self.actions.sweep_expired, APPROVAL_SWEEP)
+        self.scheduler.add("approvals:drain", self.actions.drain_queue, APPROVAL_SWEEP)
         register_automations(
             self.scheduler,
             AutomationEnv(self.actions, s, collector_results=lambda: self.collectors.latest),
@@ -250,10 +251,21 @@ class AppContext:
         row = await self.db.fetchone("SELECT COUNT(*) AS n FROM actions WHERE status = 'pending'")
         return int(row["n"]) if row else 0
 
+    async def pending_approval_batches_count(self) -> int:
+        row = await self.db.fetchone(
+            "SELECT COUNT(DISTINCT batch_id) AS n FROM actions WHERE status = 'pending'"
+        )
+        return int(row["n"]) if row else 0
+
     async def _arr_metrics(self) -> list[Family]:
         result = self.collectors.latest.get("arr")
         data = result.data if result is not None and result.ok else None
-        return arr_families(self.settings, data, await self.pending_approvals_count())
+        return arr_families(
+            self.settings,
+            data,
+            await self.pending_approvals_count(),
+            await self.pending_approval_batches_count(),
+        )
 
     def _on_collector_result(self, result: CollectorResult) -> None:
         self.metrics.on_collector_result(result)

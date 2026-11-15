@@ -129,6 +129,10 @@ class ActionDef:
     """`run(service, args)` instead of `execute(clients, args)`."""
     chat_tool: bool = True
     """False = no generic chat tool is made for this action (its subsystem has its own)."""
+    summary: Callable[[list[Any]], str] | None = None
+    """What an approval batch of these items asks for, from their parsed arguments:
+    "remove 40 queue items from sonarr (blocklist + re-search)". Default: the target of a
+    single item, else "<name> × N"."""
 
     def schema(self) -> dict[str, Any]:
         return self.args_model.model_json_schema()
@@ -170,6 +174,36 @@ def _check_qbit(settings: Settings, args: Any) -> str | None:
 
 def _check_prowlarr(settings: Settings, args: Any) -> str | None:
     return None if settings.arr.prowlarr else "Prowlarr is not configured"
+
+
+# --------------------------------------------------------------------------- summaries
+
+
+def _plural(n: int, one: str, many: str | None = None) -> str:
+    return f"{n} {one if n == 1 else many or one + 's'}"
+
+
+def _where(items: list[Any]) -> str:
+    names = sorted({i.app if i.instance == i.app else f"{i.app}/{i.instance}" for i in items})
+    return ", ".join(names)
+
+
+def _remove_summary(items: list[Any]) -> str:
+    flags = {(i.blocklist, i.search, i.remove_from_client) for i in items}
+    note = ""
+    if len(flags) == 1:
+        blocklist, search, from_client = next(iter(flags))
+        parts = (["blocklist"] if blocklist else []) + (["re-search"] if search else [])
+        if not from_client:
+            parts.append("keep in the download client")
+        note = f" ({' + '.join(parts)})" if parts else ""
+    return f"remove {_plural(len(items), 'queue item')} from {_where(items)}{note}"
+
+
+def _search_summary(items: list[Any]) -> str:
+    total = sum(len(i.ids) for i in items)
+    purposes = " / ".join(sorted({i.purpose for i in items}))
+    return f"search for {_plural(total, purposes + ' item')} in {_where(items)}"
 
 
 # --------------------------------------------------------------------------- executors
@@ -263,6 +297,7 @@ _ACTIONS = (
         target=lambda a: f"qbittorrent: {a.title or a.hash[:12]}",
         check=_check_qbit,
         execute=_qbit_delete,
+        summary=lambda items: f"remove {_plural(len(items), 'torrent')} from qBittorrent",
     ),
     ActionDef(
         name="arr_remove_queue_item",
@@ -272,6 +307,7 @@ _ACTIONS = (
         target=lambda a: f"{a.app}/{a.instance}: {a.title or f'queue item {a.queue_id}'}",
         check=_has_instance,
         execute=_arr_remove,
+        summary=_remove_summary,
     ),
     ActionDef(
         name="arr_search",
@@ -281,6 +317,7 @@ _ACTIONS = (
         target=lambda a: f"{a.app}/{a.instance}: {a.title or f'{len(a.ids)} item(s)'}",
         check=_check_search,
         execute=_arr_search,
+        summary=_search_summary,
     ),
     ActionDef(
         name="arr_add_media",
@@ -290,6 +327,7 @@ _ACTIONS = (
         target=lambda a: f"{a.app}/{a.instance}: add {a.title or (a.tmdb_id or a.tvdb_id)}",
         check=_check_add,
         execute=_arr_add,
+        summary=lambda items: f"add {_plural(len(items), 'title')} to {_where(items)}",
     ),
     ActionDef(
         name="prowlarr_test_indexer",
@@ -299,6 +337,7 @@ _ACTIONS = (
         target=lambda a: f"prowlarr: {a.title or f'indexer {a.indexer_id}'}",
         check=_check_prowlarr,
         execute=_prowlarr_test,
+        summary=lambda items: f"test {_plural(len(items), 'indexer')} in Prowlarr",
     ),
     ActionDef(
         name=ACTION_NAME,

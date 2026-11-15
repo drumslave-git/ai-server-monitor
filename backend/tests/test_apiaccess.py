@@ -597,7 +597,7 @@ async def test_max_per_hour_caps_approved_calls(
     first = await service.request(ACTION_NAME, args, "chat:s1")
     assert (await service.decide(first["id"], "approve"))["status"] == "executed"
     second = await service.request(ACTION_NAME, args, "chat:s1")
-    assert (await service.decide(second["id"], "approve"))["status"] == "rejected"
+    assert (await service.decide(second["id"], "approve"))["status"] == "queued"
     assert len(world.mutations) == 1
     await db.close()
 
@@ -810,8 +810,10 @@ def test_chat_write_ends_as_a_pending_approval_and_runs_after_it(bootstrap: Boot
         approvals = client.get("/api/approvals").json()["items"]
         assert [a["action"] for a in approvals] == ["api_call"]
         assert approvals[0]["target"] == "radarr: POST /api/v3/command"
-        done = client.post(f"/api/approvals/{approvals[0]['id']}", json={"decision": "approve"})
-        assert done.json()["status"] == "executed"
+        done = client.post(
+            f"/api/approvals/{approvals[0]['batch_id']}", json={"decision": "approve"}
+        )
+        assert done.json()["counts"] == {"executed": 1}
         assert len(world.mutations) == 1
         assert json.loads(world.mutations[0]["body"]) == body
         # the approved call is in the same audit trail

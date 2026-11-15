@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * List Actions
-         * @description The audit log, newest first. Filter with ?status= and ?action=.
+         * @description The audit log, newest first. Filter with ?status=, ?action= and ?batch= (approval id).
          */
         get: operations["list_actions_api_actions_get"];
         put?: never;
@@ -33,7 +33,8 @@ export interface paths {
         };
         /**
          * List Approvals
-         * @description Actions waiting for a decision (expired ones are swept first).
+         * @description Approvals waiting for a decision (expired ones are swept first): `batches` has one
+         *     entry per approval with its items; `items` is the flat list of pending items.
          */
         get: operations["list_approvals_api_approvals_get"];
         put?: never;
@@ -44,20 +45,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/approvals/{action_id}": {
+    "/api/approvals/{batch_id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get Approval
+         * @description One approval batch with all its items and their outcomes.
+         */
+        get: operations["get_approval_api_approvals__batch_id__get"];
         put?: never;
         /**
          * Decide
-         * @description Approve (→ executes it now) or reject a pending action.
+         * @description Approve (→ executes the items now) or reject an approval batch: all its pending items,
+         *     or only `items`. The answer is the batch with the outcome of every item.
          */
-        post: operations["decide_api_approvals__action_id__post"];
+        post: operations["decide_api_approvals__batch_id__post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1413,6 +1419,8 @@ export interface components {
              * @enum {string}
              */
             decision: "approve" | "reject";
+            /** Items */
+            items?: number[] | null;
         };
         /** Digest */
         Digest: {
@@ -2203,7 +2211,8 @@ export interface components {
              *       "enabled": false,
              *       "new_session_after": "6h",
              *       "report_every": 1,
-             *       "token": ""
+             *       "token": "",
+             *       "web_url": ""
              *     }
              */
             telegram: components["schemas"]["TelegramSettings"];
@@ -2770,7 +2779,7 @@ export interface components {
              *       "max_steps": 6,
              *       "max_tool_result_chars": 6000,
              *       "shell": true,
-             *       "tool_timeout": "30s"
+             *       "tool_timeout": "1h"
              *     }
              */
             chat: components["schemas"]["ChatSettings"];
@@ -2904,7 +2913,8 @@ export interface components {
              *         "enabled": false,
              *         "new_session_after": "6h",
              *         "report_every": 1,
-             *         "token": ""
+             *         "token": "",
+             *         "web_url": ""
              *       }
              *     }
              */
@@ -3176,6 +3186,13 @@ export interface components {
              * @default
              */
             token: string;
+            /**
+             * Web Url
+             * @description Address of this web UI as you open it, e.g. https://monitor.example.com. Approval
+             *     messages get a "Review" button that opens the approval there. Empty = no button.
+             * @default
+             */
+            web_url: string;
         };
         /** Timeline */
         Timeline: {
@@ -3323,6 +3340,7 @@ export interface operations {
                 offset?: number;
                 status?: string | null;
                 action?: string | null;
+                batch?: number | null;
             };
             header?: never;
             path?: never;
@@ -3374,12 +3392,45 @@ export interface operations {
             };
         };
     };
-    decide_api_approvals__action_id__post: {
+    get_approval_api_approvals__batch_id__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                action_id: number;
+                batch_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_api_approvals__batch_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: number;
             };
             cookie?: never;
         };

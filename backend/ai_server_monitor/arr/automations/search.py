@@ -15,7 +15,7 @@ from typing import Any, Literal
 from ...config import SearchActionSettings
 from ..arr import MOVIE_LIKE
 from ..base import ArrError
-from .base import SOURCE, AutomationEnv, recent_args, short, tally
+from .base import SOURCE, AutomationEnv, recent_args, run_key, short, tally
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ async def run(env: AutomationEnv, purpose: Literal["missing", "cutoff"]) -> dict
         return {"skipped": "no *arr app configured"}
     done = await recent_args(env, "arr_search")
     per_instance = max(1, cfg.batch // len(clients.apps))
-    records: list[dict[str, Any]] = []
+    requests: list[tuple[dict[str, Any], str | None]] = []
     for (kind, name), app in clients.apps.items():
         taken = {
             i
@@ -73,9 +73,8 @@ async def run(env: AutomationEnv, purpose: Literal["missing", "cutoff"]) -> dict
             continue
         if not ids:
             continue
-        records.append(
-            await env.service.request(
-                "arr_search",
+        requests.append(
+            (
                 {
                     "app": kind,
                     "instance": name,
@@ -83,8 +82,19 @@ async def run(env: AutomationEnv, purpose: Literal["missing", "cutoff"]) -> dict
                     "purpose": purpose,
                     "title": short(", ".join(titles)),
                 },
-                SOURCE,
-                reason=f"{purpose} items searched least recently ({len(ids)} of the wanted list)",
+                f"{purpose} items searched least recently ({len(ids)} of the wanted list)",
             )
         )
+    # One request per instance, filed together: the ones that need approval form one batch.
+    records = (
+        await env.service.request_many(
+            "arr_search",
+            requests,
+            SOURCE,
+            run_key=run_key(f"{purpose}_search", env),
+            label=f"{purpose.capitalize()} search",
+        )
+        if requests
+        else []
+    )
     return {"requested": len(records), "outcomes": tally(records)}

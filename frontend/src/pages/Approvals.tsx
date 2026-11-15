@@ -1,50 +1,214 @@
-import { useState } from "react";
-import { api, ApiError, type ActionRecord } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { api, ApiError, type ActionRecord, type ApprovalBatch } from "../api";
 import { ago, clock, until } from "../fmt";
 import { useStream } from "../live";
 import { Badge, Empty, PageHead, Panel, useNow, usePoll, type Level } from "../ui";
 
 type Listing = { items: ActionRecord[]; total: number };
 
-const STATUSES = ["pending", "suggested", "executed", "failed", "rejected", "expired", "dry_run"];
+const STATUSES = ["pending", "queued", "suggested", "executed", "failed", "rejected", "expired", "dry_run"];
+const SHOWN = 10;
 
 const statusLevel = (s: string): Level =>
-  s === "executed" ? "ok" : s === "failed" ? "crit" : s === "pending" ? "warn" : s === "dry_run" || s === "suggested" ? "info" : "off";
+  s === "executed"
+    ? "ok"
+    : s === "failed"
+      ? "crit"
+      : s === "pending" || s === "queued" || s === "deferred"
+        ? "warn"
+        : s === "dry_run" || s === "suggested"
+          ? "info"
+          : "off";
 
 const label = (s: string) => s.replace(/_/g, " ");
 
 function describe(a: ActionRecord): string {
   const result = a.result ?? {};
   if (a.status === "failed") return String(result.error ?? "failed");
-  if (a.status === "rejected") return String(result.detail ?? "rejected");
+  if (a.status === "rejected" || a.status === "deferred") return String(result.detail ?? a.status);
+  if (a.status === "queued") return "approved; waiting for the hourly limit, it runs by itself";
   if (a.status === "dry_run") return `dry run: ${String(result.would ?? "nothing was sent")}`;
   return a.reason ?? "";
 }
 
-export function ApprovalsPage() {
+type CardProps = {
+  batch: ApprovalBatch;
+  now: number;
+  focused: boolean;
+  busy: boolean;
+  onDecide: (batch: ApprovalBatch, decision: "approve" | "reject", items?: number[]) => void;
+  onAudit: (batch: ApprovalBatch) => void;
+};
+
+function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) {
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [all, setAll] = useState(false);
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (focused) ref.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [focused]);
+
+  const waiting = batch.items.filter((i) => i.status === "pending");
+  const waitingIds = new Set(waiting.map((i) => i.id));
+  const chosen = [...selected].filter((id) => waitingIds.has(id));
+  const toggle = (id: number) =>
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const done = Object.entries(batch.counts).filter(([k]) => k !== "pending");
+  // Long batches show the first items; the rest opens in place. Select all always covers every
+  // pending item, shown or not.
+  const visible = all ? batch.items : batch.items.slice(0, SHOWN);
+  const hidden = batch.items.length - visible.length;
+
+  return (
+    <article ref={ref} className={`batch ${focused ? "focused" : ""}`} aria-label={batch.title}>
+      <header className="batch-head">
+        <div className="batch-title">
+          <h4>{batch.title}</h4>
+          <p className="muted small">
+            #{batch.id} · from {batch.source} · requested {ago(batch.ts, now)}
+            {waiting.length > 0 && <> · expires {until(batch.expires_at, now)}</>}
+          </p>
+          {done.length > 0 && (
+            <p className="batch-outcome">
+              {done.map(([status, n]) => (
+                <Badge key={status} level={statusLevel(status)}>
+                  {n} {label(status)}
+                </Badge>
+              ))}
+              {batch.queued > 0 && <span className="muted small">{batch.queue_note.replace(/^, /, "")}</span>}
+            </p>
+          )}
+        </div>
+        {waiting.length === 0 && batch.queued > 0 && (
+          <div className="approval-buttons">
+            <button className="btn" disabled={busy} onClick={() => onDecide(batch, "reject")}>
+              Cancel the {batch.queued} queued
+            </button>
+          </div>
+        )}
+        {waiting.length > 0 && (
+          <div className="approval-buttons">
+            <button className="btn" disabled={busy} onClick={() => onDecide(batch, "reject")}>
+              Reject all{waiting.length > 1 ? ` (${waiting.length})` : ""}
+            </button>
+            <button className="btn btn-primary" disabled={busy} onClick={() => onDecide(batch, "approve")}>
+              Approve all{waiting.length > 1 ? ` (${waiting.length})` : ""}
+            </button>
+          </div>
+        )}
+      </header>
+
+      {waiting.length > 1 && (
+        <div className="batch-bar">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={chosen.length === waiting.length}
+              ref={(el) => {
+                if (el) el.indeterminate = chosen.length > 0 && chosen.length < waiting.length;
+              }}
+              onChange={(e) => setSelected(e.target.checked ? new Set(waitingIds) : new Set())}
+            />
+            <span>{chosen.length ? `${chosen.length} of ${waiting.length} selected` : `Select all ${waiting.length}`}</span>
+          </label>
+          <div className="batch-bar-buttons">
+            <button
+              className="btn"
+              disabled={busy || chosen.length === 0}
+              onClick={() => {
+                onDecide(batch, "reject", chosen);
+                setSelected(new Set());
+              }}
+            >
+              Reject selected
+            </button>
+            <button
+              className="btn"
+              disabled={busy || chosen.length === 0}
+              onClick={() => {
+                onDecide(batch, "approve", chosen);
+                setSelected(new Set());
+              }}
+            >
+              Approve selected
+            </button>
+          </div>
+        </div>
+      )}
+
+      <ul className={`batch-items ${all ? "scroll" : ""}`}>
+        {visible.map((item) => (
+          <li key={item.id} className={item.status === "pending" ? undefined : "settled"}>
+            {waiting.length > 1 && item.status === "pending" ? (
+              <input
+                type="checkbox"
+                aria-label={`Select ${item.target ?? item.id}`}
+                checked={selected.has(item.id)}
+                onChange={() => toggle(item.id)}
+              />
+            ) : (
+              <span className="check-gap" aria-hidden />
+            )}
+            <div className="item-body">
+              <span className="item-target">{item.target}</span>
+              {item.reason && item.status === "pending" && <span className="muted small block">{item.reason}</span>}
+              {item.status !== "pending" && <span className="muted small block">{describe(item)}</span>}
+            </div>
+            {item.status !== "pending" && <Badge level={statusLevel(item.status)}>{label(item.status)}</Badge>}
+          </li>
+        ))}
+      </ul>
+      <footer className="batch-foot">
+        {batch.items.length > SHOWN && (
+          <button className="btn btn-quiet" aria-expanded={all} onClick={() => setAll(!all)}>
+            {all ? `Show only the first ${SHOWN}` : `Show ${hidden} more`}
+          </button>
+        )}
+        <button className="btn btn-quiet" onClick={() => onAudit(batch)}>
+          Show in the audit log
+        </button>
+      </footer>
+    </article>
+  );
+}
+
+export function ApprovalsPage({ params = [] }: { params?: string[] }) {
   const now = useNow(30_000);
-  const pending = usePoll(() => api.get<{ items: ActionRecord[] }>("/api/approvals"), 30_000);
+  const focusId = /^\d+$/.test(params[0] ?? "") ? Number(params[0]) : null;
+  const pending = usePoll(() => api.get<{ batches: ApprovalBatch[] }>("/api/approvals"), 30_000);
+  const opened = usePoll(
+    () => (focusId ? api.get<ApprovalBatch>(`/api/approvals/${focusId}`) : Promise.resolve(null)),
+    30_000,
+  );
   const [status, setStatus] = useState("");
   const [action, setAction] = useState("");
+  const [batch, setBatch] = useState<number | null>(null);
   const [limit, setLimit] = useState(25);
   const query = new URLSearchParams({ limit: String(limit) });
   if (status) query.set("status", status);
   if (action) query.set("action", action);
+  if (batch) query.set("batch", String(batch));
   const log = usePoll(() => api.get<Listing>(`/api/actions?${query}`), 30_000);
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = () => {
     pending.reload();
+    opened.reload();
     log.reload();
   };
   useStream(["approval", "action"], refresh);
 
-  const decide = async (id: number, decision: "approve" | "reject") => {
-    setBusy(id);
+  const decide = async (b: ApprovalBatch, decision: "approve" | "reject", items?: number[]) => {
+    setBusy(b.id);
     setError(null);
     try {
-      await api.post(`/api/approvals/${id}`, { decision });
+      await api.post(`/api/approvals/${b.id}`, items ? { decision, items } : { decision });
     } catch (e) {
       setError(e instanceof ApiError ? String(e.detail) : (e as Error).message);
     } finally {
@@ -52,90 +216,115 @@ export function ApprovalsPage() {
       refresh();
     }
   };
+  const showAudit = (b: ApprovalBatch) => {
+    setBatch(b.id);
+    setStatus("");
+    setAction("");
+    setLimit(100);
+    document.getElementById("audit-log")?.scrollIntoView({ behavior: "smooth" });
+  };
 
-  const items = pending.data?.items ?? [];
+  const batches = pending.data?.batches ?? [];
+  const waitingItems = batches.reduce((n, b) => n + b.pending, 0);
+  // A batch opened by link that is no longer waiting (decided, expired) is shown on top.
+  const extra = opened.data && !batches.some((b) => b.id === opened.data?.id) ? opened.data : null;
   const actionNames = Array.from(new Set((log.data?.items ?? []).map((a) => a.action))).sort();
 
   return (
     <div className="stack">
       <PageHead title="Approvals and actions" />
-      <Panel title="Waiting for you" aside={items.length ? <span className="muted small">{items.length}</span> : undefined}>
+      <Panel
+        title="Waiting for you"
+        aside={
+          batches.length ? (
+            <span className="muted small">
+              {batches.length} approval{batches.length === 1 ? "" : "s"} · {waitingItems} item{waitingItems === 1 ? "" : "s"}
+            </span>
+          ) : undefined
+        }
+      >
         {error && <p className="error">{error}</p>}
-        {pending.data && items.length === 0 ? (
+        {extra && (
+          <BatchCard batch={extra} now={now} focused busy={busy === extra.id} onDecide={decide} onAudit={showAudit} />
+        )}
+        {pending.data && batches.length === 0 && !extra ? (
           <Empty>Nothing is waiting. Actions set to “approve” in Settings appear here.</Empty>
         ) : (
-          <ul className="approvals">
-            {items.map((a) => (
-              <li key={a.id}>
-                <div className="approval-body">
-                  <p className="approval-title">
-                    <span className="mono">{a.action}</span>
-                    <span>{a.target}</span>
-                  </p>
-                  <p className="muted small">
-                    from {a.source} · requested {ago(a.ts, now)} · expires {until(a.expires_at, now)}
-                  </p>
-                  {a.reason && <p className="approval-reason">{a.reason}</p>}
-                  {a.args && <details className="small"><summary>Arguments</summary><pre>{JSON.stringify(a.args, null, 2)}</pre></details>}
-                </div>
-                <div className="approval-buttons">
-                  <button className="btn" disabled={busy === a.id} onClick={() => decide(a.id, "reject")}>
-                    Reject
-                  </button>
-                  <button className="btn btn-primary" disabled={busy === a.id} onClick={() => decide(a.id, "approve")}>
-                    Approve
-                  </button>
-                </div>
-              </li>
+          <div className="batches">
+            {batches.map((b) => (
+              <BatchCard
+                key={b.id}
+                batch={b}
+                now={now}
+                focused={b.id === focusId}
+                busy={busy === b.id}
+                onDecide={decide}
+                onAudit={showAudit}
+              />
             ))}
-          </ul>
+          </div>
         )}
       </Panel>
 
-      <Panel
-        title="Audit log"
-        aside={
-          <div className="filters">
-            <select aria-label="Status" value={status} onChange={(e) => { setStatus(e.target.value); setLimit(25); }}>
-              <option value="">All statuses</option>
-              {STATUSES.map((s) => <option key={s} value={s}>{label(s)}</option>)}
-            </select>
-            <select aria-label="Action" value={action} onChange={(e) => { setAction(e.target.value); setLimit(25); }}>
-              <option value="">All actions</option>
-              {actionNames.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-        }
-      >
-        {log.data && log.data.items.length === 0 ? (
-          <Empty>No actions recorded{status || action ? " for this filter" : ""}.</Empty>
-        ) : (
-          <table className="table log">
-            <thead>
-              <tr><th>Time</th><th>Action</th><th>Status</th><th className="hide-sm">Source</th><th className="hide-sm">Detail</th></tr>
-            </thead>
-            <tbody>
-              {(log.data?.items ?? []).map((a) => (
-                <tr key={a.id}>
-                  <td className="nowrap">{clock(a.ts)}</td>
-                  <td>
-                    <span className="mono">{a.action}</span>
-                    <span className="muted block small">{a.target}</span>
-                  </td>
-                  <td><Badge level={statusLevel(a.status)}>{label(a.status)}</Badge></td>
-                  <td className="hide-sm muted">{a.source}{a.decided_by ? ` · ${a.decided_by}` : ""}</td>
-                  <td className="hide-sm details">{describe(a)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        {log.data && log.data.total > log.data.items.length && (
-          <button className="btn btn-quiet more" onClick={() => setLimit(limit + 25)}>
-            Show more ({log.data.total - log.data.items.length} older)
-          </button>
-        )}
-      </Panel>
+      <div id="audit-log">
+        <Panel
+          title="Audit log"
+          aside={
+            <div className="filters">
+              {batch && (
+                <button className="btn btn-quiet" onClick={() => setBatch(null)} title="Show all actions again">
+                  Approval #{batch} ✕
+                </button>
+              )}
+              <select aria-label="Status" value={status} onChange={(e) => { setStatus(e.target.value); setLimit(25); }}>
+                <option value="">All statuses</option>
+                {STATUSES.map((s) => <option key={s} value={s}>{label(s)}</option>)}
+              </select>
+              <select aria-label="Action" value={action} onChange={(e) => { setAction(e.target.value); setLimit(25); }}>
+                <option value="">All actions</option>
+                {actionNames.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          }
+        >
+          {log.data && log.data.items.length === 0 ? (
+            <Empty>No actions recorded{status || action || batch ? " for this filter" : ""}.</Empty>
+          ) : (
+            <table className="table log">
+              <thead>
+                <tr><th>Time</th><th>Action</th><th>Status</th><th className="hide-sm">Source</th><th className="hide-sm">Detail</th></tr>
+              </thead>
+              <tbody>
+                {(log.data?.items ?? []).map((a) => (
+                  <tr key={a.id}>
+                    <td className="nowrap">{clock(a.ts)}</td>
+                    <td>
+                      <span className="mono">{a.action}</span>
+                      <span className="muted block small">{a.target}</span>
+                    </td>
+                    <td><Badge level={statusLevel(a.status)}>{label(a.status)}</Badge></td>
+                    <td className="hide-sm muted">
+                      {a.source}
+                      {a.decided_by ? ` · ${a.decided_by}` : ""}
+                      {a.batch_id && !batch ? (
+                        <button className="link-btn" onClick={() => { setBatch(a.batch_id); setLimit(100); }} title="Only this approval">
+                          {" "}#{a.batch_id}
+                        </button>
+                      ) : null}
+                    </td>
+                    <td className="hide-sm details">{describe(a)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {log.data && log.data.total > log.data.items.length && (
+            <button className="btn btn-quiet more" onClick={() => setLimit(limit + 25)}>
+              Show more ({log.data.total - log.data.items.length} older)
+            </button>
+          )}
+        </Panel>
+      </div>
     </div>
   );
 }

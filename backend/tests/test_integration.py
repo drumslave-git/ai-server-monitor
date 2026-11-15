@@ -39,6 +39,7 @@ def test_migrations_are_contiguous_and_complete() -> None:
         (7, "0007_llm_trace.sql"),
         (8, "0008_bench.sql"),
         (9, "0009_chat_message_ts.sql"),
+        (10, "0010_approval_batches.sql"),
     ]
     names = {e.name for e in resources.files("ai_server_monitor.migrations").iterdir()}
     assert not any("placeholder" in n for n in names)
@@ -48,7 +49,7 @@ async def test_fresh_database_migrates_to_latest(tmp_path: Path) -> None:
     db = Database(tmp_path / "fresh.db")
     await db.connect()
     try:
-        assert await db.schema_version() == 9
+        assert await db.schema_version() == 10
         report_cols = {r["name"] for r in await db.fetchall("PRAGMA table_info(reports)")}
         assert {"status", "summary", "digest_hash", "parsed"} <= report_cols
         action_cols = {r["name"] for r in await db.fetchall("PRAGMA table_info(actions)")}
@@ -71,7 +72,7 @@ async def test_database_at_the_old_main_schema_upgrades(tmp_path: Path) -> None:
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 9
+        assert await db.schema_version() == 10
         old = await db.fetchone("SELECT status, markdown, parsed FROM reports")
         assert old is not None and old["status"] == "ok" and old["markdown"] == "old report"
         assert await db.kv_get("keep") == 1  # data survives
@@ -202,8 +203,8 @@ def test_approval_request_reaches_the_stream_and_the_metrics(bootstrap: Bootstra
         pending = frames[-1]
         assert pending["event"] == "approval.pending"
         assert pending["data"]["action"] == "qbit_delete_torrent"
-        assert pending["data"]["status"] == "pending" and pending["data"]["id"] == result["id"]
-        assert "args" not in pending["data"] and "result" not in pending["data"]  # compact
+        assert pending["data"]["pending"] == 1 and pending["data"]["id"] == result["batch_id"]
+        assert "items" not in pending["data"] and "args" not in pending["data"]  # compact
 
         scrape = client.get("/metrics").text
         assert "asm_pending_approvals 1\n" in scrape
@@ -221,15 +222,16 @@ def test_approval_request_reaches_the_stream_and_the_metrics(bootstrap: Bootstra
                 target=lambda: (
                     time.sleep(0.4),
                     httpx.post(
-                        f"{base}/api/approvals/{result['id']}", json={"decision": "approve"}
+                        f"{base}/api/approvals/{result['batch_id']}", json={"decision": "approve"}
                     ),
                 )
             ).start()
-            frames = read_sse(resp, until="action.result")
+            frames = read_sse(resp, until="approval.decided")
         events = [(f["event"], f["data"]) for f in frames if "event" in f]
-        assert [e for e, _ in events] == ["approval.decided", "action.result"]
-        assert events[0][1]["decision"] == "approved" and events[0][1]["decided_by"] == "ui"
-        assert events[1][1]["status"] == "executed"
+        assert [e for e, _ in events] == ["action.result", "approval.decided"]
+        assert events[0][1]["status"] == "executed"
+        assert events[1][1]["decision"] == "approve" and events[1][1]["decided_by"] == "ui"
+        assert events[1][1]["counts"] == {"executed": 1}
         after = client.get("/metrics").text
         assert "asm_pending_approvals 0\n" in after
         assert 'asm_actions_total{action="qbit_delete_torrent",result="executed"} 1' in after

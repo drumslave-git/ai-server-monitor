@@ -107,8 +107,8 @@ async def test_approve_policy_walks_request_pending_approve_executed(
     assert HASH_A not in world.torrents and HASH_B in world.torrents  # only the approved one
     assert await svc.pending() == []
 
-    assert [e for e, _ in events] == ["approval.pending", "action.result"]
-    assert events[-1][1]["status"] == "executed"
+    assert [e for e, _ in events] == ["approval.pending", "action.result", "approval.decided"]
+    assert events[1][1]["status"] == "executed"
     audit = await svc.list_actions()
     assert audit["total"] == 1 and audit["items"][0]["status"] == "executed"
     # Deciding again is refused.
@@ -162,10 +162,10 @@ async def test_reject_and_expiry(db: Database, world: FakeArrWorld, clock: Clock
     assert (await svc.get(second["id"]))["status"] == "expired"
     assert (await svc.get(third["id"]))["decided_by"] == "timeout"
     assert "approval.expired" in [e for e, _ in events]
-    with pytest.raises(Conflict, match="not pending"):
+    with pytest.raises(Conflict, match="pending"):
         await svc.decide(second["id"], "approve")
     with pytest.raises(NotFound):
-        await svc.decide(9999, "approve")
+        await svc.decide_batch(9999, "approve")
     assert world.requests == []
 
     # An approval that expired but was not swept yet is refused and marked expired.
@@ -184,11 +184,13 @@ async def test_rate_limit_is_counted_from_the_audit_table(
     statuses = []
     for h in (HASH_A, HASH_B, "c" * 40):
         statuses.append((await svc.request(DELETE, {"hash": h}, "scheduler"))["status"])
-    assert statuses == ["executed", "executed", "rejected"]
+    assert statuses == ["executed", "executed", "queued"]
     last = (await svc.list_actions(limit=1))["items"][0]
     assert "limit reached" in last["result"]["detail"] and "c" * 40 in world.torrents
-    clock.now += 3601  # the window moves on
-    assert (await svc.request(DELETE, {"hash": "c" * 40}, "scheduler"))["status"] == "executed"
+    assert last["status"] == "queued"  # approved by policy, waiting for the cap
+    clock.now += 3601  # the window moves on: the queue runs by itself
+    assert await svc.drain_queue() == 1
+    assert (await svc.get(last["id"]))["status"] == "executed" and "c" * 40 not in world.torrents
 
 
 async def test_bad_requests_are_rejected_or_raise(
@@ -346,18 +348,19 @@ def test_http_api_audit_and_approvals(bootstrap: Bootstrap, world: FakeArrWorld)
         pending = client.get("/api/approvals").json()["items"]
         assert [p["id"] for p in pending] == [a["id"], b["id"]]
 
-        done = client.post(f"/api/approvals/{a['id']}", json={"decision": "approve"})
-        assert done.status_code == 200 and done.json()["status"] == "executed"
-        assert done.json()["decided_by"] == "ui"
-        no = client.post(f"/api/approvals/{b['id']}", json={"decision": "reject"})
-        assert no.json()["status"] == "rejected"
+        done = client.post(f"/api/approvals/{a['batch_id']}", json={"decision": "approve"})
+        assert done.status_code == 200 and done.json()["counts"] == {"executed": 1}
+        assert done.json()["items"][0]["decided_by"] == "ui"
+        no = client.post(f"/api/approvals/{b['batch_id']}", json={"decision": "reject"})
+        assert no.json()["counts"] == {"rejected": 1}
         assert (
-            client.post(f"/api/approvals/{a['id']}", json={"decision": "approve"}).status_code
+            client.post(f"/api/approvals/{a['batch_id']}", json={"decision": "approve"}).status_code
             == 409
         )
         assert client.post("/api/approvals/999", json={"decision": "approve"}).status_code == 404
         assert (
-            client.post(f"/api/approvals/{a['id']}", json={"decision": "maybe"}).status_code == 422
+            client.post(f"/api/approvals/{a['batch_id']}", json={"decision": "maybe"}).status_code
+            == 422
         )
         assert client.get("/api/approvals").json()["items"] == []
 
@@ -372,4 +375,5 @@ def test_http_api_audit_and_approvals(bootstrap: Bootstrap, world: FakeArrWorld)
         assert [i["id"] for i in page["items"]] == [a["id"]] and page["total"] == 2
         assert client.get("/api/actions", params={"action": "arr_search"}).json()["items"] == []
         assert events.count("approval.pending") == 2 and events.count("action.result") == 2
+        assert events.count("approval.decided") == 2
         assert "approvals:sweep" in ctx.scheduler.jobs

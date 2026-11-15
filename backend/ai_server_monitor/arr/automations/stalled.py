@@ -16,13 +16,14 @@ from typing import Any
 from ...collectors.arr import is_stalled_candidate, parse_time, queue_row, torrent_row
 from ...config import StalledCleanupSettings
 from ..base import ArrError
-from .base import SOURCE, AutomationEnv, recent_args, short, tally
+from .base import SOURCE, AutomationEnv, recent_args, run_key, short, tally
 
 log = logging.getLogger(__name__)
 
 # Queue states that mean the download is finished or failed but could not be imported.
 FAILED_STATES = {"failed", "failedPending", "importBlocked"}
 DEFAULT_RUN_LIMIT = 25
+LABEL = "Stalled cleanup"
 
 
 def _hours(seconds: float) -> str:
@@ -67,18 +68,24 @@ async def run(env: AutomationEnv) -> dict[str, Any]:
     }
     seen_hash = {a["hash"].lower() for a in await recent_args(env, "qbit_delete_torrent")}
 
-    limit = cfg.max_per_hour or DEFAULT_RUN_LIMIT
-    records: list[dict[str, Any]] = []
+    # Policy "auto" executes at once, so only as many items are asked for as the hourly cap
+    # allows. Otherwise everything is filed and the cap is applied when items are executed
+    # (the ones beyond it become "deferred").
+    limit = (cfg.max_per_hour or DEFAULT_RUN_LIMIT) if cfg.policy == "auto" else None
+    removals: list[tuple[dict[str, Any], str | None]] = []
+    deletions: list[tuple[dict[str, Any], str | None]] = []
     requested_queue: set[tuple[str, str, int]] = set()
 
-    async def remove_queue_item(kind: str, name: str, row: dict[str, Any], reason: str) -> None:
+    def full() -> bool:
+        return limit is not None and len(removals) + len(deletions) >= limit
+
+    def remove_queue_item(kind: str, name: str, row: dict[str, Any], reason: str) -> None:
         key = (kind, name, int(row["id"]))
-        if key in seen_queue or key in requested_queue or len(records) >= limit:
+        if key in seen_queue or key in requested_queue or full():
             return
         requested_queue.add(key)
-        records.append(
-            await env.service.request(
-                "arr_remove_queue_item",
+        removals.append(
+            (
                 {
                     "app": kind,
                     "instance": name,
@@ -88,8 +95,7 @@ async def run(env: AutomationEnv) -> dict[str, Any]:
                     "search": True,
                     "title": short(row["title"]),
                 },
-                SOURCE,
-                reason=reason,
+                reason,
             )
         )
 
@@ -103,18 +109,15 @@ async def run(env: AutomationEnv) -> dict[str, Any]:
         )
         owner = owners.get(str(row["hash"]).lower())
         if owner:
-            await remove_queue_item(*owner[:2], owner[2], reason)
+            remove_queue_item(*owner[:2], owner[2], reason)
         elif not arr_unreadable and str(row["hash"]).lower() not in seen_hash:
-            if len(records) >= limit:
+            if full():
                 continue
             seen_hash.add(str(row["hash"]).lower())
-            records.append(
-                await env.service.request(
-                    "qbit_delete_torrent",
+            deletions.append(
+                (
                     {"hash": row["hash"], "delete_files": False, "title": short(row["name"])},
-                    SOURCE,
-                    reason=reason + "; not owned by any *arr, so it is only suggested",
-                    suggest_only=True,
+                    reason + "; not owned by any *arr, so it is only suggested",
                 )
             )
 
@@ -126,7 +129,7 @@ async def run(env: AutomationEnv) -> dict[str, Any]:
         added = parse_time(row["added"])
         if added is not None and now - added < min_age:
             continue  # give it time: imports often resolve themselves
-        await remove_queue_item(
+        remove_queue_item(
             kind,
             name,
             row,
@@ -134,4 +137,20 @@ async def run(env: AutomationEnv) -> dict[str, Any]:
             + (f" ({row['messages'][0]})" if row["messages"] else ""),
         )
 
+    # ---- one request per action type for the whole run: one approval batch
+    key = run_key("stalled_cleanup", env)
+    records: list[dict[str, Any]] = []
+    if removals:
+        records += await env.service.request_many(
+            "arr_remove_queue_item", removals, SOURCE, run_key=key, label=LABEL
+        )
+    if deletions:
+        records += await env.service.request_many(
+            "qbit_delete_torrent",
+            deletions,
+            SOURCE,
+            run_key=key,
+            label=LABEL,
+            suggest_only=True,
+        )
     return {"requested": len(records), "outcomes": tally(records)}

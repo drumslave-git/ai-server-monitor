@@ -22,8 +22,8 @@ log = logging.getLogger(__name__)
 
 SOURCE = "scheduler"
 DEDUPE_WINDOW = 24 * 3600.0
-"""An item that already has a request this recent (any outcome but 'expired') is not
-requested again. Pending approvals always count, however old."""
+"""An item that already has a request this recent (any outcome but 'expired' or 'deferred',
+which did not happen) is not requested again. Pending approvals always count, however old."""
 
 
 @dataclass
@@ -39,7 +39,7 @@ async def recent_args(
 ) -> list[dict[str, Any]]:
     """Arguments of earlier requests for `action` that should not be repeated."""
     rows = await env.service.db.fetchall(
-        "SELECT args FROM actions WHERE action = ? AND status != 'expired' "
+        "SELECT args FROM actions WHERE action = ? AND status NOT IN ('expired', 'deferred') "
         "AND (status = 'pending' OR ts >= ?)",
         (action, env.clock() - window),
     )
@@ -55,3 +55,8 @@ def tally(records: list[dict[str, Any]]) -> dict[str, int]:
     for record in records:
         out[record["status"]] = out.get(record["status"], 0) + 1
     return out
+
+
+def run_key(name: str, env: AutomationEnv) -> str:
+    """Identifies one run of an automation: its approvals form one batch."""
+    return f"{name}:{int(env.clock())}"

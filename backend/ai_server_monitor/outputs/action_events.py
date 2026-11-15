@@ -1,27 +1,64 @@
 """Bridge from the action layer's notifiers to the event bus and the metrics.
 
-`ActionService` calls `notifier(event, record)` for suggested/pending/expired actions and
-for every finished one. This publishes them on the bus (so they reach GET /api/stream) and
-counts them in `asm_actions_total`:
+`ActionService` calls `notifier(event, record)` and this publishes the event on the bus (so
+it reaches GET /api/stream). Item events carry one audit row and are counted in
+`asm_actions_total`:
 
     action.suggested   an action was only suggested (policy "suggest")
-    approval.pending   an action waits for a human decision
-    approval.decided   a human (or the timeout) decided: approved | rejected | expired
-    approval.expired   a pending approval timed out (also announced as approval.decided)
-    action.result      an action finished: executed | failed | dry_run | rejected
+    action.result      an item finished: executed | failed | dry_run | rejected | deferred | expired
 
-Payloads are compact (no arguments or results: fetch those from /api/actions).
+Batch events carry an approval batch (the items waiting for one decision):
+
+    approval.pending   a batch was opened
+    approval.updated   items were added to an open batch
+    approval.decided   all or some of its items were approved / rejected (`decision`, `decided_by`)
+    approval.expired   its pending items timed out
+    approval.progress  approved items that waited for the hourly cap were executed
+
+Payloads are compact (no arguments or results: fetch those from /api/actions and
+/api/approvals).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from ..actions import BATCH_EVENTS
 from ..events import EventBus
 from .metrics import MetricsHub
 
-_KEEP = ("id", "ts", "action", "target", "policy", "status", "source", "reason", "decided_by")
-_APPROVED = ("approved", "executed", "failed", "dry_run")
+_KEEP = (
+    "id",
+    "batch_id",
+    "ts",
+    "action",
+    "target",
+    "policy",
+    "status",
+    "source",
+    "reason",
+    "decided_by",
+)
+_BATCH_KEEP = (
+    "id",
+    "ts",
+    "updated",
+    "action",
+    "label",
+    "title",
+    "source",
+    "expires_at",
+    "total",
+    "pending",
+    "counts",
+    "outcome",
+    "queued",
+    "next_in_s",
+    "queue_note",
+    "added",
+    "decision",
+    "decided_by",
+)
 
 
 def compact_action(record: dict[str, Any]) -> dict[str, Any]:
@@ -30,18 +67,26 @@ def compact_action(record: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def compact_batch(batch: dict[str, Any]) -> dict[str, Any]:
+    return {k: batch.get(k) for k in _BATCH_KEEP if k in batch}
+
+
 class ActionEventBridge:
     def __init__(self, bus: EventBus, metrics: MetricsHub):
         self.bus = bus
         self.metrics = metrics
 
     def __call__(self, event: str, record: dict[str, Any]) -> None:
+        if event in BATCH_EVENTS:
+            if event in ("approval.pending", "approval.updated"):  # `added` new pending items
+                self.metrics.inc(
+                    "asm_actions_total",
+                    {"action": str(record["action"]), "result": "pending"},
+                    int(record.get("added") or 0),
+                )
+            self.bus.publish(event, compact_batch(record))
+            return
         data = compact_action(record)
         status = str(record.get("status") or "")
         self.metrics.inc("asm_actions_total", {"action": str(data["action"]), "result": status})
-        decided_by = str(record.get("decided_by") or "")
-        human_decision = decided_by and not decided_by.startswith("policy")
-        if human_decision and event in ("action.result", "approval.expired"):
-            decision = "approved" if status in _APPROVED else status  # rejected | expired
-            self.bus.publish("approval.decided", {**data, "decision": decision})
         self.bus.publish(event, data)

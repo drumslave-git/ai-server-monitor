@@ -29,7 +29,7 @@ _PRUNABLE: dict[str, str] = {
     # whole retention period or ends up with no messages at all (see `prune`).
     "chat_messages": "ts",
     "chat_sessions": "updated",
-    "telegram_approval_messages": "created_ts",
+    "telegram_batch_messages": "created_ts",
 }
 
 

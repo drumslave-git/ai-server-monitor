@@ -230,15 +230,15 @@ async def test_missing_search_under_auto_sends_the_command_and_respects_the_cap(
     env.settings.arr.actions.missing_search.max_per_hour = 1
     summary = await search.run(env, "missing")
     # batch 3 over two instances -> 1 item each; the per-hour cap lets only one execute.
-    assert summary["outcomes"] == {"executed": 1, "rejected": 1}
+    assert summary["outcomes"] == {"executed": 1, "queued": 1}
     records = (await env.service.list_actions())["items"]
-    rejected = next(r for r in records if r["status"] == "rejected")
-    assert "limit reached" in rejected["result"]["detail"]
+    deferred = next(r for r in records if r["status"] == "queued")
+    assert "limit reached" in deferred["result"]["detail"]
     executed = next(r for r in records if r["status"] == "executed")
     assert executed["args"]["app"] == "radarr" and executed["args"]["ids"] == [0]
     body = json.loads(calls(world, "radarr.test", "POST")[0]["body"])
     assert body == {"name": "MoviesSearch", "movieIds": [0]}
-    assert rejected["args"]["title"] == "Show S01E02"
+    assert deferred["args"]["title"] == "Show S01E02"
 
 
 async def test_cutoff_search_has_its_own_policy_and_apps_without_wanted_lists_are_skipped(

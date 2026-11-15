@@ -17,6 +17,8 @@ const EVENT_TYPES = [
   "action.suggested",
   "action.result",
   "approval.pending",
+  "approval.updated",
+  "approval.progress",
   "approval.decided",
   "approval.expired",
 ];

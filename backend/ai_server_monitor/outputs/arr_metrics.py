@@ -26,17 +26,26 @@ def configured_instances(settings: Settings) -> list[tuple[str, str]]:
 
 
 def arr_families(
-    settings: Settings, arr_data: dict[str, Any] | None, pending_approvals: int
+    settings: Settings,
+    arr_data: dict[str, Any] | None,
+    pending_approvals: int,
+    pending_batches: int = 0,
 ) -> list[Family]:
     pending = Family(
         "asm_pending_approvals",
         "gauge",
-        "Actions waiting for a human decision.",
+        "Actions (items) waiting for a human decision.",
         [Sample(pending_approvals)],
+    )
+    batches = Family(
+        "asm_pending_approval_batches",
+        "gauge",
+        "Approvals (batches of items) waiting for a human decision.",
+        [Sample(pending_batches)],
     )
     if not arr_data:
         # No result yet (or every instance unreachable): per-app numbers would be guesses.
-        return [pending]
+        return [pending, batches]
     entries: dict[tuple[str, str], dict[str, Any]] = {}
     for e in [*(arr_data.get("apps") or []), arr_data.get("prowlarr"), arr_data.get("qbittorrent")]:
         if isinstance(e, dict):
@@ -59,6 +68,7 @@ def arr_families(
     states = (qbit.get("summary") or {}).get("by_state") or {}
     return [
         pending,
+        batches,
         Family("asm_arr_up", "gauge", "1 if the app's API answered at the last check.", up),
         Family("asm_arr_queue_size", "gauge", "Items in the app's download queue.", queue),
         Family(

@@ -93,7 +93,7 @@ export function App() {
         {page === "reports" ? (
           <ReportsPage params={params} />
         ) : page === "approvals" ? (
-          <ApprovalsPage />
+          <ApprovalsPage params={params} />
         ) : page === "arr" ? (
           <ArrPage />
         ) : page === "chat" ? (
