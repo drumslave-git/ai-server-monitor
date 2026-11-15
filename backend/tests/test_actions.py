@@ -318,6 +318,7 @@ async def test_every_registered_action_is_a_write_with_a_json_schema() -> None:
         "arr_add_media",
         "prowlarr_test_indexer",
         "mcp_call",
+        "api_call",
     }
     for definition in REGISTRY.values():
         assert definition.kind == "write"

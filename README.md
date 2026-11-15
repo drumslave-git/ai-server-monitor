@@ -401,6 +401,9 @@ a fresh install starts with.
 | `arr.actions.indexer_triage.policy` | off / suggest / approve / auto | `suggest` | off = never; suggest = mention in reports; approve = ask you first; auto = just do it. |
 | `arr.actions.indexer_triage.max_per_hour` | integer (min 0) | `0` | Cap on how many of these actions run per hour (0 = no cap). |
 | `arr.actions.indexer_triage.interval` | duration | `1h` | How often to look for failing indexers. |
+| **arr.actions.api_call** | group |  | Any other write the chat asks for through the HTTP API of a service (POST/PUT/DELETE to Radarr, Sonarr, Whisparr, Prowlarr, qBittorrent) and searches that query every indexer. Dry-run (above) applies too. |
+| `arr.actions.api_call.policy` | off / suggest / approve / auto | `approve` | off = never; suggest = mention in reports; approve = ask you first; auto = just do it. |
+| `arr.actions.api_call.max_per_hour` | integer (min 0) | `0` | Cap on how many of these actions run per hour (0 = no cap). |
 | `arr.actions.approval_ttl` | duration | `1d` | Pending approvals expire after this. |
 
 ### MCP servers (`mcp`)

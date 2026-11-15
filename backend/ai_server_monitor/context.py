@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from .actions import ActionService, Notifier
+from .apiaccess import ApiGateway
 from .arr.automations import AutomationEnv
 from .arr.automations import register as register_automations
 from .chat import ChatEngine
@@ -99,14 +100,23 @@ class AppContext:
         self.reports = self._build_reports()
         self.promauto = Planner(self.settings, self.db, self.llm)
         self.mcp = McpManager(self.settings.mcp, audit=audit_hook(self.db, "mcp"))
+        self.api_gateway = self._build_api_gateway(self.settings)
         self.actions = ActionService(
             self.db,
             self.settings,
             notifiers=self.action_notifiers,
             transport=arr_transport,
             mcp=self.mcp,
+            api=self.api_gateway,
         )
         self.chat = ChatEngine(self)
+
+    def _build_api_gateway(self, settings: Settings) -> ApiGateway:
+        """Generic HTTP API access (chat `api_call` / `api_endpoints` and the `api_call`
+        action). Every call, GET included, goes to the shared chat audit trail (kind "api")."""
+        return ApiGateway(
+            settings, transport=self._arr_transport, on_call=audit_hook(self.db, "api")
+        )
 
     def _collector_options(self) -> dict[str, dict[str, Any]]:
         options: dict[str, dict[str, Any]] = {"prometheus": {"store": QueryStore(self.db)}}
@@ -174,8 +184,14 @@ class AppContext:
             timeout=timedelta(seconds=s.llm.timeout.total_seconds() * 2 + 30),
         )
         self.mcp = McpManager(s.mcp, audit=audit_hook(self.db, "mcp"))
+        self.api_gateway = self._build_api_gateway(s)
         self.actions = ActionService(
-            self.db, s, notifiers=self.action_notifiers, transport=self._arr_transport, mcp=self.mcp
+            self.db,
+            s,
+            notifiers=self.action_notifiers,
+            transport=self._arr_transport,
+            mcp=self.mcp,
+            api=self.api_gateway,
         )
         self.scheduler.add("approvals:sweep", self.actions.sweep_expired, APPROVAL_SWEEP)
         register_automations(
@@ -244,6 +260,7 @@ class AppContext:
         await self.scheduler.stop()
         await self.collectors.close()
         await self.actions.close()
+        await self.api_gateway.close()
         await self.mcp.close()
         await self.llm.aclose()
 

@@ -70,6 +70,7 @@ class ActionService:
         transport: httpx.AsyncBaseTransport | None = None,
         clock: Callable[[], float] = time.time,
         mcp: Any = None,
+        api: Any = None,
     ):
         self.db = db
         self.settings = settings
@@ -79,6 +80,8 @@ class ActionService:
         self._clock = clock
         self.mcp = mcp
         """The MCP manager (None when unused); `ActionDef.run` hooks reach it from here."""
+        self.api = api
+        """The apiaccess.ApiGateway (for the `api_call` action)."""
         self._clients: Clients | None = None
         self._lock = asyncio.Lock()
 

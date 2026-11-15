@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
 
-from ai_server_monitor.actions.registry import ActionDef
 from ai_server_monitor.actions.service import ActionService
 from ai_server_monitor.apiaccess import (
     ACTION_NAME,
@@ -16,14 +16,13 @@ from ai_server_monitor.apiaccess import (
     ApiCallActionArgs,
     ApiGateway,
     ApiRequest,
+    action_check,
     action_target,
     api_tool_specs,
     index,
-    make_action_check,
-    make_action_executor,
 )
 from ai_server_monitor.apiaccess import gateway as gateway_module
-from ai_server_monitor.config import Settings
+from ai_server_monitor.config import Bootstrap, Settings
 from ai_server_monitor.db import Database
 
 from .apifakes import (
@@ -35,6 +34,7 @@ from .apifakes import (
     api_settings,
 )
 from .arrfakes import API_KEY, QBIT_PASSWORD
+from .test_chat import FakeLLM, ask, call, make_app, say
 
 
 @pytest.fixture
@@ -375,21 +375,16 @@ class Ctx(SimpleNamespace):
     pass
 
 
+def make_actions(db: Database, gateway: ApiGateway, **actions_cfg: Any) -> ActionService:
+    settings = api_settings(**({"actions": actions_cfg} if actions_cfg else {}))
+    return ActionService(db, settings, api=gateway)
+
+
 @pytest.fixture
 async def actions(tmp_path: Path, gateway: ApiGateway) -> AsyncIterator[ActionService]:
     db = Database(tmp_path / "t.db")
     await db.connect()
-    settings: Settings = api_settings()
-    definition = ActionDef(
-        name=ACTION_NAME,
-        description="api call",
-        args_model=ApiCallActionArgs,  # type: ignore[arg-type]
-        policy_key=lambda a: "add_media",  # policy "approve" until arr.actions.api_call exists
-        target=action_target,
-        check=make_action_check(lambda: gateway),
-        execute=make_action_executor(lambda: gateway),
-    )
-    service = ActionService(db, settings, registry={ACTION_NAME: definition})
+    service = make_actions(db, gateway)
     yield service
     await service.close()
     await db.close()
@@ -425,6 +420,17 @@ async def test_tool_read_goes_straight_through(gateway: ApiGateway, actions: Act
     assert result["data"] == [
         {"t": "Show.S01E01.1080p", "why": ["No files found are eligible for import"]}
     ]
+    assert "also" not in result  # Sonarr has no sibling
+    movies = await run_tool(
+        "api_call",
+        {
+            "service": "radarr",
+            "path": "/api/v3/wanted/missing?pageSize=1",
+            "select": "totalRecords",
+        },
+        ctx_for(gateway, actions),
+    )
+    assert "whisparr" in movies["also"] and "query it too" in movies["also"]
 
 
 async def test_tool_write_becomes_a_pending_approval_and_runs_only_after_it(
@@ -506,18 +512,74 @@ async def test_tool_refuses_bad_calls_before_filing_anything(
     assert await actions.pending() == [] and world.requests == []
 
 
-async def test_action_check_rejects_what_the_tool_would(
-    gateway: ApiGateway, actions: ActionService
-) -> None:
-    check = make_action_check(lambda: gateway)
+async def test_action_check_rejects_what_the_tool_would() -> None:
+    settings = api_settings()
     ok = ApiCallActionArgs(service="radarr", method="POST", path="/api/v3/command")
-    assert check(api_settings(), ok) is None
+    assert action_check(settings, ok) is None
     assert "read-only" in (
-        check(api_settings(), ApiCallActionArgs(service="docker", method="POST", path="/x")) or ""
+        action_check(settings, ApiCallActionArgs(service="docker", method="POST", path="/x")) or ""
     )
     assert "unknown service" in (
-        check(api_settings(), ApiCallActionArgs(service="nope", method="POST", path="/x")) or ""
+        action_check(settings, ApiCallActionArgs(service="nope", method="POST", path="/x")) or ""
     )
+    assert action_check(
+        settings, ApiCallActionArgs(service="radarr", method="POST", path="http://evil.test/x")
+    )
+
+
+async def test_api_call_is_registered_with_policy_approve_by_default(
+    actions: ActionService,
+) -> None:
+    assert actions.settings.arr.actions.api_call.policy == "approve"
+    definition = actions.registry[ACTION_NAME]
+    assert definition.chat_tool is False  # the chat has its own tool; no second generic one
+    assert action_target(ApiCallActionArgs(service="radarr", method="DELETE", path="/x")) == (
+        "radarr: DELETE /x"
+    )
+
+
+async def test_policy_off_rejects_and_suggest_only_records(
+    tmp_path: Path, gateway: ApiGateway, world: FakeServices
+) -> None:
+    db = Database(tmp_path / "p.db")
+    await db.connect()
+    args = {"service": "radarr", "method": "DELETE", "path": "/api/v3/movie/5"}
+    for policy, status in (("off", "rejected"), ("suggest", "suggested")):
+        service = make_actions(db, gateway, api_call={"policy": policy})
+        record = await service.request(ACTION_NAME, args, "chat:s1")
+        assert record["status"] == status
+    assert world.requests == []
+    await db.close()
+
+
+async def test_dry_run_is_honoured_for_approved_calls(
+    tmp_path: Path, gateway: ApiGateway, world: FakeServices
+) -> None:
+    db = Database(tmp_path / "d.db")
+    await db.connect()
+    settings = api_settings(dry_run=True)
+    service = ActionService(db, settings, api=gateway)
+    record = await service.request(
+        ACTION_NAME, {"service": "radarr", "method": "POST", "path": "/api/v3/command"}, "chat:s1"
+    )
+    done = await service.decide(record["id"], "approve")
+    assert done["status"] == "dry_run" and world.requests == []
+    await db.close()
+
+
+async def test_max_per_hour_caps_approved_calls(
+    tmp_path: Path, gateway: ApiGateway, world: FakeServices
+) -> None:
+    db = Database(tmp_path / "m.db")
+    await db.connect()
+    service = make_actions(db, gateway, api_call={"policy": "approve", "max_per_hour": 1})
+    args = {"service": "radarr", "method": "POST", "path": "/api/v3/command", "body": {"name": "X"}}
+    first = await service.request(ACTION_NAME, args, "chat:s1")
+    assert (await service.decide(first["id"], "approve"))["status"] == "executed"
+    second = await service.request(ACTION_NAME, args, "chat:s1")
+    assert (await service.decide(second["id"], "approve"))["status"] == "rejected"
+    assert len(world.mutations) == 1
+    await db.close()
 
 
 async def test_failed_approved_call_is_recorded_with_the_message(
@@ -661,3 +723,80 @@ def test_every_recipe_call_is_a_valid_request() -> None:
                 from ai_server_monitor.apiaccess.shaping import run_select
 
                 run_select({}, recipe["select"])  # compiles
+
+
+# --------------------------------------------------------------------------- the whole chat
+
+
+def test_chat_reads_through_api_call_and_audits_every_call(bootstrap: Bootstrap) -> None:
+    world = FakeServices()
+    llm = FakeLLM(
+        call("api_endpoints", {"service": "radarr", "search": "missing"}, "e"),
+        call(
+            "api_call",
+            {
+                "service": "radarr",
+                "path": "/api/v3/wanted/missing?page=1&pageSize=3",
+                "select": "records[].title",
+            },
+            "c",
+        ),
+        say("Missing: Missing 001, Missing 002, Missing 003."),
+    )
+    with TestClient(make_app(bootstrap, llm, world=world, dry_run=False)) as client:
+        events = ask(client, "what movies are we missing?")
+        offered = {t["function"]["name"] for t in llm.requests[0]["tools"]}
+        assert {"api_call", "api_endpoints"} <= offered
+        calls = [e for e in events if e["type"] == "tool_call"]
+        assert [(c["name"], c["kind"]) for c in calls] == [
+            ("api_endpoints", "read"),
+            ("api_call", "read"),  # a GET is labelled read although the tool can write
+        ]
+        results = {e["name"]: e for e in events if e["type"] == "tool_result"}
+        assert "Missing 001" in results["api_call"]["preview"]
+        assert all(e["ok"] for e in results.values())
+        audit = client.portal.call(
+            client.app.state.ctx.db.kv_get,  # type: ignore[attr-defined]
+            "tool_audit",
+            [],
+        )
+        entry = next(a for a in audit if a["kind"] == "api")
+        assert (entry["service"], entry["method"], entry["status"]) == ("radarr", "GET", 200)
+        assert entry["path"] == "/api/v3/wanted/missing" and entry["source"].startswith("chat:")
+        assert API_KEY not in text_of(audit)
+
+
+def test_chat_write_ends_as_a_pending_approval_and_runs_after_it(bootstrap: Bootstrap) -> None:
+    world = FakeServices()
+    body = {"name": "MoviesSearch", "movieIds": [7]}
+    llm = FakeLLM(
+        call(
+            "api_call",
+            {"service": "radarr", "method": "POST", "path": "/api/v3/command", "body": body},
+            "w",
+        ),
+        say("Asked for approval; nothing was searched yet."),
+    )
+    with TestClient(make_app(bootstrap, llm, world=world, dry_run=False)) as client:
+        events = ask(client, "search for movie 7 now")
+        write = next(e for e in events if e["type"] == "tool_call")
+        assert write["name"] == "api_call" and write["kind"] == "write"
+        result = next(e for e in events if e["type"] == "tool_result")
+        assert json.loads(result["preview"])["status"] == "pending"
+        assert world.mutations == []
+        approvals = client.get("/api/approvals").json()["items"]
+        assert [a["action"] for a in approvals] == ["api_call"]
+        assert approvals[0]["target"] == "radarr: POST /api/v3/command"
+        done = client.post(f"/api/approvals/{approvals[0]['id']}", json={"decision": "approve"})
+        assert done.json()["status"] == "executed"
+        assert len(world.mutations) == 1
+        assert json.loads(world.mutations[0]["body"]) == body
+        # the approved call is in the same audit trail
+        audit = client.portal.call(
+            client.app.state.ctx.db.kv_get,  # type: ignore[attr-defined]
+            "tool_audit",
+            [],
+        )
+        assert [(a["method"], a["source"]) for a in audit if a["kind"] == "api"] == [
+            ("POST", "action:api_call")
+        ]

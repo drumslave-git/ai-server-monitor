@@ -1,13 +1,10 @@
 """The two chat tools (`api_call`, `api_endpoints`) and the `api_call` action.
 
-Nothing here imports the chat or action packages (they will import this one): the builders
-return plain specs and pieces the registries wrap. Wiring, in the shared files:
-
-    tools:    for spec in api_tool_specs(settings): Tool(**spec.as_kwargs())
-    actions:  ActionDef(name=ACTION_NAME, description=ACTION_DESCRIPTION,
-                        args_model=ApiCallActionArgs, policy_key=lambda a: POLICY_KEY,
-                        target=action_target, check=make_action_check(get_gateway),
-                        execute=make_action_executor(get_gateway))
+The tools are built by `api_tool_specs(settings)` (plain specs; `chat/tools.py` wraps them in
+`Tool`). The action is registered in `actions/registry.py` through the `ActionDef` hooks:
+`args_model=ApiCallActionArgs`, `target=action_target`, `check=action_check`,
+`run=action_run` (which uses `service.api`, the ApiGateway). Nothing here imports the chat or
+action packages.
 """
 
 from __future__ import annotations
@@ -24,7 +21,7 @@ from . import index
 from .errors import ApiAccessError
 from .gateway import ApiGateway, ApiRequest
 from .shaping import DEFAULT_LIMIT, MAX_LIMIT
-from .targets import KIND_LABEL, METHODS, build_targets
+from .targets import KIND_LABEL, METHODS, build_targets, prepare
 
 ACTION_NAME = "api_call"
 POLICY_KEY = "api_call"  # TODO setting: arr.actions.api_call, default "approve"
@@ -58,6 +55,7 @@ class ToolSpec:
     kind: ToolKind
     handler: Callable[[Any, Any], Awaitable[Any]]
     enabled: Callable[[Any], bool]
+    kind_for: Callable[[dict[str, Any]], ToolKind] | None = None
 
     def as_kwargs(self) -> dict[str, Any]:
         return {
@@ -67,6 +65,7 @@ class ToolSpec:
             "kind": self.kind,
             "handler": self.handler,
             "enabled": self.enabled,
+            "kind_for": self.kind_for,
         }
 
 
@@ -198,7 +197,7 @@ def api_tool_specs(
         try:
             prepared = gateway.prepare(args.service, args.method, args.path, args.query)
             if not prepared.write_like:
-                return await gateway.execute(
+                result = await gateway.execute(
                     ApiRequest(
                         service=args.service,
                         method=args.method,
@@ -211,6 +210,9 @@ def api_tool_specs(
                     ),
                     source=_source(ctx),
                 )
+                # Said again next to the data, where the model reads it just before it answers.
+                related = _related(gateway, args.service)
+                return {**result, "also": related} if related else result
         except ApiAccessError as exc:
             raise error_cls(str(exc)) from exc
         return await _request_approval(ctx, actions_of(ctx), args, prepared.display, error_cls)
@@ -226,7 +228,13 @@ def api_tool_specs(
             enabled,
         ),
         ToolSpec(
-            "api_call", API_CALL_DESCRIPTION, _api_call_model(services), "write", call, enabled
+            "api_call",
+            API_CALL_DESCRIPTION,
+            _api_call_model(services),
+            "write",
+            call,
+            enabled,
+            kind_for=_call_kind,
         ),
     ]
 
@@ -250,6 +258,11 @@ def _related(gateway: ApiGateway, service: str) -> str | None:
     if not others:
         return None
     return f"{', '.join(others)} holds the same kind of data: query it too for a complete answer"
+
+
+def _call_kind(args: dict[str, Any]) -> ToolKind:
+    """GET reads; anything else is a request for a change."""
+    return "read" if str(args.get("method") or "GET").upper() == "GET" else "write"
 
 
 def _source(ctx: Any) -> str:
@@ -310,46 +323,40 @@ def action_target(args: ApiCallActionArgs) -> str:
     return f"{args.service}: {args.method} {args.path}"
 
 
-def make_action_check(get_gateway: Callable[[], ApiGateway]) -> Callable[[Any, Any], str | None]:
+def action_check(settings: Any, args: ApiCallActionArgs) -> str | None:
     """`ActionDef.check`: why the request cannot be carried out (unknown service, bad path,
-    a write to a read-only service), or None."""
+    a write to a read-only service), or None. Needs only the settings."""
+    target = build_targets(settings).get(args.service)
+    if target is None:
+        known = ", ".join(build_targets(settings)) or "none configured"
+        return f"unknown service {args.service!r}; available: {known}"
+    try:
+        prepare(target, args.method, args.path, args.query)
+    except ApiAccessError as exc:
+        return str(exc)
+    return None
 
-    def check(settings: Any, args: ApiCallActionArgs) -> str | None:
-        try:
-            get_gateway().prepare(args.service, args.method, args.path, args.query)
-        except ApiAccessError as exc:
-            return str(exc)
-        return None
 
-    return check
-
-
-def make_action_executor(
-    get_gateway: Callable[[], ApiGateway],
-) -> Callable[[Any, ApiCallActionArgs], Awaitable[dict[str, Any]]]:
-    """`ActionDef.execute`: runs the approved call. The request is validated again here;
-    the stored arguments are never trusted. A failed call raises ArrError, which the action
-    layer records as `failed` with the message."""
-
-    async def execute(clients: Any, args: ApiCallActionArgs) -> dict[str, Any]:
-        try:
-            return await get_gateway().execute(
-                ApiRequest(
-                    service=args.service,
-                    method=args.method,
-                    path=args.path,
-                    query=args.query,
-                    body=args.body,
-                    limit=20,
-                ),
-                approved=True,
-                source="action:api_call",
-                max_chars=ACTION_RESULT_CHARS,
-            )
-        except ApiAccessError as exc:
-            raise ArrError(str(exc), status=exc.status) from exc
-
-    return execute
+async def action_run(service: Any, args: ApiCallActionArgs) -> dict[str, Any]:
+    """`ActionDef.run`: runs the approved call through `service.api` (the ApiGateway). The
+    request is validated again here; the stored arguments are never trusted. A failed call
+    raises ArrError, which the action layer records as `failed` with the message."""
+    try:
+        return await service.api.execute(
+            ApiRequest(
+                service=args.service,
+                method=args.method,
+                path=args.path,
+                query=args.query,
+                body=args.body,
+                limit=20,
+            ),
+            approved=True,
+            source="action:api_call",
+            max_chars=ACTION_RESULT_CHARS,
+        )
+    except ApiAccessError as exc:
+        raise ArrError(str(exc), status=exc.status) from exc
 
 
 __all__ = [
@@ -359,8 +366,8 @@ __all__ = [
     "POLICY_KEY",
     "ApiCallActionArgs",
     "ToolSpec",
+    "action_check",
+    "action_run",
     "action_target",
     "api_tool_specs",
-    "make_action_check",
-    "make_action_executor",
 ]

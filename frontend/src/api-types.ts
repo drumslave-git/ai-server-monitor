@@ -493,6 +493,16 @@ export interface components {
              */
             add_media: components["schemas"]["ActionSettings"];
             /**
+             * @description Any other write the chat asks for through the HTTP API of a service (POST/PUT/DELETE
+             *     to Radarr, Sonarr, Whisparr, Prowlarr, qBittorrent) and searches that query every indexer.
+             *     Dry-run (above) applies too.
+             * @default {
+             *       "max_per_hour": 0,
+             *       "policy": "approve"
+             *     }
+             */
+            api_call: components["schemas"]["ActionSettings"];
+            /**
              * Approval Ttl
              * Format: duration
              * @description Pending approvals expire after this.
@@ -594,6 +604,10 @@ export interface components {
             /**
              * @default {
              *       "add_media": {
+             *         "max_per_hour": 0,
+             *         "policy": "approve"
+             *       },
+             *       "api_call": {
              *         "max_per_hour": 0,
              *         "policy": "approve"
              *       },
@@ -2003,6 +2017,10 @@ export interface components {
              * @default {
              *       "actions": {
              *         "add_media": {
+             *           "max_per_hour": 0,
+             *           "policy": "approve"
+             *         },
+             *         "api_call": {
              *           "max_per_hour": 0,
              *           "policy": "approve"
              *         },

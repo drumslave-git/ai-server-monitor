@@ -91,3 +91,115 @@ There are 4 more records on the next page. Would you like me to fetch the remain
 
 - `GET radarr.test/api/v3/wanted/missing` page=1 pageSize=50 monitored=true (both runs)
 - `GET sonarr.test/api/v3/queue` page=1 pageSize=50 includeUnknownSeriesItems=true
+
+# Run 3: the wired app (`/api/chat` engine, all 20 tools, real system prompt), Radarr AND Whisparr configured
+
+Model `gemma4:e4b` at `https://ollama.tcloud.monster/v1`; the real engine with all tools and the real system prompt. The world is fake: Radarr 54 and Whisparr 3763 missing movies, a Sonarr queue with 3 problems, Prowlarr with one failing indexer.
+
+Tool schemas: 20 tools = **2689 tokens**; `api_call` + `api_endpoints` alone = 619 tokens.
+
+## Q: what exact movies are we missing?
+
+- **tool call** `api_endpoints` `{"search": "missing", "service": "radarr"}`
+  - result (ok, 617 chars): `'{"service":"radarr","prefix":"/api/v3","recipes":[{"for":"which movies are missing / not downloaded (monitored, no file)","call":"GET /api/v3/wanted/missing?page=1&pageSize=50&monitored=true","select":"records[].{id: id, title: title, year: year}","note":"tota'`
+- **tool call** `api_call` `{"select": "records[].{id: id, title: title, year: year}", "service": "radarr", "path": "/api/v3/wanted/missing?page=1&pageSize=50&monitored=true"}`
+  - result (ok, 2743 chars): `'{"service":"radarr","call":"GET /api/v3/wanted/missing","status":200,"paged":{"page":1,"pageSize":50,"totalRecords":54},"note":"the server has 54 records, this response holds 50 (page 1): add query page=2 for the next ones, or all_pages=true","data":[{"id":1,"'`
+
+**Answer** (tool mode native, 3 steps, 11379 prompt tokens):
+
+We are missing a total of 54 movies in Radarr.
+
+Here are the first 50 missing movies:
+
+*   Radarr Missing 01 (1991)
+*   Radarr Missing 02 (1992)
+*   Radarr Missing 03 (1993)
+*   … (titles 04–47 elided in this file; the model listed all 50)
+*   Radarr Missing 48 (2008)
+*   Radarr Missing 49 (2009)
+*   Radarr Missing 50 (2010)
+
+There are 4 more records on the next page. Would you like me to fetch the remaining missing movies?
+
+## Q: remove movie 12 from Radarr
+
+- **tool call** `api_endpoints` `{"search": "delete", "service": "radarr"}`
+  - result (ok, 1047 chars): `'{"service":"radarr","prefix":"/api/v3","recipes":[],"endpoints":["DELETE /api/v3/autotagging/{id} - delete autotagging","DELETE /api/v3/blocklist/{id} - delete blocklist","DELETE /api/v3/command/{id} - delete command","DELETE /api/v3/customfilter/{id} - delete'`
+- **tool call** `api_call` `{"method": "DELETE", "path": "/api/v3/movie/12", "service": "radarr"}`
+  - result (ok, 256 chars): `'{"action_id":1,"status":"pending","policy":"approve","target":"radarr: DELETE /api/v3/movie/12","result":null,"note":"Waiting for the owner\'s approval (approval id 1). Tell the user to approve or reject it in the approvals list; it has NOT been done yet."}'`
+
+**Answer** (tool mode native, 3 steps, 10559 prompt tokens):
+
+The request to remove movie 12 from Radarr is pending and requires your approval.
+
+The action has **not** been executed yet. Please approve or reject it in the pending approvals list.
+
+## Pending approvals left by the chat
+
+- #1 `api_call` radarr: DELETE /api/v3/movie/12 (source chat:418e786130a54c29860ca063923005c1)
+
+
+Verdict of run 3 (this is the check after wiring; 2 conversations):
+
+- **The write request works end to end**: `DELETE /api/v3/movie/12` became a pending approval
+  (`api_call`, target `radarr: DELETE /api/v3/movie/12`), nothing reached the fake Radarr.
+- **The movies question still stopped at Radarr** (54 missing; the 3763 Whisparr titles were not
+  asked for), although the real prompt mentions the API tools and `api_endpoints` carried the
+  `also` hint. The hint is now also put into every `api_call` result next to the data, where
+  the model reads it right before answering; run 4 below tried it.
+- With all tools offered the model still goes straight to `api_endpoints` then `api_call`;
+  all 20 tool schemas cost 2689 tokens, the two API tools 619 of them.
+
+# Run 4: after putting the `also` hint into every `api_call` result (1 extra conversation)
+
+## Q: what exact movies are we missing?
+
+- **tool call** `api_call` `{"path": "/api/v3/wanted/missing", "select": "records[].{title: title, id: id, series: series}", "service": "radarr"}`
+  - result (ok, 845 chars): `'{"service":"radarr","call":"GET /api/v3/wanted/missing","status":200,"paged":{"page":1,"pageSize":10,"totalRecords":54},"note":"the server has 54 records, this response holds 10 (page 1): add query page=2 for the next ones, or all_pages=true","data":[{"title":'`
+- **tool call** `api_call` `{"path": "/api/v3/wanted/missing", "select": "records[].{title: title, id: id, series: series}", "service": "whisparr"}`
+  - result (ok, 869 chars): `'{"service":"whisparr","call":"GET /api/v3/wanted/missing","status":200,"paged":{"page":1,"pageSize":10,"totalRecords":3763},"note":"the server has 3763 records, this response holds 10 (page 1): add query page=2 for the next ones, or all_pages=true","data":[{"t'`
+
+**Answer** (tool mode native, 3 steps, 10988 prompt tokens):
+
+Based on the initial pages of data, here are the missing items reported by Radarr and Whisparr. Please note that the titles returned by the API are generic placeholders.
+
+**Radarr (54 total missing):**
+1. Radarr Missing 01 (ID: 1)
+2. Radarr Missing 02 (ID: 2)
+3. Radarr Missing 03 (ID: 3)
+4. Radarr Missing 04 (ID: 4)
+5. Radarr Missing 05 (ID: 5)
+6. Radarr Missing 06 (ID: 6)
+7. Radarr Missing 07 (ID: 7)
+8. Radarr Missing 08 (ID: 8)
+9. Radarr Missing 09 (ID: 9)
+10. Radarr Missing 10 (ID: 10)
+
+**Whisparr (3763 total missing):**
+1. Whisparr Title 0001 (ID: 1)
+2. Whisparr Title 0002 (ID: 2)
+3. Whisparr Title 0003 (ID: 3)
+4. Whisparr Title 0004 (ID: 4)
+5. Whisparr Title 0005 (ID: 5)
+6. Whisparr Title 0006 (ID: 6)
+7. Whisparr Title 0007 (ID: 7)
+8. Whisparr Title 0008 (ID: 8)
+9. Whisparr Title 0009 (ID: 9)
+10. Whisparr Title 0010 (ID: 10)
+
+Both services indicate a large number of missing items, and I can retrieve more pages if you would like me to continue fetching the full lists.
+
+## Pending approvals left by the chat
+
+
+
+Verdict of run 4: **the answer now covers both** services (Radarr 54 total, Whisparr 3763 total,
+first 10 of each). The model called `api_call` for `radarr` and then, because of the hint in
+that result, for `whisparr`. It skipped `api_endpoints` this time and guessed the path without
+`pageSize`, so only 10 titles per service came back (the note said how to get the rest).
+A deterministic fan-out over service groups was not needed and not built.
+
+## What the fake services saw (run 4)
+
+- `GET radarr.test/api/v3/wanted/missing`
+- `GET whisparr.test/api/v3/wanted/missing`

@@ -486,6 +486,10 @@ async def test_many_tools_switch_to_the_two_meta_tools(
     tools = build_mcp_tools(manager)
     assert [t.name for t in tools] == ["mcp_list_tools", "mcp_call"]
     assert tools[1].kind == "write"  # one of the chosen tools changes things
+    # ...but the chat labels each call by the tool it resolves to
+    assert tools[1].call_kind({"server": "home", "tool": "get_temperature"}) == "read"
+    assert tools[1].call_kind({"server": "home", "tool": "set_heating"}) == "write"
+    assert tools[1].call_kind({"server": "home", "tool": "nope"}) == "write"
     ctx = ctx_for(manager)
     overview = await run_tool(tools, "mcp_list_tools", ctx)
     assert overview == {"servers": [{"name": "home", "tools": ["get_temperature", "set_heating"]}]}

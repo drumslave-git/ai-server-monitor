@@ -59,6 +59,17 @@ class Tool:
     kind: ToolKind
     handler: Handler
     enabled: Callable[[Settings], bool] = field(default=lambda settings: True)
+    kind_for: Callable[[dict[str, Any]], ToolKind] | None = None
+    """For tools that read or write depending on the call (generic API / MCP calls): the kind
+    of this call from its raw arguments. `kind` is the fallback."""
+
+    def call_kind(self, args: dict[str, Any]) -> ToolKind:
+        if self.kind_for is not None:
+            try:
+                return self.kind_for(args)
+            except Exception:
+                return self.kind
+        return self.kind
 
     def definition(self) -> dict[str, Any]:
         """OpenAI-style function definition (also used for the JSON-in-text prompt)."""
@@ -606,6 +617,10 @@ def build_tools(settings: Settings, mcp: Any = None) -> dict[str, Tool]:
 
     tools = [*READ_TOOLS, *host_tools(), *_write_tools()]
     found = {t.name: t for t in tools if t.enabled(settings)}
+    from ..apiaccess import api_tool_specs  # (the specs are plain data; keep imports local)
+
+    for spec in api_tool_specs(settings, error_cls=ToolError):
+        found.setdefault(spec.name, Tool(**spec.as_kwargs()))
     if mcp is not None:
         from ..mcp_client import build_mcp_tools  # (imports this module: not at the top)
 

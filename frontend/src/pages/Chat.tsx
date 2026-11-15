@@ -294,8 +294,14 @@ function UserBubble({ text }: { text: string }) {
   return <div className="bubble bubble-user">{text}</div>;
 }
 
+// MCP tools are named server__tool for the model; show "server · tool" (mcp_client.display_name).
+function displayName(name: string): string {
+  const i = name.indexOf("__");
+  return i > 0 ? `${name.slice(0, i)} · ${name.slice(i + 2)}` : name;
+}
+
 function AssistantBubble({ turn }: { turn: Extract<Turn, { role: "assistant" }> }) {
-  const names = Array.from(new Set(turn.tools.map((t) => t.name)));
+  const names = Array.from(new Set(turn.tools.map((t) => displayName(t.name))));
   return (
     <div className="bubble bubble-assistant">
       {turn.tools.length > 0 && (
@@ -307,7 +313,7 @@ function AssistantBubble({ turn }: { turn: Extract<Turn, { role: "assistant" }> 
             {turn.tools.map((t) => (
               <li key={t.id + t.name}>
                 <Dot level={t.ok === undefined ? "off" : t.ok ? "ok" : "crit"} />
-                <span className="mono">{t.name}</span>
+                <span className="mono">{displayName(t.name)}</span>
                 {typeof t.args === "object" && t.args !== null && Object.keys(t.args).length > 0 && (
                   <span className="muted small"> {JSON.stringify(t.args)}</span>
                 )}

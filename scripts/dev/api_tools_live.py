@@ -1,13 +1,11 @@
-"""Run the real chat engine against a real LLM with ONLY the two generic API tools
-(`api_call`, `api_endpoints`) over a fake *arr world (no real instance is touched).
+"""Run the real, fully wired chat engine (all tools, the real system prompt) against a real
+LLM over a fake home server (Radarr, Whisparr, Sonarr, Prowlarr, qBittorrent, Docker): no real
+instance is touched.
 
-    cd backend && .venv/Scripts/python.exe ../scripts/dev/api_tools_live.py \
-        BASE_URL MODEL "question 1" "question 2" ...
+    cd backend && python ../scripts/dev/api_tools_live.py BASE_URL MODEL "question" ...
 
-Prints a Markdown transcript: every tool call with its full arguments and result size, the
-answer, and the size of the tool schemas in model tokens. The system prompt is the chat's own
-(`chat/prompts.py`) without the host-tool bullet plus `API_PROMPT`, the paragraph proposed for
-the shared prompt.
+Prints a Markdown transcript: every tool call with its arguments and result size, the answer,
+the approvals the chat left pending, and the size of the tool schemas in model tokens.
 """
 
 from __future__ import annotations
@@ -21,23 +19,11 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
-from ai_server_monitor.apiaccess import ApiGateway, api_tool_specs
-from ai_server_monitor.chat import engine as engine_module
-from ai_server_monitor.chat import prompts
-from ai_server_monitor.chat.tools import Tool, ToolError
+from ai_server_monitor.chat.tools import Tool, build_tools
 from ai_server_monitor.collectors.base import Collector
 from ai_server_monitor.config import Bootstrap, Settings
 from ai_server_monitor.context import AppContext
 from tests.apifakes import FakeServices, api_settings
-
-API_PROMPT = (
-    "- For data of Radarr, Sonarr, Whisparr, Prowlarr, qBittorrent, Docker or Prometheus "
-    "(library, missing, queue, indexers, torrents, containers) use `api_endpoints` to see "
-    "ready examples, then `api_call` with a `select` so you only fetch what you need. "
-    "Radarr and Whisparr both hold movies: for a question about movies check every "
-    "configured one. "
-    "Never say you cannot list something before you looked at `api_endpoints`.\n"
-)
 
 
 class Stub(Collector):
@@ -117,25 +103,20 @@ async def main(base_url: str, model: str, questions: list[str]) -> None:
         seed_settings=settings,
     )
     await app.start()
-    app.api_gateway = ApiGateway(app.settings, transport=world.transport())  # type: ignore[attr-defined]
-    specs = api_tool_specs(app.settings, error_cls=ToolError)
-    tools = [Tool(**spec.as_kwargs()) for spec in specs]
-    engine_module.build_tools = lambda s: {t.name: t for t in tools}  # type: ignore[assignment]
-    base_prompt = prompts.SYSTEM_PROMPT
-    start = base_prompt.index("- The server is the live host.")
-    end = base_prompt.index("- Prefer one or two precise")
-    prompts.SYSTEM_PROMPT = base_prompt[:start] + API_PROMPT + base_prompt[end:]
+    tools = list(build_tools(app.settings, app.mcp).values())
     print(
-        f"# Generic API tools, live run\n\nModel `{model}` at `{base_url}`; only `api_call` and "
-        "`api_endpoints` are offered. The world is fake (Radarr 54 / Whisparr 3763 missing, a "
-        "Sonarr queue with 3 problems, Prowlarr with one failing indexer).\n"
+        "# Chat with the generic API tools, live run\n\n"
+        f"Model `{model}` at `{base_url}`; the real engine with all tools and the real system "
+        "prompt. The world is fake: Radarr 54 and Whisparr 3763 missing movies, a Sonarr queue "
+        "with 3 problems, Prowlarr with one failing indexer.\n"
     )
     try:
         with_t, without_t = await measure_schema(app, tools)
-        chars = len(json.dumps([t.definition() for t in tools]))
+        mine = [t for t in tools if t.name in ("api_call", "api_endpoints")]
+        only, _ = await measure_schema(app, mine)
         print(
-            f"Tool schemas: {chars} chars, **{with_t - without_t} tokens** "
-            f"(prompt of a trivial request: {without_t} without tools, {with_t} with).\n"
+            f"Tool schemas: {len(tools)} tools = **{with_t - without_t} tokens**; "
+            f"`api_call` + `api_endpoints` alone = {only - without_t} tokens.\n"
         )
         for question in questions:
             print(f"## Q: {question}\n")
@@ -154,11 +135,13 @@ async def main(base_url: str, model: str, questions: list[str]) -> None:
                 elif kind == "error":
                     print(f"\n**ERROR**: {event['message']}\n")
             sys.stdout.flush()
-        print("## What the fake services saw\n")
+        print("## Pending approvals left by the chat\n")
+        for row in await app.actions.pending():
+            print(f"- #{row['id']} `{row['action']}` {row['target']} (source {row['source']})")
+        print("\n## What the fake services saw\n")
         for r in world.requests:
             print(f"- `{r['method']} {r['host']}{r['path']}` {r['params']}")
     finally:
-        await app.api_gateway.close()  # type: ignore[attr-defined]
         await app.stop()
 
 

@@ -18,10 +18,10 @@ from .tools import (
     POLICY_KEY,
     ApiCallActionArgs,
     ToolSpec,
+    action_check,
+    action_run,
     action_target,
     api_tool_specs,
-    make_action_check,
-    make_action_executor,
 )
 
 __all__ = [
@@ -33,8 +33,8 @@ __all__ = [
     "ApiGateway",
     "ApiRequest",
     "ToolSpec",
+    "action_check",
+    "action_run",
     "action_target",
     "api_tool_specs",
-    "make_action_check",
-    "make_action_executor",
 ]

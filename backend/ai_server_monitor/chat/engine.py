@@ -408,7 +408,7 @@ class ChatEngine:
             "id": call_id,
             "name": name,
             "args": turn.scrub.clean(args),
-            "kind": tool.kind if tool else None,
+            "kind": tool.call_kind(args) if tool else None,
         }
         ok, text, truncated = await self._execute(turn, tool, name, args, problem)
         await self.store.add_message(

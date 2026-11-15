@@ -12,6 +12,15 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..apiaccess import (
+    ACTION_DESCRIPTION,
+    ACTION_NAME,
+    POLICY_KEY,
+    ApiCallActionArgs,
+    action_check,
+    action_run,
+    action_target,
+)
 from ..arr import SEARCH_COMMANDS, ArrError, Clients
 from ..config import Settings
 from ..mcp_client import actions as mcp_actions
@@ -290,6 +299,18 @@ _ACTIONS = (
         target=lambda a: f"prowlarr: {a.title or f'indexer {a.indexer_id}'}",
         check=_check_prowlarr,
         execute=_prowlarr_test,
+    ),
+    ActionDef(
+        name=ACTION_NAME,
+        description=ACTION_DESCRIPTION,
+        args_model=ApiCallActionArgs,  # type: ignore[arg-type]
+        policy_key=lambda a: POLICY_KEY,
+        target=action_target,
+        check=action_check,
+        run=action_run,
+        # uses_dry_run stays the default (arr.dry_run): the only services an API write can
+        # reach are the *arr apps, Prowlarr and qBittorrent, whose safety switch that is.
+        chat_tool=False,  # the chat has its own api_call tool (apiaccess)
     ),
     ActionDef(
         name=mcp_actions.ACTION_NAME,

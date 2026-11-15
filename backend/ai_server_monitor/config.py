@@ -546,6 +546,10 @@ class ActionsSettings(_Model):
     """Add movies/series when asked in chat."""
     indexer_triage: IndexerTriageSettings = IndexerTriageSettings()
     """Test/disable failing indexers in Prowlarr."""
+    api_call: ActionSettings = ActionSettings(policy="approve")
+    """Any other write the chat asks for through the HTTP API of a service (POST/PUT/DELETE
+    to Radarr, Sonarr, Whisparr, Prowlarr, qBittorrent) and searches that query every indexer.
+    Dry-run (above) applies too."""
     approval_ttl: Duration = timedelta(hours=24)
     """Pending approvals expire after this."""
 

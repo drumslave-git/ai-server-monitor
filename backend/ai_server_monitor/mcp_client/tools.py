@@ -331,6 +331,11 @@ def _meta_tools(manager: McpManager, picks: list[McpPick], tool_cls: type[Tool])
             "arguments_schema": input_schema(pick.info),
         }
 
+    def call_kind(raw: dict[str, Any]) -> Any:
+        """The chat labels a call by the tool it resolves to (read tools are not WRITE)."""
+        pick = index.get((str(raw.get("server")), str(raw.get("tool"))))
+        return pick.kind if pick is not None else ("write" if any_write else "read")
+
     async def call(ctx: ToolContext, args: CallArgs) -> Any:
         pick = index.get((args.server, args.tool))
         if pick is None:
@@ -368,6 +373,7 @@ def _meta_tools(manager: McpManager, picks: list[McpPick], tool_cls: type[Tool])
             args_model=CallArgs,
             kind="write" if any_write else "read",
             handler=call,
+            kind_for=call_kind,
         ),
     ]
 
