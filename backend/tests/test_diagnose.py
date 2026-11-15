@@ -12,6 +12,7 @@ import pytest
 import respx
 
 from ai_server_monitor.apiaccess import api_tool_specs
+from ai_server_monitor.apiaccess.diagnose import diagnose_tool_spec
 from ai_server_monitor.arr import qbit_auth
 from ai_server_monitor.chat.prompts import system_prompt
 from ai_server_monitor.chat.tools import ToolContext, ToolError
@@ -82,8 +83,9 @@ async def ctx_for(db: Database, tmp_path: Path) -> ToolContext:
 
 
 def tool(settings: Any) -> Any:
-    specs = {s.name: s for s in api_tool_specs(settings, error_cls=ToolError)}
-    return specs["diagnose_service"]
+    spec = diagnose_tool_spec(ToolError)
+    assert "diagnose_service" not in {s.name for s in api_tool_specs(settings)}
+    return spec
 
 
 @respx.mock
@@ -135,6 +137,14 @@ async def test_diagnose_unknown_service_lists_the_configured(db: Database, tmp_p
     spec = tool(ctx.app.settings)
     with pytest.raises(ToolError, match="qbittorrent"):
         await spec.handler(ctx, spec.args_model.model_validate({"service": "plex"}))
+
+
+async def test_chat_gets_the_tool_from_build_tools_only_when_a_service_is_configured() -> None:
+    from ai_server_monitor.chat.tools import build_tools
+    from ai_server_monitor.config import Settings
+
+    assert "diagnose_service" in build_tools(make_settings())
+    assert "diagnose_service" not in build_tools(Settings())
 
 
 def test_prompt_has_the_troubleshooting_rule_only_with_the_tool() -> None:

@@ -623,6 +623,11 @@ def build_tools(
 
     for spec in api_tool_specs(settings, error_cls=ToolError):
         found.setdefault(spec.name, Tool(**spec.as_kwargs()))
+    from ..apiaccess.diagnose import diagnose_tool_spec  # (imports conntest: late)
+
+    diagnose = diagnose_tool_spec(ToolError)
+    if diagnose.enabled(settings):
+        found.setdefault(diagnose.name, Tool(**diagnose.as_kwargs()))
     if mcp is not None:
         from ..mcp_client import build_mcp_tools  # (imports this module: not at the top)
 

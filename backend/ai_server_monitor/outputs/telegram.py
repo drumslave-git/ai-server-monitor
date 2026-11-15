@@ -48,6 +48,7 @@ HELP = (
     "/status — health and open flags\n"
     "/report — write a report now\n"
     "/approvals — actions waiting for your decision\n"
+    "/new — start a fresh chat (the old one stays in the web Chat list)\n"
     "/id — this chat's id (works in any chat)\n"
     "/help — this text"
 )
@@ -241,6 +242,7 @@ class TelegramBot:
                     {"command": "status", "description": "Health and open flags"},
                     {"command": "report", "description": "Write a report now"},
                     {"command": "approvals", "description": "Actions waiting for approval"},
+                    {"command": "new", "description": "Start a fresh chat"},
                     {"command": "id", "description": "Show this chat's id"},
                     {"command": "help", "description": "What I can do"},
                 ],
@@ -346,6 +348,15 @@ class TelegramBot:
                 await self.send(chat_id, "Writing a report, it will arrive here.", markdown=False)
             else:
                 await self.send(chat_id, "A report is already being written.", markdown=False)
+        elif command == "new":
+            await self.app.db.execute(
+                "DELETE FROM kv WHERE key = ?", (f"telegram.session.{chat_id}",)
+            )
+            await self.send(
+                chat_id,
+                "Fresh chat started. The earlier one stays in the Chat list on the web page.",
+                markdown=False,
+            )
         elif command == "approvals":
             pending = await self.app.actions.pending()
             if not pending:
@@ -389,8 +400,11 @@ class TelegramBot:
     async def _chat(self, chat_id: int, text: str) -> None:
         engine = self.app.chat
         session_id = await self._session_for(chat_id)
-        if session_id is not None and not await engine.store.session_exists(session_id):
-            session_id = None
+        if session_id is not None:
+            last = await engine.store.session_updated(session_id)
+            gap = self.app.settings.outputs.telegram.new_session_after.total_seconds()
+            if last is None or (gap > 0 and time.time() - last > gap):
+                session_id = None  # gone, or quiet for long enough: the next message starts anew
         typing = asyncio.create_task(self._typing(chat_id))
         answer, error = "", None
         try:

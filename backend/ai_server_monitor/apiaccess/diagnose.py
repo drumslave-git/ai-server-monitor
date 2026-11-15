@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..arr import qbit_auth
 from ..config import Settings
 from ..settings_store import KV_KEY
+from .tools import ToolSpec
 
 _ARR_KINDS = ("radarr", "sonarr", "whisparr")
 _ALIASES = {"qbit": "qbittorrent", "qb": "qbittorrent", "qbittorrent": "qbittorrent"}
@@ -246,8 +247,19 @@ async def diagnose(ctx: Any, args: DiagnoseArgs, error_cls: type[Exception]) -> 
     return {"diagnosis": results}
 
 
-def diagnose_spec(error_cls: type[Exception]) -> tuple[str, str, type[BaseModel], Any]:
+def diagnose_tool_spec(error_cls: type[Exception]) -> ToolSpec:
+    """The `diagnose_service` tool (`chat/tools.py` adds it next to the api tools)."""
+
     async def handler(ctx: Any, args: DiagnoseArgs) -> Any:
         return await diagnose(ctx, args, error_cls)
 
-    return "diagnose_service", DESCRIPTION, DiagnoseArgs, handler
+    return ToolSpec(
+        "diagnose_service",
+        DESCRIPTION,
+        DiagnoseArgs,
+        "read",
+        handler,
+        lambda s: bool(
+            s.arr.qbittorrent or s.arr.prowlarr or s.arr.radarr or s.arr.sonarr or s.arr.whisparr
+        ),
+    )

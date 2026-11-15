@@ -24,7 +24,11 @@ _MIGRATION_NAME = re.compile(r"^(\d{4})_[\w-]+\.sql$")
 _PRUNABLE: dict[str, str] = {
     "collector_samples": "ts",
     "reports": "ts",
-    "chat_sessions": "updated",  # messages go via ON DELETE CASCADE
+    # Chat messages go by their own age, also inside a session that is still in use (a Telegram
+    # chat lives in one session for a long time); a session is dropped when it is idle for the
+    # whole retention period or ends up with no messages at all (see `prune`).
+    "chat_messages": "ts",
+    "chat_sessions": "updated",
     "telegram_approval_messages": "created_ts",
 }
 
@@ -141,6 +145,12 @@ class Database:
             for table, column in _PRUNABLE.items():
                 cur = await conn.execute(f"DELETE FROM {table} WHERE {column} < ?", (cutoff,))
                 deleted[table] = cur.rowcount
+            cur = await conn.execute(
+                "DELETE FROM chat_sessions WHERE created < ? AND NOT EXISTS "
+                "(SELECT 1 FROM chat_messages m WHERE m.session_id = chat_sessions.id)",
+                (cutoff,),
+            )
+            deleted["chat_sessions"] += cur.rowcount
         if any(deleted.values()):
             log.info("pruned rows older than %s: %s", retention, deleted)
         return deleted

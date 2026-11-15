@@ -61,12 +61,54 @@ async def test_prune_respects_retention_and_keeps_actions(db: Database) -> None:
     assert deleted == {
         "collector_samples": 1,
         "reports": 1,
+        "chat_messages": 1,
         "chat_sessions": 1,
         "telegram_approval_messages": 1,
     }
     assert (await db.fetchone("SELECT COUNT(*) FROM collector_samples"))[0] == 1
     assert (await db.fetchone("SELECT COUNT(*) FROM chat_messages"))[0] == 0  # cascade
     assert (await db.fetchone("SELECT COUNT(*) FROM actions"))[0] == 2  # audit log kept
+
+
+async def test_prune_old_chat_messages_inside_a_live_session(db: Database) -> None:
+    now = time.time()
+    day = 86400
+    await db.execute(
+        "INSERT INTO chat_sessions (id, created, updated, channel) "
+        "VALUES ('live', ?, ?, 'telegram')",
+        (now - 90 * day, now - 60),
+    )
+    for ts, text in ((now - 90 * day, "ancient"), (now - 40 * day, "old"), (now - 60, "fresh")):
+        await db.execute(
+            "INSERT INTO chat_messages (session_id, ts, role, content) "
+            "VALUES ('live', ?, 'user', ?)",
+            (ts, text),
+        )
+    # a session whose messages are all old, and an empty old one; a brand-new empty one stays
+    await db.execute(
+        "INSERT INTO chat_sessions (id, created, updated, channel) VALUES ('dead', ?, ?, 'web')",
+        (now - 50 * day, now - 50 * day),
+    )
+    await db.execute(
+        "INSERT INTO chat_messages (session_id, ts, role, content) VALUES ('dead', ?, 'user', 'x')",
+        (now - 50 * day,),
+    )
+    await db.execute(
+        "INSERT INTO chat_sessions (id, created, updated, channel) VALUES ('empty', ?, ?, 'web')",
+        (now - 45 * day, now - 45 * day),
+    )
+    await db.execute(
+        "INSERT INTO chat_sessions (id, created, updated, channel) VALUES ('newborn', ?, ?, 'web')",
+        (now - 5, now - 5),
+    )
+
+    deleted = await db.prune(timedelta(days=30), now=now)
+
+    assert deleted["chat_messages"] == 3  # ancient, old, and dead's one
+    texts = [r[0] for r in await db.fetchall("SELECT content FROM chat_messages")]
+    assert texts == ["fresh"]
+    ids = {r[0] for r in await db.fetchall("SELECT id FROM chat_sessions")}
+    assert ids == {"live", "newborn"}
 
 
 async def test_kv_roundtrip(db: Database) -> None:
@@ -102,7 +144,7 @@ async def test_database_at_schema_4_migrates_to_latest(tmp_path: Path) -> None:
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 8
+        assert await db.schema_version() == 9
         info = await db.fetchall("PRAGMA table_info(telegram_approval_messages)")
         cols = {r["name"] for r in info}
         assert cols == {"approval_id", "chat_id", "message_id", "created_ts"}
@@ -125,7 +167,7 @@ async def test_database_at_schema_5_gets_the_prometheus_query_table(tmp_path: Pa
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 8
+        assert await db.schema_version() == 9
         cols = {r["name"] for r in await db.fetchall("PRAGMA table_info(prom_queries)")}
         assert {"name", "query", "source", "enabled", "pinned", "edited", "fail_count"} <= cols
     finally:

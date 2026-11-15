@@ -54,6 +54,13 @@ class ChatStore:
         row = await self.db.fetchone("SELECT 1 FROM chat_sessions WHERE id = ?", (session_id,))
         return row is not None
 
+    async def session_updated(self, session_id: str) -> float | None:
+        """When the session last got a message (None = no such session)."""
+        row = await self.db.fetchone(
+            "SELECT updated FROM chat_sessions WHERE id = ?", (session_id,)
+        )
+        return float(row["updated"]) if row else None
+
     async def add_message(
         self,
         session_id: str,

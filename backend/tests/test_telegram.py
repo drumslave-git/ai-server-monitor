@@ -534,6 +534,70 @@ def test_chat_round_trip_uses_one_session_per_telegram_chat(bootstrap: Bootstrap
         assert tg.of("sendMessage")[0]["parse_mode"] == "HTML"
 
 
+def test_new_command_starts_a_fresh_session_and_keeps_the_old_one(bootstrap: Bootstrap) -> None:
+    tg = FakeTelegram()
+    llm = FakeLLM(say("one"), say("two"))
+    app = make_app(bootstrap, tg, llm=llm)
+    with TestClient(app) as client:
+        ctx = app.state.ctx
+        client.portal.call(ctx.telegram.handle_update, message("first topic"))
+        client.portal.call(ctx.telegram.handle_update, message("/new"))
+        assert "Fresh chat" in tg.texts()[-1]
+        client.portal.call(ctx.telegram.handle_update, message("second topic"))
+        assert client.get("/api/chat/sessions").json()["total"] == 2  # the old one stays listed
+        replay = [m["content"] for m in llm.requests[-1]["messages"] if m["role"] != "system"]
+        assert replay == ["second topic"]  # the model does not see the old chat
+        sent = len(tg.texts())
+        client.portal.call(ctx.telegram.handle_update, message("/new", chat=STRANGER))
+        assert len(tg.texts()) == sent  # a stranger cannot reset anybody's chat
+
+
+def test_new_is_listed_in_help_and_the_bot_menu(bootstrap: Bootstrap) -> None:
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
+    with TestClient(app) as client:
+        client.portal.call(app.state.ctx.telegram.handle_update, message("/help"))
+        menu = wait_for(lambda: tg.of("setMyCommands"))
+        assert "/new" in tg.texts()[0]
+        assert "new" in [c["command"] for c in menu[0]["commands"]]
+
+
+def _age_sessions(client: Any, ctx: Any, seconds: float) -> None:
+    async def run() -> None:
+        await ctx.db.execute("UPDATE chat_sessions SET updated = updated - ?", (seconds,))
+
+    client.portal.call(run)
+
+
+def test_chat_starts_a_new_session_after_a_quiet_gap(bootstrap: Bootstrap) -> None:
+    tg = FakeTelegram()
+    llm = FakeLLM(say("a"), say("b"), say("c"))
+    app = make_app(bootstrap, tg, llm=llm, telegram={"new_session_after": "6h"})
+    with TestClient(app) as client:
+        ctx = app.state.ctx
+        client.portal.call(ctx.telegram.handle_update, message("morning question"))
+        _age_sessions(client, ctx, 3600)  # one hour: still the same chat
+        client.portal.call(ctx.telegram.handle_update, message("follow up"))
+        assert client.get("/api/chat/sessions").json()["total"] == 1
+        _age_sessions(client, ctx, 7 * 3600)  # now quiet for longer than 6 hours
+        client.portal.call(ctx.telegram.handle_update, message("evening question"))
+        assert client.get("/api/chat/sessions").json()["total"] == 2
+        replay = [m["content"] for m in llm.requests[-1]["messages"] if m["role"] != "system"]
+        assert replay == ["evening question"]
+
+
+def test_new_session_after_zero_never_starts_a_new_session(bootstrap: Bootstrap) -> None:
+    tg = FakeTelegram()
+    llm = FakeLLM(say("a"), say("b"))
+    app = make_app(bootstrap, tg, llm=llm, telegram={"new_session_after": "0"})
+    with TestClient(app) as client:
+        ctx = app.state.ctx
+        client.portal.call(ctx.telegram.handle_update, message("one"))
+        _age_sessions(client, ctx, 30 * 86400)
+        client.portal.call(ctx.telegram.handle_update, message("two"))
+        assert client.get("/api/chat/sessions").json()["total"] == 1
+
+
 def test_chat_failure_is_reported_in_the_chat(bootstrap: Bootstrap) -> None:
     tg = FakeTelegram()
     app = make_app(bootstrap, tg)  # no LLM configured

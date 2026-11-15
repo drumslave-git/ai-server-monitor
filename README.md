@@ -135,9 +135,15 @@ button that checks what you typed, before you save, and says what answered or wh
   ("what is using the most disk and memory?"); the model looks at live data with read-only tools
   and answers. Commands: `/status` (health and open flags), `/report` (write one now),
   `/approvals` (open requests, with buttons), `/id` (this chat's id: works in any chat, also for
-  chats that are not allowed yet, once per 10 s), `/help`. When an action needs approval, the bot sends
+  chats that are not allowed yet, once per 10 s), `/new` (start a fresh chat), `/help`. When an
+  action needs approval, the bot sends
   a message with **Approve** and **Reject** buttons; the message is edited to the outcome, also when
   you decide in the web UI.
+  Each Telegram chat is one conversation; the model sees only its last
+  `chat.history_messages` (12) messages. A fresh conversation starts with `/new` or by itself after
+  `outputs.telegram.new_session_after` (6 h) without a message (0 = never); the older ones stay in
+  the web Chat list with their titles. Chat messages older than `storage.retention` (30 d) are
+  deleted, also from a conversation still in use, and conversations left empty are removed.
 - **Chat API** — `POST /api/chat` with `{"message": "...", "session_id": "..."}` answers as a
   server-sent-event stream (`session`, `tool_call`, `tool_result`, `token`, `done`);
   `GET /api/chat/sessions[/{id}]` and `DELETE /api/chat/sessions/{id}` manage the history.
@@ -283,7 +289,7 @@ a fresh install starts with.
 
 | Setting | Type | Default | What it does |
 |---|---|---|---|
-| `storage.retention` | duration | `30d` | How long metrics history, reports and chats are kept. The action log is permanent. |
+| `storage.retention` | duration | `30d` | How long metrics history, reports and chat messages are kept. The action log is permanent. |
 | `storage.sample_interval` | duration | `5m` | Resolution of stored history. Live data is always fresh. |
 | `storage.prune_interval` | duration | `1h` | How often old data is deleted. |
 
@@ -366,6 +372,7 @@ a fresh install starts with.
 | `outputs.telegram.token` | secret | empty | Bot token from @BotFather. |
 | `outputs.telegram.allowed_chat_ids` | list of integer | empty | Only these chats may talk to the bot. Don't know a chat id? Send /id to the bot: it answers in any chat. |
 | `outputs.telegram.report_every` | integer (min 0) | `1` | Send every Nth report (0 = alerts only). |
+| `outputs.telegram.new_session_after` | duration | `6h` | Start a fresh chat after this long without a message in a Telegram chat (the old one stays in the Chat list on the web page). 0 = never: one chat until you send /new. |
 | `outputs.telegram.alerts` | boolean | on | Send a short alert whenever the health status changes (also when reports are not sent every time). |
 | `outputs.telegram.api_url` | string | empty | Bot API server. Empty = https://api.telegram.org. |
 | `outputs.metrics.enabled` | boolean | on | Expose Prometheus metrics at /metrics. |
@@ -444,6 +451,18 @@ a fresh install starts with.
 | `mcp.servers[].tool_overrides[].kind` | auto / read / write | `auto` | auto = read-only only if the server says so; read / write = your own call. A tool treated as read runs immediately; a write goes through the action policy. |
 | `mcp.max_inline_tool_tokens` | integer (min 0) | `1200` | If the schemas of all chosen tools together are bigger than this (about 4 characters per token), the chat gets two generic tools (list tools / call tool) instead of one tool per MCP tool. Small models do better with fewer schemas. 0 = always use the generic pair. |
 | `mcp.dry_run` | boolean | off | Pretend: record write calls in the action log but send nothing to the servers. |
+
+### Benchmarks (`bench`)
+
+| Setting | Type | Default | What it does |
+|---|---|---|---|
+| `bench.repeats` | integer (min 1, max 20) | `3` | How many times every scenario runs. More runs smooth out the model's randomness. |
+| `bench.attempt_timeout` | duration | `5m` | Time budget of one attempt; a slower one counts as failed. |
+| **bench.judge** | group |  | A second model that grades the answers of a benchmark run. |
+| `bench.judge.enabled` | boolean | off | Grade every answer 1-5 against the scenario's rubric. The grade is shown next to the rule score and never mixed into it. Costs one extra model call per graded attempt. |
+| `bench.judge.base_url` | string | empty | OpenAI-compatible API base URL of the judge, e.g. https://api.openai.com/v1. |
+| `bench.judge.api_key` | secret | empty | API key of the judge, if its endpoint needs one. |
+| `bench.judge.model` | string | empty | Model name of the judge. |
 
 <!-- settings-reference:end -->
 

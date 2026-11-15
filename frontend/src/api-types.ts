@@ -64,6 +64,162 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/bench/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel */
+        post: operations["cancel_api_bench_cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bench/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Catalog */
+        get: operations["catalog_api_bench_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bench/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Runs */
+        get: operations["runs_api_bench_runs_get"];
+        put?: never;
+        /** Start */
+        post: operations["start_api_bench_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bench/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Run Detail */
+        get: operations["run_detail_api_bench_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Run */
+        delete: operations["delete_run_api_bench_runs__run_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bench/runs/{run_id}/attempts/{attempt_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Attempt Detail */
+        get: operations["attempt_detail_api_bench_runs__run_id__attempts__attempt_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bench/runs/{run_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export */
+        get: operations["export_api_bench_runs__run_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bench/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Snapshots */
+        get: operations["snapshots_api_bench_snapshots_get"];
+        put?: never;
+        /** Capture */
+        post: operations["capture_api_bench_snapshots_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bench/snapshots/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Snapshot */
+        delete: operations["delete_snapshot_api_bench_snapshots__name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bench/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status */
+        get: operations["status_api_bench_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chat": {
         parameters: {
             query?: never;
@@ -876,6 +1032,71 @@ export interface components {
         AuditList: {
             /** Items */
             items: components["schemas"]["AuditEntry"][];
+        };
+        /**
+         * BenchJudgeSettings
+         * @description A second model that grades the answers of a benchmark run.
+         */
+        BenchJudgeSettings: {
+            /**
+             * Api Key
+             * Format: password
+             * @description API key of the judge, if its endpoint needs one.
+             * @default
+             */
+            api_key: string;
+            /**
+             * Base Url
+             * @description OpenAI-compatible API base URL of the judge, e.g. https://api.openai.com/v1.
+             * @default
+             */
+            base_url: string;
+            /**
+             * Enabled
+             * @description Grade every answer 1-5 against the scenario's rubric. The grade is shown next to the rule
+             *     score and never mixed into it. Costs one extra model call per graded attempt.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Model
+             * @description Model name of the judge.
+             * @default
+             */
+            model: string;
+        };
+        /**
+         * BenchSettings
+         * @description Model benchmarks (the Benchmarks page): fixed scenarios run against the model chosen in
+         *     LLM. To compare models, switch the model there and run again.
+         */
+        BenchSettings: {
+            /**
+             * Attempt Timeout
+             * Format: duration
+             * @description Time budget of one attempt; a slower one counts as failed.
+             * @default 5m
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            attempt_timeout: string;
+            /**
+             * @default {
+             *       "api_key": "",
+             *       "base_url": "",
+             *       "enabled": false,
+             *       "model": ""
+             *     }
+             */
+            judge: components["schemas"]["BenchJudgeSettings"];
+            /**
+             * Repeats
+             * @description How many times every scenario runs. More runs smooth out the model's randomness.
+             * @default 3
+             */
+            repeats: number;
         };
         /** ChatMessage */
         ChatMessage: {
@@ -1980,6 +2201,7 @@ export interface components {
              *       "allowed_chat_ids": [],
              *       "api_url": "",
              *       "enabled": false,
+             *       "new_session_after": "6h",
              *       "report_every": 1,
              *       "token": ""
              *     }
@@ -2529,6 +2751,19 @@ export interface components {
             arr: components["schemas"]["ArrSettings"];
             /**
              * @default {
+             *       "attempt_timeout": "5m",
+             *       "judge": {
+             *         "api_key": "",
+             *         "base_url": "",
+             *         "enabled": false,
+             *         "model": ""
+             *       },
+             *       "repeats": 3
+             *     }
+             */
+            bench: components["schemas"]["BenchSettings"];
+            /**
+             * @default {
              *       "disk_cache_ttl": "10m",
              *       "disk_scan_budget": "20s",
              *       "history_messages": 12,
@@ -2667,6 +2902,7 @@ export interface components {
              *         "allowed_chat_ids": [],
              *         "api_url": "",
              *         "enabled": false,
+             *         "new_session_after": "6h",
              *         "report_every": 1,
              *         "token": ""
              *       }
@@ -2722,6 +2958,16 @@ export interface components {
         SettingsValues: {
             values: components["schemas"]["Settings"];
         };
+        /** SnapshotRequest */
+        SnapshotRequest: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Name */
+            name: string;
+        };
         /** StalledCleanupSettings */
         StalledCleanupSettings: {
             /**
@@ -2760,6 +3006,15 @@ export interface components {
              */
             stalled_after: string;
         };
+        /** StartRequest */
+        StartRequest: {
+            /** Group */
+            group?: string | null;
+            /** Ids */
+            ids?: string[] | null;
+            /** Repeats */
+            repeats?: number | null;
+        };
         /** StatusResponse */
         StatusResponse: {
             /** Collectors */
@@ -2797,7 +3052,7 @@ export interface components {
             /**
              * Retention
              * Format: duration
-             * @description How long metrics history, reports and chats are kept. The action log is permanent.
+             * @description How long metrics history, reports and chat messages are kept. The action log is permanent.
              * @default 30d
              * @example 30s
              * @example 5m
@@ -2896,6 +3151,18 @@ export interface components {
              * @default false
              */
             enabled: boolean;
+            /**
+             * New Session After
+             * Format: duration
+             * @description Start a fresh chat after this long without a message in a Telegram chat (the old one
+             *     stays in the Chat list on the web page). 0 = never: one chat until you send /new.
+             * @default 6h
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            new_session_after: string;
             /**
              * Report Every
              * @description Send every Nth report (0 = alerts only).
@@ -3140,6 +3407,353 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_api_bench_cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+        };
+    };
+    catalog_api_bench_catalog_get: {
+        parameters: {
+            query?: {
+                smoke?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    runs_api_bench_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    start_api_bench_runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_detail_api_bench_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_run_api_bench_runs__run_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attempt_detail_api_bench_runs__run_id__attempts__attempt_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+                attempt_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_api_bench_runs__run_id__export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    snapshots_api_bench_snapshots_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    capture_api_bench_snapshots_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SnapshotRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_snapshot_api_bench_snapshots__name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    status_api_bench_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };

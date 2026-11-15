@@ -257,7 +257,7 @@ class ChatSettings(_Model):
 
 class StorageSettings(_Model):
     retention: Duration = timedelta(days=30)
-    """How long metrics history, reports and chats are kept. The action log is permanent."""
+    """How long metrics history, reports and chat messages are kept. The action log is permanent."""
     sample_interval: Duration = timedelta(minutes=5)
     """Resolution of stored history. Live data is always fresh."""
     prune_interval: Duration = timedelta(hours=1)
@@ -499,6 +499,9 @@ class TelegramSettings(_Model):
     answers in any chat."""
     report_every: int = Field(default=1, ge=0)
     """Send every Nth report (0 = alerts only)."""
+    new_session_after: Duration = timedelta(hours=6)
+    """Start a fresh chat after this long without a message in a Telegram chat (the old one
+    stays in the Chat list on the web page). 0 = never: one chat until you send /new."""
     alerts: bool = True
     """Send a short alert whenever the health status changes (also when reports are not
     sent every time)."""
