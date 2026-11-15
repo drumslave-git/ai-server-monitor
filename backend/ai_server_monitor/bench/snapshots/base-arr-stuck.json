@@ -1722,7 +1722,9 @@
          "tracked_status": "warning",
          "tracked_state": "downloading",
          "error": "The download is stalled with no connections",
-         "messages": [],
+         "messages": [
+          "Northern.Tides.S01E01.2160p.WEB-DL: The download is stalled with no connections"
+         ],
          "size": 6100000000,
          "size_left": 6100000000,
          "protocol": "torrent",
@@ -1739,7 +1741,9 @@
          "tracked_status": "warning",
          "tracked_state": "downloading",
          "error": "The download is stalled with no connections",
-         "messages": [],
+         "messages": [
+          "Northern.Tides.S01E02.2160p.WEB-DL: The download is stalled with no connections"
+         ],
          "size": 6000000000,
          "size_left": 6000000000,
          "protocol": "torrent",
@@ -1756,7 +1760,9 @@
          "tracked_status": "warning",
          "tracked_state": "downloading",
          "error": "The download is stalled with no connections",
-         "messages": [],
+         "messages": [
+          "Northern.Tides.S01E03.2160p.WEB-DL: The download is stalled with no connections"
+         ],
          "size": 6300000000,
          "size_left": 6300000000,
          "protocol": "torrent",
@@ -1773,7 +1779,9 @@
          "tracked_status": "warning",
          "tracked_state": "downloading",
          "error": "The download is stalled with no connections",
-         "messages": [],
+         "messages": [
+          "Glass.Orchard.S03E08.1080p.WEB-DL: The download is stalled with no connections"
+         ],
          "size": 2400000000,
          "size_left": 2400000000,
          "protocol": "torrent",
@@ -1790,7 +1798,9 @@
          "tracked_status": "warning",
          "tracked_state": "downloading",
          "error": "The download is stalled with no connections",
-         "messages": [],
+         "messages": [
+          "Glass.Orchard.S03E09.1080p.WEB-DL: The download is stalled with no connections"
+         ],
          "size": 2500000000,
          "size_left": 2500000000,
          "protocol": "torrent",
@@ -1807,7 +1817,9 @@
          "tracked_status": "warning",
          "tracked_state": "downloading",
          "error": "The download is stalled with no connections",
-         "messages": [],
+         "messages": [
+          "Quiet.Frequency.S01E04.1080p.WEB-DL: The download is stalled with no connections"
+         ],
          "size": 2200000000,
          "size_left": 2200000000,
          "protocol": "torrent",

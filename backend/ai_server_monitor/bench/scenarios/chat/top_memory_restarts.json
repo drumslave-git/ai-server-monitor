@@ -60,7 +60,13 @@
     "7x",
     "restart count is 7",
     "restarted: 7",
-    "7 time"
+    "7 time",
+    "**7** time",
+    "**7** restart",
+    "restarted **7**",
+    "count of **7**",
+    "count is **7**",
+    "count: **7**"
    ],
    "note": "the restart count"
   },

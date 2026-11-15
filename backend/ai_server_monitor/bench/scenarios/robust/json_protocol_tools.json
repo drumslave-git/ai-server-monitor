@@ -14,6 +14,18 @@
   ]
  },
  "tool_mode": "json",
+ "world": {
+  "commands": [
+   {
+    "match": "\\buptime\\b",
+    "output": " 12:00:05 up 14 days,  3:12,  1 user,  load average: 1.38, 1.52, 1.47\n"
+   },
+   {
+    "match": "loadavg",
+    "output": "1.38 1.52 1.47 2/1312 48211\n"
+   }
+  ]
+ },
  "checks": [
   {
    "type": "json_fallback_used",

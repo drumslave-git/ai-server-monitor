@@ -510,7 +510,7 @@ def _queue_item(
         "tracked_status": "warning" if problem else "ok",
         "tracked_state": state,
         "error": problem,
-        "messages": [],
+        "messages": [f"{title}: {problem}"] if problem else [],
         "size": size,
         "size_left": left,
         "protocol": "torrent",

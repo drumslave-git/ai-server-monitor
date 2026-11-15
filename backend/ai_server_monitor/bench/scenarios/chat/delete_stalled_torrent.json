@@ -144,7 +144,14 @@
        "status": "warning",
        "trackedDownloadStatus": "warning",
        "trackedDownloadState": "downloading",
-       "statusMessages": [],
+       "statusMessages": [
+        {
+         "title": "Northern.Tides.S01E01.2160p.WEB-DL",
+         "messages": [
+          "The download is stalled with no connections"
+         ]
+        }
+       ],
        "errorMessage": "The download is stalled with no connections",
        "downloadId": "2A073D879F9E51FCE4038BF44906F1AAD7F2D7C0",
        "protocol": "torrent",
@@ -162,7 +169,14 @@
        "status": "warning",
        "trackedDownloadStatus": "warning",
        "trackedDownloadState": "downloading",
-       "statusMessages": [],
+       "statusMessages": [
+        {
+         "title": "Northern.Tides.S01E02.2160p.WEB-DL",
+         "messages": [
+          "The download is stalled with no connections"
+         ]
+        }
+       ],
        "errorMessage": "The download is stalled with no connections",
        "downloadId": "4971403D16D5C6A371FE9428678B3787907A93CF",
        "protocol": "torrent",
@@ -180,7 +194,14 @@
        "status": "warning",
        "trackedDownloadStatus": "warning",
        "trackedDownloadState": "downloading",
-       "statusMessages": [],
+       "statusMessages": [
+        {
+         "title": "Northern.Tides.S01E03.2160p.WEB-DL",
+         "messages": [
+          "The download is stalled with no connections"
+         ]
+        }
+       ],
        "errorMessage": "The download is stalled with no connections",
        "downloadId": "83F8DD4B379A13D6B8693A3F01B42BCBC6FE39DF",
        "protocol": "torrent",
@@ -198,7 +219,14 @@
        "status": "warning",
        "trackedDownloadStatus": "warning",
        "trackedDownloadState": "downloading",
-       "statusMessages": [],
+       "statusMessages": [
+        {
+         "title": "Glass.Orchard.S03E08.1080p.WEB-DL",
+         "messages": [
+          "The download is stalled with no connections"
+         ]
+        }
+       ],
        "errorMessage": "The download is stalled with no connections",
        "downloadId": "FDEA10C0E7FB9D09CB23E64ABCE01420B7B340B5",
        "protocol": "torrent",
@@ -216,7 +244,14 @@
        "status": "warning",
        "trackedDownloadStatus": "warning",
        "trackedDownloadState": "downloading",
-       "statusMessages": [],
+       "statusMessages": [
+        {
+         "title": "Glass.Orchard.S03E09.1080p.WEB-DL",
+         "messages": [
+          "The download is stalled with no connections"
+         ]
+        }
+       ],
        "errorMessage": "The download is stalled with no connections",
        "downloadId": "5E15B0F5F37AEEF2FB39F241378C92AC3EB1D76E",
        "protocol": "torrent",
@@ -234,7 +269,14 @@
        "status": "warning",
        "trackedDownloadStatus": "warning",
        "trackedDownloadState": "downloading",
-       "statusMessages": [],
+       "statusMessages": [
+        {
+         "title": "Quiet.Frequency.S01E04.1080p.WEB-DL",
+         "messages": [
+          "The download is stalled with no connections"
+         ]
+        }
+       ],
        "errorMessage": "The download is stalled with no connections",
        "downloadId": "3C1B5134C3A75D15F32723BEBD9406E4C569C454",
        "protocol": "torrent",

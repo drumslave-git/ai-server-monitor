@@ -21,7 +21,7 @@
    "type": "report_score_range",
    "weight": 1,
    "min": 0,
-   "max": 65
+   "max": 75
   },
   {
    "type": "report_findings_mention",
