@@ -15,6 +15,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
+from ..config import ChatSettings
 from ..llm import LLMClient
 from ..promauto.catalog import JobSlice
 from ..promauto.planner import (
@@ -89,9 +90,11 @@ class AttemptRunner:
         auto_tool_mode: str,
         private_snapshot: Callable[[str], Any] | None = None,
         overlap: Callable[[], AbstractContextManager[OverlapWatch]] | None = None,
+        chat: ChatSettings | None = None,
     ):
         self.llm = llm
         self.tracing = tracing
+        self.chat = chat
         self.auto_tool_mode = auto_tool_mode
         self._private = private_snapshot
         self._overlap = overlap
@@ -132,7 +135,9 @@ class AttemptRunner:
             try:
                 snapshot = await self.snapshot_for(scenario)
                 mode = self.tool_mode_for(scenario)
-                app = await build_app(scenario, snapshot, self.llm, self.tracing, tool_mode=mode)
+                app = await build_app(
+                    scenario, snapshot, self.llm, self.tracing, tool_mode=mode, chat=self.chat
+                )
                 outcome.tool_mode = mode if scenario.input.kind == "chat" else None
                 t0 = time.perf_counter()
                 async with asyncio.timeout(budget_s):

@@ -121,6 +121,16 @@ export type RunSummaryData = {
   hardware?: HwNumbers;
 };
 
+/** meta.chat: the chat settings of the app that the run's chat scenarios ran under. */
+export type ChatMeta = {
+  tool_routing?: "auto" | "always" | "off";
+  tool_routing_tokens?: number;
+  max_steps?: number;
+  history_messages?: number;
+  max_tool_result_chars?: number;
+  tool_timeout_s?: number;
+};
+
 export type GpuInfo = {
   driver?: string | null;
   gpus?: { name?: string; mem_total?: number; mem_used?: number; util_percent?: number; temperature_c?: number; power_w?: number }[];
@@ -167,6 +177,8 @@ export type Run = {
     cold_start?: ColdStart | null;
     llm?: Record<string, unknown>;
     tool_mode?: string;
+    /** The chat settings the run used. Absent on runs made before they were recorded. */
+    chat?: ChatMeta;
     backend?: Record<string, unknown>;
     gpu?: GpuInfo;
     /** Absent on runs made before hardware was recorded. */

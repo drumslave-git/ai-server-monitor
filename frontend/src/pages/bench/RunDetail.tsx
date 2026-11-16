@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../../api";
 import { Badge, Empty, Markdown, Panel } from "../../ui";
 import { ScenarioDetail } from "./Catalog";
-import { GROUP_SHORT, backendLabel, coldStartText, elapsed, gb, ms, pct, score, scoreLevel, shortDate, sizeLabel, statusLevel, tps } from "./format";
+import { GROUP_SHORT, backendLabel, coldStartText, elapsed, gb, ms, pct, routingLabel, score, scoreLevel, shortDate, sizeLabel, statusLevel, tps } from "./format";
 import { HardwareSection, hwScope, vramStat } from "./Hardware";
 import type { Attempt, AttemptRow, Catalog, GpuInfo, HwNumbers, Run, ScenarioInfo } from "./types";
 
@@ -92,6 +92,11 @@ export function RunDetail({ id, scenarioId, attemptId, catalog }: { id: number; 
               <dd>
                 {String(llm.tool_mode ?? "—")}
                 {meta.tool_mode && llm.tool_mode !== meta.tool_mode && <> → used <strong>{meta.tool_mode}</strong></>}
+              </dd>
+              <dt>Tool routing</dt>
+              <dd>
+                {routingLabel(run)}
+                <span className="muted small block">The chat setting at the start of the run: which tool groups the model gets per question. The classifier call counts in an attempt's LLM calls.</span>
               </dd>
               <dt>Cold start</dt>
               <dd>

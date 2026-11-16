@@ -20,6 +20,7 @@ import httpx
 
 from .. import __version__
 from ..chat.safety import Scrubber
+from ..config import ChatSettings
 from ..digest import collectors_snapshot
 from ..llm import LLMClient, LLMError
 from ..tracing import Tracing
@@ -149,6 +150,7 @@ class BenchService:
         n = repeats or settings.bench.repeats
         scope = "ids" if ids else (f"group:{group}" if group else "all")
         llm_cfg = settings.llm.model_copy(deep=True)
+        chat_cfg = settings.chat.model_copy(deep=True)
         run_id = await self.store.create_run(
             scope=scope,
             repeats=n,
@@ -173,7 +175,12 @@ class BenchService:
         self._publish()
         self._task = asyncio.create_task(
             self._run(
-                run_id, scenarios, n, llm_cfg, settings.bench.attempt_timeout.total_seconds()
+                run_id,
+                scenarios,
+                n,
+                llm_cfg,
+                settings.bench.attempt_timeout.total_seconds(),
+                chat_cfg,
             ),
             name=f"bench-{run_id}",
         )
@@ -216,6 +223,7 @@ class BenchService:
         repeats: int,
         llm_cfg: Any,
         budget_s: float,
+        chat_cfg: ChatSettings | None = None,
     ) -> None:
         ctx = self.ctx
         attempts: list[dict[str, Any]] = []
@@ -235,7 +243,9 @@ class BenchService:
         sampler = self._start_sampler(run_id)
         windows: dict[str, list[tuple[float, float]]] = {}
         try:
-            runner = await self._prepare(run_id, llm, llm_cfg, tracing, scenarios, sampler)
+            runner = await self._prepare(
+                run_id, llm, llm_cfg, tracing, scenarios, sampler, chat_cfg
+            )
             for scenario in scenarios:
                 for attempt in range(1, repeats + 1):
                     self._progress(scenario, attempt)
@@ -306,8 +316,11 @@ class BenchService:
         tracing: Tracing,
         scenarios: list[Scenario],
         sampler: HardwareSampler | None = None,
+        chat_cfg: ChatSettings | None = None,
     ) -> AttemptRunner:
         ctx = self.ctx
+        # The chat settings the run was started with, like the LLM settings.
+        chat_cfg = chat_cfg or ctx.settings.chat.model_copy(deep=True)
         probed = await probe_backend(llm_cfg, transport=self._probe_transport)
         # The tool mode the product itself uses for this model (probed once, then cached).
         mode = await ctx.tool_mode.resolve() if llm_cfg.tool_mode == "auto" else llm_cfg.tool_mode
@@ -343,6 +356,14 @@ class BenchService:
                 "extra_body": llm_cfg.extra_body,
             },
             "tool_mode": mode,
+            "chat": {
+                "tool_routing": chat_cfg.tool_routing,
+                "tool_routing_tokens": chat_cfg.tool_routing_tokens,
+                "max_steps": chat_cfg.max_steps,
+                "history_messages": chat_cfg.history_messages,
+                "max_tool_result_chars": chat_cfg.max_tool_result_chars,
+                "tool_timeout_s": chat_cfg.tool_timeout.total_seconds(),
+            },
             "backend": probed,
             "gpu": gpu,
             "hardware": {"recorded": sampler is not None},
@@ -367,6 +388,7 @@ class BenchService:
             auto_tool_mode=mode,
             private_snapshot=self.store.snapshot_doc,
             overlap=self._overlap,
+            chat=chat_cfg,
         )
         if self.warmup_enabled:
             assert self.progress is not None

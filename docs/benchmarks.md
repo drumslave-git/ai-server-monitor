@@ -232,6 +232,13 @@ into it, because a judge is itself a model.
   otherwise the OpenAI-compatible `/v1/models` entry), the effective LLM settings (temperature,
   max output tokens, tool mode, context), app version, scenario-set hash (two runs with
   different hashes did not measure the same thing), start/finish times and a GPU snapshot.
+- **Chat settings:** the chat scenarios run under the instance's own Settings → Chat (tool
+  routing, routing token limit, tool timeout, steps, history, result size), read when the run
+  starts, so a run with `tool_routing` off can be compared with one with it on. Only what the fake
+  world needs is forced (the shell tool exists, writes need approval, nothing is sent); a
+  scenario's own `settings` patch still wins. The run page's Setup and Compare show the routing
+  mode; runs from before it was recorded say "not recorded". With routing, the classifier call
+  counts in an attempt's LLM calls.
 - **Hardware:** while a run goes, the monitor samples this host about once a second (Settings →
   Benchmarks → `record_hardware`, `hardware_interval`; 0.5-10 s) from its own readers, not a new
   agent: GPU busy %, VRAM (whole GPU, and the LLM server's own process when the GPU lists

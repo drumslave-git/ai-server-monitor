@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ from ai_server_monitor.bench.world import (
     rebase_times,
     world_transport,
 )
-from ai_server_monitor.config import LLMSettings
+from ai_server_monitor.config import ChatSettings, LLMSettings
 from ai_server_monitor.db import Database
 from ai_server_monitor.llm import LLMClient
 from ai_server_monitor.tracing import Tracing
@@ -70,6 +71,7 @@ async def attempt(
     *,
     mode: str = "native",
     cfg: LLMSettings | None = None,
+    chat: ChatSettings | None = None,
 ) -> tuple[dict[str, Any], FakeLLM]:
     tracing = Tracing(trace_db, TraceConfig())
     client = LLMClient(
@@ -81,7 +83,9 @@ async def attempt(
     async def private(name: str) -> dict[str, Any]:
         return SMOKE
 
-    runner = AttemptRunner(client, tracing, auto_tool_mode=mode, private_snapshot=private)
+    runner = AttemptRunner(
+        client, tracing, auto_tool_mode=mode, private_snapshot=private, chat=chat
+    )
     row = await runner.run(sc, 1, 30)
     await client.aclose()
     return row, llm
@@ -352,6 +356,45 @@ def test_profile_configures_every_service_and_requires_approval() -> None:
         [{"chat": {"shell": False}}],
     )
     assert patched.llm.api_key.get_secret_value() == "sk-1" and patched.chat.shell is False
+
+
+def test_profile_takes_the_chat_settings_of_the_app_but_keeps_the_fake_shell() -> None:
+    mine = ChatSettings(
+        tool_routing="always",
+        tool_routing_tokens=500,
+        tool_timeout=timedelta(minutes=5),
+        shell=False,
+    )
+    s = bench_settings(LLMSettings(base_url="http://x/v1", model="m"), World(), None, mine)
+    assert s.chat.tool_routing == "always" and s.chat.tool_routing_tokens == 500
+    assert s.chat.tool_timeout == timedelta(minutes=5)
+    assert s.chat.shell is True  # the fake world has a shell; its tool must exist
+    # a scenario's own patch still wins over the app's setting
+    patched = bench_settings(
+        LLMSettings(base_url="http://x/v1", model="m"),
+        World(),
+        [{"chat": {"tool_routing": "off"}}],
+        mine,
+    )
+    assert patched.chat.tool_routing == "off" and patched.chat.tool_routing_tokens == 500
+    # no chat settings given = the defaults, as before
+    plain = bench_settings(LLMSettings(base_url="http://x/v1", model="m"), World())
+    assert plain.chat.tool_routing == "auto" and plain.chat.tool_routing_tokens == 2000
+
+
+@pytest.mark.parametrize(("mode", "classified"), [("always", 1), ("off", 0)])
+async def test_attempt_follows_the_routing_setting_and_counts_the_classifier_call(
+    trace_db: Database, mode: str, classified: int
+) -> None:
+    sc = chat_scenario(
+        "what uses the most memory?", [{"type": "answer_contains_all", "values": ["Ollama"]}]
+    )
+    llm = FakeLLM(say("Ollama."))
+    llm.route_reply = '{"groups": ["host"]}'
+    row, _ = await attempt(trace_db, sc, llm, chat=ChatSettings(tool_routing=mode))  # type: ignore[arg-type]
+    assert row["status"] == "ok", row
+    assert len(llm.route_requests) == classified
+    assert row["llm_calls"] == 1 + classified
 
 
 async def test_world_transport_routes_by_host_and_method() -> None:

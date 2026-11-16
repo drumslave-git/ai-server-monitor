@@ -35,6 +35,7 @@ from ..chat.host_tools import RESULT_SHARE, DiskUsageArgs, RunCommandArgs
 from ..chat.tools import Tool, ToolContext, ToolError, build_tools
 from ..collectors.base import CollectorResult, CollectorUnavailable, HostEnv
 from ..config import (
+    ChatSettings,
     LLMSettings,
     Settings,
 )
@@ -95,11 +96,16 @@ def services_in(world: World) -> set[str]:
 
 
 def bench_settings(
-    llm: LLMSettings, world: World, patches: list[dict[str, Any]] | None = None
+    llm: LLMSettings,
+    world: World,
+    patches: list[dict[str, Any]] | None = None,
+    chat: ChatSettings | None = None,
 ) -> Settings:
-    """The Settings profile every benchmark chat runs under: defaults, the LLM of the app, and a
-    fake Radarr, Sonarr, Prowlarr, qBittorrent, Prometheus, Docker and shell so that every
-    tool exists; every write action needs approval and nothing is ever sent (dry-run)."""
+    """The Settings profile every benchmark chat runs under: defaults, the LLM of the app, the
+    chat settings of the app (routing, tool timeout, ...; defaults when not given) and a fake
+    Radarr, Sonarr, Prowlarr, qBittorrent, Prometheus, Docker and shell so that every tool
+    exists; every write action needs approval and nothing is ever sent (dry-run). Scenario and
+    snapshot patches come last and win."""
     names = {"radarr", "sonarr", "prowlarr", "qbittorrent"} | services_in(world)
     arr: dict[str, Any] = {"dry_run": True, "radarr": [], "sonarr": [], "whisparr": []}
     for name in sorted(names):
@@ -134,7 +140,9 @@ def bench_settings(
         )
     base = Settings().storage_dict()
     base["llm"] = llm.model_dump(mode="json", context={"reveal_secrets": True})
-    base["chat"]["shell"] = True
+    if chat is not None:
+        base["chat"] = chat.model_dump(mode="json")
+    base["chat"]["shell"] = True  # the fake world has a shell: its tool must exist
     base["arr"] = merge_patch(base["arr"], arr)
     base["collectors"]["prometheus"]["url"] = f"http://prometheus{HOST_SUFFIX}:9090"
     base["collectors"]["docker"]["enabled"] = True
@@ -655,11 +663,13 @@ async def build_app(
     *,
     tool_mode: str,
     now: float | None = None,
+    chat: ChatSettings | None = None,
 ) -> BenchApp:
     """A throw-away application around the scenario's world: in-memory database, fake
-    collectors, MCP and HTTP. `llm` is the one real connection."""
+    collectors, MCP and HTTP. `llm` is the one real connection; `chat` the chat settings of the
+    app (None = defaults)."""
     world = scenario.world
-    settings = bench_settings(llm.cfg, world, [snapshot.settings, scenario.settings])
+    settings = bench_settings(llm.cfg, world, [snapshot.settings, scenario.settings], chat)
     db = Database(":memory:")
     await db.connect()
     await _load_history(db, snapshot, now)

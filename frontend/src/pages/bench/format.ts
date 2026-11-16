@@ -3,6 +3,16 @@ import type { ColdStart, Run } from "./types";
 
 export { ms };
 
+/** How the chat routed its tools in a run: "off", "always", "auto (above 2000 tokens)";
+ *  "not recorded" for runs made before the chat settings were kept. */
+export const routingLabel = (run: Pick<Run, "meta">): string => {
+  const chat = run.meta?.chat;
+  if (!chat?.tool_routing) return "not recorded";
+  return chat.tool_routing === "auto" && chat.tool_routing_tokens
+    ? `auto (above ${chat.tool_routing_tokens} tokens)`
+    : chat.tool_routing;
+};
+
 /** 0-1 score as a percentage. */
 export const score = (s: number | null | undefined): string => (s === null || s === undefined ? "—" : `${Math.round(s * 100)}%`);
 
