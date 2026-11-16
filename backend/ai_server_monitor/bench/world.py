@@ -664,12 +664,16 @@ async def build_app(
     tool_mode: str,
     now: float | None = None,
     chat: ChatSettings | None = None,
+    effort: str | None = None,
 ) -> BenchApp:
     """A throw-away application around the scenario's world: in-memory database, fake
     collectors, MCP and HTTP. `llm` is the one real connection; `chat` the chat settings of the
-    app (None = defaults)."""
+    app (None = defaults). `effort` is the thinking level under test (the API's
+    reasoning_effort) for the report; the chat answers take it from `llm.cfg`."""
     world = scenario.world
     settings = bench_settings(llm.cfg, world, [snapshot.settings, scenario.settings], chat)
+    if effort is not None:
+        settings.report.reasoning_effort = effort  # type: ignore[assignment]
     db = Database(":memory:")
     await db.connect()
     await _load_history(db, snapshot, now)

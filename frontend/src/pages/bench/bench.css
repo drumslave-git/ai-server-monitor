@@ -19,6 +19,9 @@
 .bench-controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: end; }
 .bench-repeats { display: grid; gap: 4px; }
 .bench-repeats input { width: 96px; }
+.bench-levels { display: flex; flex-wrap: wrap; gap: 4px 16px; border: 0; margin: 0; padding: 0; min-width: 0; }
+.bench-levels legend { padding: 0 0 4px; }
+.bench-level { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .bench-run-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .bench-progress { display: grid; gap: 8px; margin-top: 4px; }
 .bench-progress-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }

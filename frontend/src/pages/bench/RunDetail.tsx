@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../../api";
 import { Badge, Empty, Markdown, Panel } from "../../ui";
 import { ScenarioDetail } from "./Catalog";
-import { GROUP_SHORT, backendLabel, coldStartText, elapsed, gb, ms, pct, routingLabel, score, scoreLevel, shortDate, sizeLabel, statusLevel, tps } from "./format";
+import { GROUP_SHORT, backendLabel, chars, effortLabel, coldStartText, elapsed, gb, ms, pct, routingLabel, score, scoreLevel, shortDate, sizeLabel, statusLevel, tps } from "./format";
 import { HardwareSection, hwScope, vramStat } from "./Hardware";
+import { LevelMatrix, LevelsPanel } from "./Levels";
 import type { Attempt, AttemptRow, Catalog, GpuInfo, HwNumbers, Run, ScenarioInfo } from "./types";
 
 export function ScoreBar({ value }: { value: number | null | undefined }) {
@@ -86,7 +87,7 @@ export function RunDetail({ id, scenarioId, attemptId, catalog }: { id: number; 
               </dd>
               <dt>Settings</dt>
               <dd>
-                temperature {String(llm.temperature ?? "—")} · max output {String(llm.max_output_tokens ?? "—")} tokens · thinking {String(llm.reasoning_effort ?? "—")} · context setting {String(llm.max_context_tokens ?? "—")}
+                temperature {String(llm.temperature ?? "—")} · max output {String(llm.max_output_tokens ?? "—")} tokens · thinking {meta.levels ? `tested at ${meta.levels.tested.join(", ")}` : String(llm.reasoning_effort ?? "—")} · context setting {String(llm.max_context_tokens ?? "—")}
               </dd>
               <dt>Tool mode</dt>
               <dd>
@@ -140,6 +141,7 @@ export function RunDetail({ id, scenarioId, attemptId, catalog }: { id: number; 
               <div><span className="muted small">Median attempt</span><strong className="big">{ms(run.summary?.median_total_ms)}</strong></div>
               <div><span className="muted small">Speed</span><strong className="big">{tps(run.summary?.median_tokens_per_s)}</strong></div>
               <div><span className="muted small">Failed attempts</span><strong className="big">{run.summary?.failures ?? "—"}</strong></div>
+              {(run.summary?.empty_answers ?? 0) > 0 && <div><span className="muted small">Empty answers</span><strong className="big crit-text">{run.summary?.empty_answers}</strong></div>}
             </div>
             <ul className="group-bars">
               {Object.entries(run.group_scores ?? {}).map(([g, s]) => (
@@ -152,7 +154,11 @@ export function RunDetail({ id, scenarioId, attemptId, catalog }: { id: number; 
             </ul>
           </Panel>
 
+          <LevelsPanel run={run} />
+
           <HardwareSection run={run} />
+
+          <LevelMatrix run={run} catalog={catalog} />
 
           <ScenarioTable run={run} catalog={catalog} />
         </>
@@ -243,11 +249,13 @@ function ScenarioView({ run, scenarioId, info, attemptId }: { run: Run; scenario
               <thead>
                 <tr>
                   <th>#</th>
+                  <th>Level</th>
                   <th>Score</th>
                   <th>Status</th>
                   <th className="num">TTFT</th>
                   <th className="num">Total</th>
                   <th className="num">Tokens in → out</th>
+                  <th className="num">Reasoning</th>
                   <th className="num">Speed</th>
                   <th className="num">LLM steps</th>
                   <th className="num">Tools</th>
@@ -276,15 +284,19 @@ function AttemptLine({ a, run, active }: { a: AttemptRow; run: Run; active: bool
   return (
     <tr className={active ? "is-selected" : undefined}>
       <td data-label="Attempt"><a href={`#/bench/run/${run.id}/${a.scenario_id}/${a.id}`}>#{a.attempt}</a></td>
+      <td data-label="Level" className="mono">{effortLabel(a.effort)}</td>
       <td data-label="Score"><span className={`score score-${scoreLevel(a.score)}`}>{score(a.score)}</span></td>
       <td data-label="Status">
         <Badge level={a.status === "ok" ? "ok" : "crit"}>{a.status}</Badge>
+        {a.answer_issue === "empty" && <span className="block crit-text small" title="The model wrote no answer: it used the whole output limit on thinking">no answer</span>}
+        {a.answer_issue === "limit" && <span className="block warn-text small" title="The answer was cut off by the output limit">cut off</span>}
         {a.report_overlap && <span className="block muted small" title="A report was being written meanwhile">report overlapped</span>}
         {a.reload_suspected && <span className="block warn-text small" title={a.reload_suspected}>reload suspected</span>}
       </td>
       <td data-label="TTFT" className="num">{ms(a.ttft_ms)}</td>
       <td data-label="Total" className="num">{ms(a.total_ms)}</td>
       <td data-label="Tokens" className="num">{a.tokens_in ?? "—"} → {a.tokens_out ?? "—"}</td>
+      <td data-label="Reasoning" className="num">{a.reasoning_chars ? `${chars(a.reasoning_chars)} chars` : "—"}</td>
       <td data-label="Speed" className="num">{tps(a.tokens_per_s)}</td>
       <td data-label="LLM steps" className="num">{a.llm_calls ?? "—"}</td>
       <td data-label="Tools" className="num">{a.tool_calls ?? "—"}</td>
@@ -344,7 +356,9 @@ function AttemptDetail({ run, row }: { run: Run; row: AttemptRow }) {
           <dl className="bench-meta">
             <dt>First token</dt><dd>{ms(a.ttft_ms)}</dd>
             <dt>Total</dt><dd>{ms(a.total_ms)}</dd>
+            <dt>Thinking level</dt><dd className="mono">{a.effort ? effortLabel(a.effort) : "not applicable"}</dd>
             <dt>Tokens</dt><dd>{a.tokens_in ?? "—"} in · {a.tokens_out ?? "—"} out · {tps(a.tokens_per_s)}</dd>
+            <dt>Reasoning</dt><dd>{a.reasoning_chars ? `${a.reasoning_chars} characters` : "none written"}</dd>
             <dt>LLM calls</dt><dd>{a.llm_calls ?? "—"}{detail.repairs ? ` · ${detail.repairs} repair prompt(s)` : ""}</dd>
             <dt>Tool mode</dt><dd>{a.tool_mode ?? "—"}</dd>
             <dt>Started</dt><dd>{shortDate(a.started)}</dd>

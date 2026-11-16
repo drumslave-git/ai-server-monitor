@@ -13,7 +13,8 @@ _ATTEMPT_JSON = ("checks", "trace_ids", "detail", "hw")
 _ATTEMPT_LIST = (
     "id, run_id, scenario_id, grp, attempt, started, status, score, error, ttft_ms, total_ms, "
     "tokens_in, tokens_out, tokens_per_s, llm_calls, tool_calls, tool_mode, report_overlap, "
-    "judge_score, json_extract(detail, '$.reload_suspected') AS reload_suspected, hw"
+    "judge_score, json_extract(detail, '$.reload_suspected') AS reload_suspected, hw, effort, "
+    "reasoning_chars, answer_issue"
 )
 
 

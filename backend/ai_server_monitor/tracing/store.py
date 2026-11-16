@@ -166,10 +166,10 @@ class TraceStore:
             " attempt, model, base_url, stream, params, status, http_status, error, finish_reason,"
             " prompt_tokens, completion_tokens, usage_estimated, queued_ms, ttft_ms, total_ms,"
             " tokens_per_s, messages_count, tools_count, tools_tokens, request_bytes,"
-            " response_chars, tool_calls_count, request_preview, response_preview, messages,"
-            " tools, content, reasoning, tool_calls, truncated, bodies, size_bytes)"
+            " response_chars, reasoning_chars, tool_calls_count, request_preview, response_preview,"
+            " messages, tools, content, reasoning, tool_calls, truncated, bodies, size_bytes)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
-            "?,?)",
+            "?,?,?)",
             (
                 rec.ts,
                 rec.purpose,
@@ -199,6 +199,7 @@ class TraceStore:
                 tools_tokens,
                 rec.request_bytes,
                 len(rec.content) + len(rec.reasoning),
+                len(rec.reasoning),
                 len(rec.tool_calls),
                 previews[0] or None,
                 previews[1] or None,

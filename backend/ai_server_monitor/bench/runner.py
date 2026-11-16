@@ -8,6 +8,7 @@ the checks, and reads the timings from the LLM trace of exactly this attempt.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import statistics
 import time
@@ -27,8 +28,10 @@ from ..promauto.planner import (
 )
 from ..promauto.store import KV_PLAN, QueryStore
 from ..tracing import Tracing, trace_scope
+from ..tracing.parse import THOUGHT_ONLY
 from . import checks as checks_mod
 from .checks import Outcome, ToolCallRecord
+from .hardware import FIELDS
 from .schema import (
     PRIVATE_PREFIX,
     ChatInput,
@@ -45,6 +48,16 @@ log = logging.getLogger(__name__)
 
 ANSWER_LIMIT = 20_000
 """Characters of the answer kept per attempt."""
+
+LEVELS = ("auto", "none", "low", "medium", "high")
+"""The thinking levels: the API's reasoning_effort values. auto = not sent, the model decides."""
+
+EMPTY_MARKS = ("used the whole output limit", THOUGHT_ONLY[:40])
+"""Pieces of the failures that mean "the model wrote no answer" (see tracing.parse)."""
+
+
+def is_empty_answer(text: str | None) -> bool:
+    return bool(text) and any(mark in str(text) for mark in EMPTY_MARKS)
 
 
 class OverlapWatch:
@@ -122,8 +135,21 @@ class AttemptRunner:
             return "none"
         return self.auto_tool_mode if scenario.tool_mode == "auto" else scenario.tool_mode
 
-    async def run(self, scenario: Scenario, attempt: int, budget_s: float) -> dict[str, Any]:
-        """→ the attempt row (see migration 0008) plus `outcome` for the judge."""
+    def llm_at(self, effort: str | None) -> LLMClient:
+        """The connection for one attempt at a thinking level: the same HTTP client, statistics
+        and trace, but `reasoning_effort` set for the calls that do not choose their own (the
+        chat answer; helper calls such as the routing classifier keep asking for "none")."""
+        if effort is None:
+            return self.llm
+        client = copy.copy(self.llm)
+        client.cfg = self.llm.cfg.model_copy(update={"reasoning_effort": effort})
+        return client
+
+    async def run(
+        self, scenario: Scenario, attempt: int, budget_s: float, effort: str | None = None
+    ) -> dict[str, Any]:
+        """→ the attempt row (see migrations 0008 and 0012) plus `outcome` for the judge.
+        `effort`: the thinking level to run the answer calls at; None = the Settings value."""
         started = time.time()
         outcome = Outcome(kind=scenario.input.kind)
         app: BenchApp | None = None
@@ -136,7 +162,13 @@ class AttemptRunner:
                 snapshot = await self.snapshot_for(scenario)
                 mode = self.tool_mode_for(scenario)
                 app = await build_app(
-                    scenario, snapshot, self.llm, self.tracing, tool_mode=mode, chat=self.chat
+                    scenario,
+                    snapshot,
+                    self.llm_at(effort),
+                    self.tracing,
+                    tool_mode=mode,
+                    chat=self.chat,
+                    effort=effort,
                 )
                 outcome.tool_mode = mode if scenario.input.kind == "chat" else None
                 t0 = time.perf_counter()
@@ -164,6 +196,9 @@ class AttemptRunner:
         results = checks_mod.run_checks(list(scenario.checks), outcome)
         score = checks_mod.score(results)
         metrics = await self._metrics(scope.call_ids)
+        issue = metrics.pop("issue")
+        if is_empty_answer(outcome.error):
+            issue = "empty"
         return {
             "scenario_id": scenario.id,
             "grp": scenario.group,
@@ -180,6 +215,8 @@ class AttemptRunner:
             "report_overlap": int(overlap),
             "trace_ids": sorted(set(scope.call_ids)),
             "detail": self._detail(outcome),
+            "effort": effort,
+            "answer_issue": issue,
             **metrics,
             "outcome": outcome,
         }
@@ -302,13 +339,16 @@ class AttemptRunner:
             "tokens_in": None,
             "tokens_out": None,
             "tokens_per_s": None,
+            "reasoning_chars": None,
+            "issue": None,
             "llm_calls": len(ids),
         }
         if not ids:
             return empty
         marks = ",".join("?" * len(ids))
         rows = await self.tracing.store.db.fetchall(
-            "SELECT id, ts, status, prompt_tokens, completion_tokens, ttft_ms, total_ms "
+            "SELECT id, ts, status, error, finish_reason, prompt_tokens, completion_tokens, "
+            "ttft_ms, total_ms, reasoning_chars "
             f"FROM llm_calls WHERE id IN ({marks}) ORDER BY ts, id",
             ids,
         )
@@ -316,18 +356,28 @@ class AttemptRunner:
             return empty
         ok_rows = [r for r in rows if r["status"] == "ok"] or list(rows)
         first = next((r["ttft_ms"] for r in rows if r["ttft_ms"] is not None), None)
-        tin = sum(r["prompt_tokens"] or 0 for r in ok_rows)
-        tout = sum(r["completion_tokens"] or 0 for r in ok_rows)
+        # Totals count every call, also one that failed after thinking (an empty answer spent
+        # its tokens); the speed is read from the successful calls only.
+        tin = sum(r["prompt_tokens"] or 0 for r in rows)
+        tout = sum(r["completion_tokens"] or 0 for r in rows)
+        tout_ok = sum(r["completion_tokens"] or 0 for r in ok_rows)
         gen_ms = sum(
             max((r["total_ms"] or 0) - (r["ttft_ms"] or 0), 0)
             for r in ok_rows
             if r["total_ms"] is not None
         )
+        issue = None
+        if any(is_empty_answer(r["error"]) for r in rows):
+            issue = "empty"
+        elif any(r["finish_reason"] == "length" for r in rows):
+            issue = "limit"
         return {
             "ttft_ms": first,
             "tokens_in": tin or None,
             "tokens_out": tout or None,
-            "tokens_per_s": round(tout / (gen_ms / 1000), 1) if gen_ms > 0 and tout else None,
+            "tokens_per_s": round(tout_ok / (gen_ms / 1000), 1) if gen_ms > 0 and tout_ok else None,
+            "reasoning_chars": sum(r["reasoning_chars"] or 0 for r in rows),
+            "issue": issue,
             "llm_calls": len(rows),
         }
 
@@ -369,6 +419,76 @@ def _median(values: list[float]) -> float | None:
     return round(statistics.median(values), 1) if values else None
 
 
+def _scores(attempts: list[dict[str, Any]]) -> tuple[dict[str, float], float | None]:
+    """Mean score per group (of the scenarios' mean scores) and their overall mean."""
+    by_scenario: dict[str, list[dict[str, Any]]] = {}
+    for a in attempts:
+        by_scenario.setdefault(a["scenario_id"], []).append(a)
+    groups: dict[str, list[float]] = {}
+    for rows in by_scenario.values():
+        mean = sum(float(r["score"] or 0) for r in rows) / len(rows)
+        groups.setdefault(rows[0]["grp"], []).append(mean)
+    group_scores = {g: round(sum(v) / len(v), 4) for g, v in groups.items()}
+    overall = round(sum(group_scores.values()) / len(group_scores), 4) if group_scores else None
+    return group_scores, overall
+
+
+def merge_hw(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The hardware numbers of several attempts as one: the highest peak, the average weighted
+    by samples."""
+    hws = [r["hw"] for r in rows if r.get("hw")]
+    if not hws:
+        return None
+    out: dict[str, Any] = {"n": sum(h["n"] for h in hws)}
+    for field in FIELDS:
+        parts = [(h["n"], h[field]) for h in hws if h.get(field)]
+        total = sum(n for n, _ in parts)
+        out[field] = (
+            {
+                "avg": round(sum(n * st["avg"] for n, st in parts) / total, 1),
+                "peak": max(st["peak"] for _, st in parts),
+            }
+            if parts and total
+            else None
+        )
+    for field in ("vram_total", "ram_total"):
+        vals = [h[field] for h in hws if h.get(field) is not None]
+        out[field] = max(vals) if vals else None
+    return out
+
+
+def summarize_levels(attempts: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The numbers of each thinking level of a run (attempts without a level, which no level
+    changes, are left out): accuracy, time and tokens per answer, empty and cut-off answers."""
+    out: dict[str, dict[str, Any]] = {}
+    for level in LEVELS:
+        rows = [a for a in attempts if a.get("effort") == level]
+        if not rows:
+            continue
+        groups, overall = _scores(rows)
+        times = [r["total_ms"] for r in rows if r.get("total_ms") is not None]
+        tokens = [r["tokens_out"] for r in rows if r.get("tokens_out") is not None]
+        reasoning = [r["reasoning_chars"] for r in rows if r.get("reasoning_chars") is not None]
+        out[level] = {
+            "attempts": len(rows),
+            "overall": overall,
+            "group_scores": groups,
+            "pass_rate": round(
+                sum(1 for r in rows if float(r["score"] or 0) >= 0.999) / len(rows), 4
+            ),
+            "failed": sum(1 for r in rows if r["status"] != "ok"),
+            "empty": sum(1 for r in rows if r.get("answer_issue") == "empty"),
+            "limit": sum(1 for r in rows if r.get("answer_issue") == "limit"),
+            "median_total_ms": _median(times),
+            "median_tokens_out": _median(tokens),
+            "median_reasoning_chars": _median(reasoning),
+            "tokens_out": sum(tokens),
+            "reasoning_chars": sum(reasoning),
+            "hw": merge_hw(rows),
+        }
+    return out
+
+
 def summarize(attempts: list[dict[str, Any]]) -> dict[str, Any]:
     """Run-level numbers from its attempts: scores per scenario and group, overall, medians,
     pass rate, failures."""
@@ -380,6 +500,18 @@ def summarize(attempts: list[dict[str, Any]]) -> dict[str, Any]:
         scores = [float(r["score"] or 0) for r in rows]
         times = [r["total_ms"] for r in rows if r.get("total_ms") is not None]
         ttfts = [r["ttft_ms"] for r in rows if r.get("ttft_ms") is not None]
+        per_level: dict[str, dict[str, Any]] = {}
+        for level in LEVELS:
+            lrows = [r for r in rows if r.get("effort") == level]
+            if lrows:
+                ltimes = [r["total_ms"] for r in lrows if r.get("total_ms") is not None]
+                per_level[level] = {
+                    "score": round(sum(float(r["score"] or 0) for r in lrows) / len(lrows), 4),
+                    "attempts": len(lrows),
+                    "failed": sum(1 for r in lrows if r["status"] != "ok"),
+                    "empty": sum(1 for r in lrows if r.get("answer_issue") == "empty"),
+                    "median_total_ms": _median(ltimes),
+                }
         scenarios[sid] = {
             "group": rows[0]["grp"],
             "score": round(sum(scores) / len(scores), 4),
@@ -388,6 +520,7 @@ def summarize(attempts: list[dict[str, Any]]) -> dict[str, Any]:
             "failed": sum(1 for r in rows if r["status"] not in ("ok",)),
             "median_total_ms": _median(times),
             "median_ttft_ms": _median(ttfts),
+            **({"levels": per_level} if per_level else {}),
         }
     groups: dict[str, list[float]] = {}
     for info in scenarios.values():
@@ -416,6 +549,8 @@ def summarize(attempts: list[dict[str, Any]]) -> dict[str, Any]:
             ),
             "tokens_in": sum(a.get("tokens_in") or 0 for a in attempts),
             "tokens_out": sum(a.get("tokens_out") or 0 for a in attempts),
+            "empty_answers": sum(1 for a in attempts if a.get("answer_issue") == "empty"),
+            "limit_hits": sum(1 for a in attempts if a.get("answer_issue") == "limit"),
             "overlapped": sum(1 for a in attempts if a.get("report_overlap")),
             "reload_suspected": sum(1 for a in attempts if a.get("reload_suspected")),
         },

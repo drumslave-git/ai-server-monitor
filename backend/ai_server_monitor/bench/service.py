@@ -28,7 +28,7 @@ from ..tracing.config import TraceConfig
 from . import judge as judge_mod
 from .hardware import HardwareSampler, in_windows, stats, summarize_hardware
 from .probe import ollama_loaded, probe_backend
-from .runner import AttemptRunner, OverlapWatch, summarize
+from .runner import LEVELS, AttemptRunner, OverlapWatch, summarize, summarize_levels
 from .schema import (
     GROUP_TITLES,
     GROUPS,
@@ -79,6 +79,42 @@ def loaded_model(probed: dict[str, Any], ps: dict[str, Any] | None) -> dict[str,
             "context_length": probed.get("context_length"),
         }
     return None
+
+
+Plan = list[tuple[str | None, Scenario]]
+"""What a run does, in order: (thinking level or None, scenario), each repeated N times."""
+
+
+def plan_attempts(scenarios: list[Scenario], efforts: list[str] | None) -> Plan:
+    """Every scenario at every thinking level, one level after another (the model stays loaded
+    throughout, and the attempts of a level are contiguous). The Prometheus planner always asks
+    the model for no thinking, so a level changes nothing there: those scenarios run once, in the
+    first pass, without a level. `efforts` None = no levels, the LLM setting is used as it is."""
+    if not efforts:
+        return [(None, s) for s in scenarios]
+    plan: Plan = []
+    for i, level in enumerate(efforts):
+        for s in scenarios:
+            if s.input.kind != "prom_plan":
+                plan.append((level, s))
+            elif i == 0:
+                plan.append((None, s))
+    return plan
+
+
+def clean_efforts(efforts: list[str] | None) -> list[str] | None:
+    if not efforts:
+        return None
+    unknown = set(efforts) - set(LEVELS)
+    if unknown:
+        raise BenchNotReady(f"unknown thinking level: {', '.join(sorted(unknown))}")
+    return [e for e in LEVELS if e in efforts]
+
+
+def thinking_known_absent(probed: dict[str, Any]) -> bool:
+    """The backend listed the model's capabilities and "thinking" is not among them."""
+    caps = probed.get("capabilities")
+    return isinstance(caps, list) and bool(caps) and "thinking" not in caps
 
 
 class BenchService:
@@ -137,6 +173,7 @@ class BenchService:
         group: str | None = None,
         ids: list[str] | None = None,
         repeats: int | None = None,
+        efforts: list[str] | None = None,
     ) -> int:
         """Start a run in the background → its id. Raises BenchBusy / BenchNotReady."""
         if self.running:
@@ -148,6 +185,7 @@ class BenchService:
         if not scenarios:
             raise BenchNotReady("no scenarios to run")
         n = repeats or settings.bench.repeats
+        levels = clean_efforts(efforts)
         scope = "ids" if ids else (f"group:{group}" if group else "all")
         llm_cfg = settings.llm.model_copy(deep=True)
         chat_cfg = settings.chat.model_copy(deep=True)
@@ -160,7 +198,7 @@ class BenchService:
             base_url=llm_cfg.base_url,
         )
         self._cancelled = False
-        total = len(scenarios) * n
+        total = len(plan_attempts(scenarios, levels)) * n
         self.progress = {
             "run_id": run_id,
             "status": "running",
@@ -170,6 +208,8 @@ class BenchService:
             "scenario": None,
             "attempt": None,
             "scenarios": len(scenarios),
+            "efforts": levels,
+            "effort": None,
             "started": time.time(),
         }
         self._publish()
@@ -181,6 +221,7 @@ class BenchService:
                 llm_cfg,
                 settings.bench.attempt_timeout.total_seconds(),
                 chat_cfg,
+                levels,
             ),
             name=f"bench-{run_id}",
         )
@@ -224,6 +265,7 @@ class BenchService:
         llm_cfg: Any,
         budget_s: float,
         chat_cfg: ChatSettings | None = None,
+        efforts: list[str] | None = None,
     ) -> None:
         ctx = self.ctx
         attempts: list[dict[str, Any]] = []
@@ -243,14 +285,24 @@ class BenchService:
         sampler = self._start_sampler(run_id)
         windows: dict[str, list[tuple[float, float]]] = {}
         try:
-            runner = await self._prepare(
-                run_id, llm, llm_cfg, tracing, scenarios, sampler, chat_cfg
+            runner, probed = await self._prepare(
+                run_id, llm, llm_cfg, tracing, scenarios, sampler, chat_cfg, efforts
             )
-            for scenario in scenarios:
+            if efforts and len(efforts) > 1 and thinking_known_absent(probed):
+                # A model that does not think: every level is the same run.
+                efforts = [efforts[0]]
+                await self._levels_meta(run_id, efforts)
+            plan = plan_attempts(scenarios, efforts)
+            assert self.progress is not None
+            self.progress["total"] = len(plan) * repeats
+            self._publish()
+            for effort, scenario in plan:
                 for attempt in range(1, repeats + 1):
-                    self._progress(scenario, attempt)
+                    self._progress(scenario, attempt, effort)
                     gone = await self._model_gone(llm_cfg)
-                    row = await runner.run(scenario, attempt, float(scenario.timeout_s or budget_s))
+                    row = await runner.run(
+                        scenario, attempt, float(scenario.timeout_s or budget_s), effort
+                    )
                     outcome = row.pop("outcome")
                     if sampler is not None:
                         span = (float(row["started"]), time.time())
@@ -317,7 +369,8 @@ class BenchService:
         scenarios: list[Scenario],
         sampler: HardwareSampler | None = None,
         chat_cfg: ChatSettings | None = None,
-    ) -> AttemptRunner:
+        efforts: list[str] | None = None,
+    ) -> tuple[AttemptRunner, dict[str, Any]]:
         ctx = self.ctx
         # The chat settings the run was started with, like the LLM settings.
         chat_cfg = chat_cfg or ctx.settings.chat.model_copy(deep=True)
@@ -365,6 +418,18 @@ class BenchService:
                 "max_tool_result_chars": chat_cfg.max_tool_result_chars,
                 "tool_timeout_s": chat_cfg.tool_timeout.total_seconds(),
             },
+            "levels": (
+                {
+                    "tested": efforts,
+                    "applies_to": "the chat answers and the report",
+                    "fixed": (
+                        "Tool routing, chat titles, the warm-up and the Prometheus planner "
+                        "always ask for no thinking, so those scenarios run once, without a level."
+                    ),
+                }
+                if efforts
+                else None
+            ),
             "backend": probed,
             "gpu": gpu,
             "hardware": {"recorded": sampler is not None},
@@ -402,12 +467,25 @@ class BenchService:
             meta["cold_start"] = cold
         meta["loaded_model"] = loaded_model(probed, (meta.get("cold_start") or {}).get("model"))
         await self.store.update_run(run_id, meta=meta)
-        return runner
+        return runner, probed
 
-    def _progress(self, scenario: Scenario, attempt: int) -> None:
+    async def _levels_meta(self, run_id: int, efforts: list[str]) -> None:
+        """The model does not think: record that the run was cut to one level."""
+        run = await self.store.get_run(run_id)
+        meta = (run or {}).get("meta") or {}
+        if meta.get("levels"):
+            meta["levels"]["tested"] = efforts
+            meta["levels"]["collapsed"] = "the model does not report thinking: one level is enough"
+            await self.store.update_run(run_id, meta=meta)
+
+    def _progress(self, scenario: Scenario, attempt: int, effort: str | None = None) -> None:
         assert self.progress is not None
         self.progress.update(
-            stage="running", scenario=scenario.id, title=scenario.title, attempt=attempt
+            stage="running",
+            scenario=scenario.id,
+            title=scenario.title,
+            attempt=attempt,
+            effort=effort,
         )
         self._publish()
 
@@ -451,6 +529,9 @@ class BenchService:
                         a["reload_suspected"] = why
             summary = summarize(attempts) if attempts else {}
             body = summary.get("summary")
+            levels = summarize_levels(attempts) if attempts else {}
+            if levels and body is not None:
+                body["levels"] = levels
             extra: dict[str, Any] = {}
             if sampler is not None:
                 hw = summarize_hardware(sampler.samples, windows or {})

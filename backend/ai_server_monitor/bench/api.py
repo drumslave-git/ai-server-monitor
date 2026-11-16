@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -32,6 +32,12 @@ class StartRequest(BaseModel):
     """Run exactly these scenarios."""
     repeats: int | None = Field(default=None, ge=1, le=20)
     """Attempts per scenario (default: Settings → Benchmarks → repeats)."""
+    efforts: list[Literal["auto", "none", "low", "medium", "high"]] | None = Field(
+        default=None, min_length=1
+    )
+    """Thinking levels (the API's reasoning_effort) to run every scenario at; omit for the
+    LLM setting only. The level changes the chat answers and the report; helper calls stay at
+    none."""
 
 
 class SnapshotRequest(BaseModel):
@@ -65,7 +71,9 @@ async def status(request: Request) -> dict[str, Any]:
 async def start(request: Request, body: StartRequest) -> dict[str, Any]:
     ctx = _ctx(request)
     try:
-        run_id = await ctx.bench.start(group=body.group, ids=body.ids, repeats=body.repeats)
+        run_id = await ctx.bench.start(
+            group=body.group, ids=body.ids, repeats=body.repeats, efforts=body.efforts
+        )
     except BenchBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except BenchNotReady as exc:

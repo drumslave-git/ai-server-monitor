@@ -1,5 +1,5 @@
 import { ms } from "../logs/format";
-import type { ColdStart, Run } from "./types";
+import type { ColdStart, Effort, Run } from "./types";
 
 export { ms };
 
@@ -46,6 +46,22 @@ export const coldStartText = (c: ColdStart | null | undefined): string => {
   const state = c.loaded_before === null ? "load state unknown" : c.loaded_before ? "model was already loaded" : "model was not loaded";
   return `${ms(c.total_ms ?? null)} (${state})`;
 };
+
+export const EFFORTS: Effort[] = ["auto", "none", "low", "medium", "high"];
+
+export const EFFORT_HELP: Record<Effort, string> = {
+  auto: "not sent: the model decides",
+  none: "no thinking",
+  low: "a little",
+  medium: "some",
+  high: "a lot",
+};
+
+/** "auto" is the only level whose name needs a note. */
+export const effortLabel = (e: Effort | null | undefined): string => (e ? (e === "auto" ? "auto" : e) : "—");
+
+/** Characters as "12.4k" (reasoning is counted in characters, not tokens: the API reports no split). */
+export const chars = (n: number | null | undefined): string => (n === null || n === undefined ? "—" : n >= 10000 ? `${(n / 1000).toFixed(0)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(Math.round(n)));
 
 export const GROUP_SHORT: Record<string, string> = { report: "Reports", chat: "Chat", prom_plan: "Prom", robust: "Robust" };
 

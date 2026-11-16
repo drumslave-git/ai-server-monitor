@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api } from "../../api";
 import { Empty, Panel } from "../../ui";
-import { GROUP_SHORT, backendLabel, coldStartText, gbOf, ms, pct as pctText, routingLabel, runLabel, score, scoreLevel, shortDate, sizeLabel, tps, watts } from "./format";
-import { hardwareLabel, hwScope } from "./Hardware";
+import { EFFORTS, GROUP_SHORT, backendLabel, chars, coldStartText, effortLabel, gb, gbOf, ms, pct as pctText, routingLabel, runLabel, score, scoreLevel, shortDate, sizeLabel, tps, watts } from "./format";
+import { hardwareLabel, hwScope, vramStat } from "./Hardware";
+import { levelsOf } from "./Levels";
 import type { Catalog, Run } from "./types";
 
 type Cell = { text: string; raw: number | null };
@@ -104,6 +105,7 @@ export function Compare({ ids, catalog }: { ids: number[]; catalog: Catalog | nu
               <Row label="Cold start (not in the numbers)" high={false} cells={runs.map((r) => ({ text: coldStartText(r.meta?.cold_start), raw: null }))} />
               <Row label="Generation speed" high cells={runs.map((r) => ({ text: tps(r.summary?.median_tokens_per_s), raw: num(r.summary?.median_tokens_per_s) }))} />
               <HardwareRows runs={runs} />
+              <LevelRows runs={runs} />
               <tr className="cmp-section"><th colSpan={runs.length + 1}>Per scenario: score · median time</th></tr>
               {scenarioIds.map((id) => (
                 <ScenarioRow key={id} id={id} label={title(id)} runs={runs} />
@@ -114,6 +116,40 @@ export function Compare({ ids, catalog }: { ids: number[]; catalog: Catalog | nu
         <p className="help">The best value in each row is highlighted. Time, failures and hardware load: lower is better; scores, speed and the share of the model on the GPU: higher is better. Hardware numbers of a model served from another machine are the host's, labelled "(host)" and not highlighted.</p>
       </Panel>
     </div>
+  );
+}
+
+/** Per thinking level: accuracy, time, tokens, reasoning, answers that did not come and VRAM peak.
+ * Only the levels some run was tested at appear; a run without that level shows "—". */
+function LevelRows({ runs }: { runs: Run[] }) {
+  const levels = EFFORTS.filter((e) => runs.some((r) => levelsOf(r).includes(e)));
+  if (levels.length === 0) return null;
+  const val = (v: number | null | undefined): number | null => (v === null || v === undefined ? null : v);
+  return (
+    <>
+      <tr className="cmp-section"><th colSpan={runs.length + 1}>Per thinking level</th></tr>
+      {levels.map((e) => {
+        const l = (r: Run) => r.summary?.levels?.[e];
+        const none: Cell = { text: "—", raw: null };
+        return (
+          <Fragment key={e}>
+            <Row label={`${effortLabel(e)} · accuracy`} high cells={runs.map((r) => (l(r) ? { text: score(l(r)?.overall), raw: val(l(r)?.overall) } : none))} className="cmp-strong" />
+            <Row label={`${effortLabel(e)} · time per answer`} high={false} cells={runs.map((r) => (l(r) ? { text: ms(l(r)?.median_total_ms), raw: val(l(r)?.median_total_ms) } : none))} />
+            <Row label={`${effortLabel(e)} · tokens out`} high={null} cells={runs.map((r) => (l(r) ? { text: String(l(r)?.median_tokens_out ?? "—"), raw: null } : none))} />
+            <Row label={`${effortLabel(e)} · reasoning`} high={null} cells={runs.map((r) => (l(r) ? { text: l(r)?.median_reasoning_chars ? `${chars(l(r)?.median_reasoning_chars)} chars` : "—", raw: null } : none))} />
+            <Row label={`${effortLabel(e)} · empty / cut off`} high={false} cells={runs.map((r) => (l(r) ? { text: `${l(r)?.empty} / ${l(r)?.limit}`, raw: (l(r)?.empty ?? 0) + (l(r)?.limit ?? 0) } : none))} />
+            <Row
+              label={`${effortLabel(e)} · VRAM peak`}
+              high={null}
+              cells={runs.map((r) => {
+                const v = vramStat(l(r)?.hw);
+                return v ? { text: hwScope(r) === "elsewhere" ? `${gb(v.peak)} (host)` : gb(v.peak), raw: null } : none;
+              })}
+            />
+          </Fragment>
+        );
+      })}
+    </>
   );
 }
 
