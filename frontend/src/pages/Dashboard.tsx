@@ -56,7 +56,7 @@ export function DashboardPage() {
         <LivePanel system={data("system")} gpu={data("gpu")} />
         <DisksPanel system={data("system")} />
       </div>
-      <div className="grid-2">
+      <div className="grid-live">
         <ContainersPanel docker={data("docker")} system={data("system")} />
         <AttentionPanel systemd={data("systemd")} apt={data("apt")} images={data("image_updates")} />
       </div>

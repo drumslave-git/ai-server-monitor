@@ -73,11 +73,13 @@ export function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="brand">
-          <span className={`live-dot ${connected ? "on" : ""}`} title={connected ? "Live" : "Reconnecting"} />
-          <span>AI Server Monitor</span>
+        <div className="brand-block">
+          <div className="brand">
+            <span className={`live-dot ${connected ? "on" : ""}`} title={connected ? "Live updates on" : "Reconnecting"} />
+            <span>AI Server Monitor</span>
+          </div>
+          <Version />
         </div>
-        <Version />
         <nav aria-label="Main">
           {PAGES.map(({ key, title, icon: Icon }) => (
             <a key={key} href={`#/${key}`} className={page === key ? "active" : undefined} aria-current={page === key ? "page" : undefined}>
@@ -87,7 +89,7 @@ export function App() {
             </a>
           ))}
         </nav>
-        <p className="sidebar-foot">{connected ? "Live updates on" : "Reconnecting…"}</p>
+        {!connected && <p className="sidebar-foot">Reconnecting…</p>}
       </aside>
       <main className="content">
         {page === "reports" ? (

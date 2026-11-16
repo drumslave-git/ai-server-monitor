@@ -3,11 +3,13 @@ export function bytes(n: number | null | undefined): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let size = Math.abs(n);
   let i = 0;
-  while (size >= 1000 && i < units.length - 1) {
+  // Thresholds sit at the rounding edge, so 999.6 KB prints as "1.0 MB" (not "1000 KB")
+  // and 99.96 MB as "100 MB" (not "100.0 MB").
+  while (size >= 999.5 && i < units.length - 1) {
     size /= 1000;
     i += 1;
   }
-  const text = i === 0 ? size.toFixed(0) : size >= 100 ? size.toFixed(0) : size.toFixed(1);
+  const text = i === 0 || size >= 99.95 ? size.toFixed(0) : size.toFixed(1);
   return `${n < 0 ? "-" : ""}${text} ${units[i]}`;
 }
 
