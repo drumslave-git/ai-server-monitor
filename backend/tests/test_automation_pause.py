@@ -234,7 +234,20 @@ def test_pause_cancels_a_report_being_written(bootstrap: Bootstrap) -> None:
     with TestClient(app) as client:
         events = app.state.ctx.events.subscribe("report")
         assert client.post("/api/reports/run").status_code == 202
-        _wait(lambda: _job(client, "report")["running"])
+        types: list[str] = []
+
+        def drain() -> None:
+            while True:
+                try:
+                    types.append(events._queue.get_nowait().type)
+                except asyncio.QueueEmpty:
+                    return
+
+        def in_flight() -> bool:
+            drain()
+            return "report.started" in types  # the digest is built, the LLM call is next
+
+        _wait(in_flight)
         done = client.post("/api/automation/pause").json()
         assert "report" in done["cancelled"]
         job = _job(client, "report")
@@ -242,12 +255,7 @@ def test_pause_cancels_a_report_being_written(bootstrap: Bootstrap) -> None:
         assert job["cancelled"] == 1 and job["failures"] == 0 and job["last_error"] is None
         # Nothing stored as a failed report, and watchers were told it was cancelled.
         assert client.get("/api/reports").json()["total"] == 0
-        types = []
-        while True:
-            try:
-                types.append(events._queue.get_nowait().type)
-            except asyncio.QueueEmpty:
-                break
+        drain()
         assert "report.started" in types and types[-1] == "report.cancelled"
         assert "report.failed" not in types
 
