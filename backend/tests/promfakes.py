@@ -104,9 +104,12 @@ class FakeLLM:
     def __init__(self, reply: Callable[[list[dict[str, Any]], int], str | httpx.Response]):
         self.reply = reply
         self.calls: list[list[dict[str, Any]]] = []
+        self.bodies: list[dict[str, Any]] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        messages = json.loads(request.content)["messages"]
+        body = json.loads(request.content)
+        self.bodies.append(body)
+        messages = body["messages"]
         self.calls.append(messages)
         out = self.reply(messages, len(self.calls))
         return out if isinstance(out, httpx.Response) else chat_response(out)

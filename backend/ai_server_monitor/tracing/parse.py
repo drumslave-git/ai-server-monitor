@@ -29,6 +29,10 @@ class Parsed:
     error: str | None = None
 
 
+THOUGHT_ONLY = (
+    "The model finished thinking without writing an answer. "
+    "Lower the thinking level in Settings (Reports or LLM)."
+)
 STREAM_DROPPED = "The model's reply stopped before any answer: the server closed the stream early."
 
 

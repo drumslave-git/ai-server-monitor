@@ -20,6 +20,7 @@ import httpx
 
 from .parse import (
     STREAM_DROPPED,
+    THOUGHT_ONLY,
     Parsed,
     StreamParser,
     empty_answer_message,
@@ -154,6 +155,16 @@ class PendingCall:
         ):  # HTTP 200, but the whole limit went on reasoning: that is no answer
             rec.status = "error"
             rec.error = empty_answer_message(params.get("max_tokens"))
+        elif (
+            rec.status == "ok"
+            and parsed.finish_reason == "stop"
+            and not parsed.content.strip()
+            and not parsed.tool_calls
+            and parsed.reasoning
+        ):
+            # finished normally, but only thought: no answer to hand on
+            rec.status = "error"
+            rec.error = THOUGHT_ONLY
         elif (
             rec.status == "ok"
             and self.stream

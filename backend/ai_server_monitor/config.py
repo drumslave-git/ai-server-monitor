@@ -205,6 +205,11 @@ class ReportSettings(_Model):
     """Skip the LLM call when nothing relevant changed since the last report."""
     language: str = "en"
     """Language of reports and chat answers."""
+    reasoning_effort: ReasoningEffort = "none"
+    """Thinking level for reports (the API's reasoning_effort). A report is a summary of an
+    already analysed digest, so none (no thinking) is fastest and most reliable: thinking models
+    can loop in their reasoning for minutes and never write the report. auto = not sent, the
+    model decides; low / medium / high = as the model supports. Chat uses LLM → reasoning effort."""
     digest_token_budget: int = Field(default=3000, ge=500, le=100_000)
     """Size limit (in tokens, ~4 characters each) of the pre-analyzed data digest the model
     reads. Over the limit, the least important sections are shortened or dropped first.

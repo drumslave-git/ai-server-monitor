@@ -2626,6 +2626,16 @@ export interface components {
              */
             memory_warn_percent: number;
             /**
+             * Reasoning Effort
+             * @description Thinking level for reports (the API's reasoning_effort). A report is a summary of an
+             *     already analysed digest, so none (no thinking) is fastest and most reliable: thinking models
+             *     can loop in their reasoning for minutes and never write the report. auto = not sent, the
+             *     model decides; low / medium / high = as the model supports. Chat uses LLM → reasoning effort.
+             * @default none
+             * @enum {string}
+             */
+            reasoning_effort: "auto" | "none" | "low" | "medium" | "high";
+            /**
              * Restart Loop Count
              * @description A container or service restarted this many times within a day counts as a restart loop.
              * @default 3
@@ -2999,6 +3009,7 @@ export interface components {
              *       "log_error_burst": 20,
              *       "memory_crit_percent": 97,
              *       "memory_warn_percent": 90,
+             *       "reasoning_effort": "none",
              *       "restart_loop_count": 3,
              *       "skip_if_unchanged": false,
              *       "swap_warn_percent": 50,

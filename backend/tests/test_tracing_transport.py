@@ -450,3 +450,16 @@ async def test_stream_dropped_before_any_answer_is_recorded_as_an_error(make_rig
         _ = [c async for c in rig.client.stream(MESSAGES)]
     rows = await rig.rows()
     assert rows and all(r["status"] == "error" and "closed the stream" in r["error"] for r in rows)
+
+
+async def test_finished_with_only_reasoning_is_recorded_as_an_error(make_rig: Any) -> None:
+    events = [
+        {"choices": [{"delta": {"reasoning": "thinking it over"}}]},
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+        "[DONE]",
+    ]
+    rig: Rig = await make_rig(lambda r: httpx.Response(200, content=sse(*events)))
+    with trace_scope("report"):
+        _ = [c async for c in rig.client.stream(MESSAGES)]
+    (row,) = await rig.rows()
+    assert row["status"] == "error" and "without writing an answer" in row["error"]

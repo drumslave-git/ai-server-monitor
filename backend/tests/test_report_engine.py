@@ -275,3 +275,51 @@ async def test_report_that_used_the_whole_limit_on_thinking_is_a_failure(
     assert (await h.engine.store.latest(status="ok")) is None
     row = await h.engine.store.get(out.report_id or 0)
     assert row is not None and row["status"] == "failed" and "thinking" in row["error"]
+
+
+def _sent_bodies(route: Any) -> list[dict[str, Any]]:
+    import json
+
+    return [json.loads(c.request.content) for c in route.calls]
+
+
+@respx.mock
+async def test_reports_ask_for_no_thinking_by_default_whatever_chat_uses(
+    db: Database, make: Any
+) -> None:
+    """A report summarises an already analysed digest; thinking models loop on it for minutes.
+    The report has its own thinking level, so a chat-friendly LLM setting does not change it."""
+    route = respx.post(f"{LLM_URL}/chat/completions").mock(return_value=stream_response())
+    settings = make_settings()
+    settings.llm.reasoning_effort = "high"
+    h = make(settings)
+    assert (await h.engine.run()).status == "ok"
+    assert _sent_bodies(route)[-1]["reasoning_effort"] == "none"
+
+
+@respx.mock
+async def test_report_thinking_level_is_a_setting(db: Database, make: Any) -> None:
+    route = respx.post(f"{LLM_URL}/chat/completions").mock(return_value=stream_response())
+    assert (await make(reasoning_effort="low").engine.run()).status == "ok"
+    assert _sent_bodies(route)[-1]["reasoning_effort"] == "low"
+    assert (await make(reasoning_effort="auto").engine.run()).status == "ok"
+    assert "reasoning_effort" not in _sent_bodies(route)[-1]  # auto: the model decides
+
+
+@respx.mock
+async def test_report_that_only_thought_fails_in_the_report_too(db: Database, make: Any) -> None:
+    """finish_reason "stop" with only reasoning (seen on gemma4:26b): no report is stored."""
+    events = [
+        {"choices": [{"delta": {"reasoning": "hmm " * 40}}]},
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+        "[DONE]",
+    ]
+    from .conftest import sse
+
+    respx.post(f"{LLM_URL}/chat/completions").mock(
+        return_value=httpx.Response(
+            200, content=sse(*events), headers={"content-type": "text/event-stream"}
+        )
+    )
+    out = await make().engine.run()
+    assert out.status == "failed" and "empty" in (out.message or "")

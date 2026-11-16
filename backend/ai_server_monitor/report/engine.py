@@ -157,7 +157,9 @@ class ReportEngine:
         latency_s = 0.0
         finish_reason: str | None = None
         try:
-            async for chunk in self.llm.stream(messages):
+            async for chunk in self.llm.stream(
+                messages, reasoning_effort=self.settings.report.reasoning_effort
+            ):
                 if chunk.done:
                     usage = chunk.usage
                     finish_reason = chunk.finish_reason

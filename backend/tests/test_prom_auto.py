@@ -213,6 +213,8 @@ async def test_good_plan_is_validated_and_stored(db: Database) -> None:
     assert r["last_value"]["series"][0]["value"] == 0.0 and r["last_ok_ts"]
     assert rows["gpu_temp"]["crit_if"] == ">= 90"
     assert len(llm.calls) == 2  # one small call per job
+    # a thinking model must not spend the plan on reasoning
+    assert all(b["reasoning_effort"] == "none" for b in llm.bodies)
     system = llm.calls[0][0]["content"]
     assert "ALREADY collects" in system and "Docker containers" in system
     # the windows job is announced as another machine
