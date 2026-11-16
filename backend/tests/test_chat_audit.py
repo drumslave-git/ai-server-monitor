@@ -79,3 +79,26 @@ def test_prompt_asks_for_named_items_not_just_counts() -> None:
         assert "asks WHICH or WHAT exactly" in prompt
         assert "NAME the items" in prompt and "up to about 50" in prompt
         assert "say how many more" in prompt and "A count alone is not an answer" in prompt
+
+
+def test_prompt_wording_rules_for_pending_writes_compact_lists_and_ranking() -> None:
+    prompt = " ".join(system_prompt("en", tool_names={"get_status"}).split())
+    # a write that only filed an approval is never reported as done
+    assert "NOTHING has been done" in prompt and "waiting for your approval" in prompt
+    assert 'never "saved" or "done", not even with "but it is pending"' in prompt
+    assert 'Only "executed" means done' in prompt
+    # long lists are written compactly, not as ~100 bullet lines
+    assert "From about 20 items on" in prompt and "not one bullet line per item" in prompt
+    # ranked lists arrive sorted; the model keeps the order
+    assert "`rank` 1 = first" in prompt and "keep that order" in prompt
+
+
+def test_every_pending_note_leads_with_not_done() -> None:
+    from ai_server_monitor.apiaccess.tools import _NOTES as api_notes
+    from ai_server_monitor.chat.tools import _NOTES as chat_notes
+    from ai_server_monitor.mcp_client.tools import _NOTES as mcp_notes
+
+    for notes in (api_notes, chat_notes, mcp_notes):
+        pending = notes["pending"]
+        assert pending.startswith("NOT DONE: waiting for")
+        assert "never" in pending and "saved" in pending and "NOT been done" in pending

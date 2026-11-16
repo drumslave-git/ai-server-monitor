@@ -35,8 +35,9 @@ ACTION_RESULT_CHARS = 3000
 ToolKind = Literal["read", "write"]
 
 _NOTES = {
-    "pending": "Waiting for the owner's approval (approval id {id}). Tell the user to approve "
-    "or reject it in the approvals list; it has NOT been done yet.",
+    "pending": "NOT DONE: waiting for the owner's approval (approval id {id}). Say \"waiting for "
+    'your approval", never "saved" or "done". Tell the user to approve or reject it in '
+    "the approvals list; it has NOT been done yet.",
     "suggested": "Recorded as a suggestion only; the policy does not let it run. "
     "It has NOT been done.",
     "executed": "Done (see result).",

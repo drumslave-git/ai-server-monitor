@@ -155,7 +155,9 @@ def largest_files(
     out: dict[str, Any] = {
         "path": path,
         "min_size": f"{min_mb} MB",
-        "files": [{"path": p, "size": human(b)} for p, b in rows[:count]],
+        "files": [
+            {"rank": n, "path": p, "size": human(b)} for n, (p, b) in enumerate(rows[:count], 1)
+        ],
         "found": len(rows),
     }
     if r.stopped:
@@ -178,8 +180,8 @@ def summarize(
     if total is None:
         total = sum(e.bytes for e in scanned.entries if posixpath.dirname(e.path) == norm)
     rows = []
-    for e in top:
-        row: dict[str, Any] = {"path": e.path, "size": human(e.bytes)}
+    for rank, e in enumerate(top, 1):
+        row: dict[str, Any] = {"rank": rank, "path": e.path, "size": human(e.bytes)}
         if total and scanned.complete:  # (of a partial total a percentage would mislead)
             row["percent"] = round(e.bytes / total * 100, 1)
         if not e.complete:

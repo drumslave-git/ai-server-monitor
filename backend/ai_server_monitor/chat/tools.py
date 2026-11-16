@@ -45,6 +45,8 @@ class ToolContext:
     """Who asks, for the audit log of write actions. Default: chat:<session>."""
     turn: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     """Identifies this chat turn: the write requests of one turn share an approval batch."""
+    routing: Any = None
+    """The tool-routing state of this turn (`chat/routing.py`), when routing is on."""
 
     @property
     def settings(self) -> Settings:
@@ -212,6 +214,13 @@ def _default_view(collector: str, data: dict[str, Any]) -> dict[str, Any] | None
     return {"gpus": gpus} if gpus else None
 
 
+def _ranked(items: list[Any]) -> list[Any]:
+    """Number list items 1, 2, 3... in their current order (dict items get a `rank` field)."""
+    return [
+        {"rank": n, **item} if isinstance(item, dict) else item for n, item in enumerate(items, 1)
+    ]
+
+
 def _dig(data: Any, path: str) -> Any:
     for part in path.split("."):
         if not isinstance(data, dict) or part not in data:
@@ -272,7 +281,15 @@ async def _collector_data(ctx: ToolContext, args: CollectorArgs) -> Any:
                     f"numeric fields: {', '.join(fields) or 'none'}"
                 )
             items = sorted(items, key=sort_key, reverse=True)
-        return {**base, "section": args.section, "total": len(part), "items": items[: args.limit]}
+        shown = items[: args.limit]
+        out = {**base, "section": args.section, "total": len(part)}
+        if args.sort_by or args.section.rsplit(".", 1)[-1].startswith("top"):
+            # Ranked: the order is final and numbered, so the model never has to compare
+            # numbers with different units ("859.8 MiB" vs "914.6 MiB") by itself.
+            shown = _ranked(shown)
+            if args.sort_by:
+                out["sorted_by"] = f"{args.sort_by}, largest first (rank 1 = largest)"
+        return {**out, "items": shown}
     return {**base, "section": args.section, "value": part}
 
 
@@ -498,9 +515,10 @@ async def _recent_actions(ctx: ToolContext, args: RecentActionsArgs) -> Any:
 # --------------------------------------------------------------------------- write tools
 
 _NOTES = {
-    "pending": "Waiting for the user's approval (approval id {id}); the requests of this "
-    "turn are shown to the user as one approval. Tell the user to approve or reject it in the "
-    "approvals list; it has NOT been done yet.",
+    "pending": "NOT DONE: waiting for the user's approval (approval id {id}; the requests "
+    "of this turn are one approval). Say 'waiting for your approval', never 'saved' or "
+    "'done'. Tell the user to approve or reject it in the approvals list; it has NOT been "
+    "done yet.",
     "suggested": "Recorded as a suggestion only; the policy does not let it run. "
     "It has NOT been done.",
     "executed": "Done.",

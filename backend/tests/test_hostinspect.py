@@ -450,6 +450,7 @@ def test_disk_scan_breakdown_with_owners() -> None:
     assert [e.path for e in scanned.entries[:3]] == ["/d/media", "/d/downloads", "/d/appdata"]
     result = disk.summarize(scanned, "/d", 1, lambda p: ["owner of " + p], [])
     assert result["largest"][0] == {
+        "rank": 1,
         "path": "/d/media",
         "size": "9.0 TB",
         "percent": 81.8,
@@ -526,6 +527,7 @@ def test_largest_files_sorted_and_flagged_when_partial() -> None:
 
     out = disk.largest_files(run, "/d", 2)
     assert [f["path"] for f in out["files"]] == ["/d/b", "/d/c"]
+    assert [f["rank"] for f in out["files"]] == [1, 2]
     assert out["found"] == 3
     assert "approximate" in out
 

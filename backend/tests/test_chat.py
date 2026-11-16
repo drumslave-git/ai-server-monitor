@@ -49,6 +49,9 @@ class FakeLLM:
         self.script = list(script)
         self.requests: list[dict[str, Any]] = []
         self.title_requests: list[dict[str, Any]] = []
+        self.route_requests: list[dict[str, Any]] = []
+        self.route_reply: str | Callable[[dict[str, Any]], httpx.Response] = '{"groups": []}'
+        """What the tool-routing classifier (chat/routing.py) gets: text or a whole response."""
         self.title_reply: str | Callable[[dict[str, Any]], httpx.Response] = ""
         """What the title request (chat/title.py) gets: text (an empty reply is unusable, so
         the fallback title stays) or a function returning a whole HTTP response."""
@@ -64,6 +67,18 @@ class FakeLLM:
                 json={
                     "model": "fake",
                     "choices": [{"index": 0, "message": {"content": self.title_reply}}],
+                    "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+                },
+            )
+        if str(body["messages"][0]["content"]).startswith("You route questions"):
+            self.route_requests.append(body)  # not part of the script of the conversation
+            if callable(self.route_reply):
+                return self.route_reply(body)
+            return httpx.Response(
+                200,
+                json={
+                    "model": "fake",
+                    "choices": [{"index": 0, "message": {"content": self.route_reply}}],
                     "usage": {"prompt_tokens": 5, "completion_tokens": 3},
                 },
             )
@@ -606,6 +621,8 @@ def test_sorting_by_a_field_that_does_not_exist_tells_the_model_the_real_fields(
     first, second = [e for e in events if e["type"] == "tool_result"]
     assert not first["ok"] and "numeric fields: size, used_percent" in first["preview"]
     assert second["ok"] and second["preview"].index('"/data"') < second["preview"].index('"/"')
+    # a ranked list says so: the order is numbered and final
+    assert '"rank":1' in second["preview"] and "rank 1 = largest" in second["preview"]
 
 
 def test_session_titles_are_cut_at_a_word_boundary() -> None:
