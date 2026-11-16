@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type FieldError, type JsonObject, type LlmTestResult, type SettingsDoc } from "../api";
 import { PromAuto } from "../components/PromAuto";
 import { ObjectFields, resolve, type FormContext } from "../components/SchemaForm";
@@ -126,21 +126,43 @@ export function SettingsPage() {
   );
 }
 
+/** Same look and behaviour as the connection tests in SchemaForm: a "Test" button with a
+    spinner in the group head, a ✓/✕ line under it, and a result that goes away as soon as
+    the values it was run with are edited. */
 function LlmTest({ llm, onModels }: { llm: JsonObject; onModels: (m: string[]) => void }) {
-  const [result, setResult] = useState<LlmTestResult | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [running, setRunning] = useState(false);
+  const requestId = useRef(0);
+  const snapshot = JSON.stringify(llm);
+  useEffect(() => {
+    requestId.current++; // an edit makes an older answer (or a test still running) stale
+    setResult(null);
+    setRunning(false);
+  }, [snapshot]);
   const run = async () => {
+    const mine = ++requestId.current;
     setRunning(true);
     setResult(null);
+    let outcome: { ok: boolean; text: string };
     try {
       const r = await api.post<LlmTestResult>("/api/settings/test-llm", llm);
-      setResult(r);
+      if (mine !== requestId.current) return;
       if (r.models?.length) onModels(r.models);
+      outcome = r.ok
+        ? {
+            ok: true,
+            text:
+              `Model replied “${r.reply || "(empty)"}” in ${r.latency_s}s.` +
+              (r.model_listed === false ? " Note: the endpoint's model list doesn't include this model name." : "") +
+              (r.models?.length ? ` ${r.models.length} models available — suggestions added to the Model field.` : ""),
+          }
+        : { ok: false, text: r.error ?? "The test failed." };
     } catch (e) {
-      setResult({ ok: false, error: (e as Error).message });
-    } finally {
-      setRunning(false);
+      outcome = { ok: false, text: `The test could not run: ${(e as Error).message}` };
     }
+    if (mine !== requestId.current) return;
+    setResult(outcome);
+    setRunning(false);
   };
   return (
     <section className="group">
@@ -149,23 +171,21 @@ function LlmTest({ llm, onModels }: { llm: JsonObject; onModels: (m: string[]) =
           <h3>Connection test</h3>
           <p className="help">Sends a one-line prompt with the values above (saved or not).</p>
         </div>
-        <button type="button" className="btn" disabled={running} onClick={() => void run()}>
-          {running ? "Testing…" : "Test connection"}
-        </button>
-      </header>
-      {result && (
-        <div className="group-body">
-          {result.ok ? (
-            <p className="ok">
-              Model replied “{result.reply || "(empty)"}” in {result.latency_s}s.
-              {result.model_listed === false && " Note: the endpoint's model list doesn't include this model name."}
-              {result.models?.length ? ` ${result.models.length} models available — suggestions added to the Model field.` : ""}
-            </p>
-          ) : (
-            <p className="error">{result.error}</p>
-          )}
+        <div className="test-buttons">
+          <button type="button" className="btn btn-test" disabled={running} onClick={() => void run()}>
+            {running && <span className="spinner" aria-hidden="true" />}
+            {running ? "Testing…" : "Test"}
+          </button>
         </div>
-      )}
+      </header>
+      <div className="test-result" role="status" aria-live="polite">
+        {result && (
+          <p className={result.ok ? "ok" : "error"}>
+            <strong>{result.ok ? "✓ " : "✕ "}</strong>
+            {result.text}
+          </p>
+        )}
+      </div>
     </section>
   );
 }

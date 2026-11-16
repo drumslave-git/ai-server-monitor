@@ -194,7 +194,7 @@ export function PromAuto() {
                       <code className="promql">{q.query}</code>
                       {limits(q) && <div className="details">{limits(q)}</div>}
                     </td>
-                    <td className="details">
+                    <td className="details" data-label="Last value">
                       {q.disabled_reason ? (
                         <span className="error">Switched off: {q.disabled_reason}</span>
                       ) : q.last_error ? (
