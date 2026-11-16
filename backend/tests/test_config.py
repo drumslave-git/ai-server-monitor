@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from ai_server_monitor import settings_store
 from ai_server_monitor.config import (
     SECRET_MASK,
     Bootstrap,
@@ -17,6 +18,7 @@ from ai_server_monitor.config import (
 from ai_server_monitor.db import Database
 from ai_server_monitor.settings_store import (
     KV_KEY,
+    UPGRADES_KEY,
     SettingsStore,
     lenient_validate,
     merge_secrets,
@@ -157,3 +159,36 @@ async def test_store_roundtrip_and_repair(db: Database) -> None:
     assert repaired.llm.model == "m2"
     backups = await db.fetchall("SELECT key FROM kv WHERE key LIKE 'settings.backup.%'")
     assert len(backups) == 1
+
+
+async def test_old_default_upgrades_apply_once(db: Database) -> None:
+    store = SettingsStore(db)
+    # fresh install: nothing to upgrade, and a later deliberate old value is kept
+    assert await store.load() == Settings()
+    await store.save(Settings(llm={"max_output_tokens": 4096, "temperature": 0.2}))
+    s = await SettingsStore(db).load()
+    assert s.llm.max_output_tokens == 4096 and s.llm.temperature == 0.2
+
+    # an installation from before the marker: dropped once, kept after the user sets it again
+    await db.execute("DELETE FROM kv WHERE key = ?", (UPGRADES_KEY,))
+    s = await SettingsStore(db).load()
+    assert s.llm.max_output_tokens == Settings().llm.max_output_tokens
+    await store.save(
+        s.model_copy(update={"llm": s.llm.model_copy(update={"max_output_tokens": 4096})})
+    )
+    assert (await SettingsStore(db).load()).llm.max_output_tokens == 4096
+
+
+async def test_a_new_old_default_entry_applies_once(
+    db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SettingsStore(db)
+    await store.save(Settings())
+    await store.load()  # marker written for the current entries
+    monkeypatch.setitem(settings_store.OLD_DEFAULTS, ("chat", "tool_timeout"), "1h")
+    monkeypatch.setitem(settings_store.OLD_DEFAULTS, ("llm", "model"), "old-model")
+    await db.kv_set(KV_KEY, {**Settings().storage_dict(), "llm": {"model": "old-model"}})
+    await db.kv_set(UPGRADES_KEY, ["chat.tool_timeout", "llm.max_output_tokens", "llm.temperature"])
+    assert (await SettingsStore(db).load()).llm.model == Settings().llm.model
+    await store.save(Settings(llm={"model": "old-model"}))
+    assert (await SettingsStore(db).load()).llm.model == "old-model"

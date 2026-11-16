@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import logging
 import time
+from collections.abc import Iterable
 from typing import Any
 
 from pydantic import ValidationError
@@ -64,14 +65,27 @@ OLD_DEFAULTS: dict[tuple[str, str], Any] = {
 }
 """Stored values that are the OLD default of a setting whose default was raised. The database
 holds every setting (not only the changed ones), so an installation that never touched
-`chat.tool_timeout` would keep 30 s forever; such a value is dropped and the new default applies."""
+`chat.tool_timeout` would keep 30 s forever; such a value is dropped and the new default applies.
+Each entry applies once per installation (see `UPGRADES_KEY`): a value chosen afterwards stays."""
+
+UPGRADES_KEY = "settings.upgrades"
+"""kv key holding the ids (`section.key`) of the `OLD_DEFAULTS` upgrades already applied."""
 
 
-def upgrade_stored(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """`raw` without the values in `OLD_DEFAULTS` (a copy), and what was dropped."""
+def upgrade_id(section: str, key: str) -> str:
+    return f"{section}.{key}"
+
+
+def upgrade_stored(
+    raw: dict[str, Any], applied: Iterable[str] = ()
+) -> tuple[dict[str, Any], list[str]]:
+    """`raw` minus the `OLD_DEFAULTS` values not yet in `applied` (a copy), and what was dropped."""
     data = copy.deepcopy(raw)
+    done = set(applied)
     dropped = []
     for (section, key), old in OLD_DEFAULTS.items():
+        if upgrade_id(section, key) in done:
+            continue
         node = data.get(section)
         if isinstance(node, dict) and node.get(key) == old:
             del node[key]
@@ -105,11 +119,16 @@ class SettingsStore:
         self.db = db
 
     async def load(self) -> Settings:
+        all_ids = {upgrade_id(*k) for k in OLD_DEFAULTS}
+        stored = await self.db.kv_get(UPGRADES_KEY)
+        applied = {i for i in stored if isinstance(i, str)} if isinstance(stored, list) else set()
         raw = await self.db.kv_get(KV_KEY)
         if raw is None:
+            # a fresh installation has nothing old to upgrade; whatever is saved later is a choice
+            await self._mark(applied, all_ids)
             return Settings()
         raw_dict = raw if isinstance(raw, dict) else {}
-        upgraded, dropped = upgrade_stored(raw_dict)
+        upgraded, dropped = upgrade_stored(raw_dict, applied)
         settings, problems = lenient_validate(upgraded)
         if dropped:
             log.info("stored settings moved to the new defaults: %s", "; ".join(dropped))
@@ -118,7 +137,12 @@ class SettingsStore:
                 log.warning("some stored settings were reset to defaults: %s", "; ".join(problems))
             await self.db.kv_set(f"{KV_KEY}.backup.{int(time.time())}", raw)
             await self.save(settings)
+        await self._mark(applied, all_ids)
         return settings
+
+    async def _mark(self, applied: set[str], all_ids: set[str]) -> None:
+        if not all_ids <= applied:
+            await self.db.kv_set(UPGRADES_KEY, sorted(applied | all_ids))
 
     async def save(self, settings: Settings) -> None:
         await self.db.kv_set(KV_KEY, settings.storage_dict())
