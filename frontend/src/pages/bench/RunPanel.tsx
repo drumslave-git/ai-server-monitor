@@ -10,6 +10,7 @@ export function RunPanel({ status, catalog, reload }: { status: BenchStatus | nu
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [levels, setLevels] = useState<Effort[]>(EFFORTS);
+  const [pauseAuto, setPauseAuto] = useState(true);
   const now = useNow(1000);
   useEffect(() => {
     if (repeats === null && status) setRepeats(status.repeats);
@@ -19,7 +20,7 @@ export function RunPanel({ status, catalog, reload }: { status: BenchStatus | nu
     setBusy(true);
     setError(null);
     try {
-      const body: StartBody = { group, repeats: repeats ?? undefined, efforts: levels };
+      const body: StartBody = { group, repeats: repeats ?? undefined, efforts: levels, pause_automation: pauseAuto };
       await api.post<{ run_id: number }>("/api/bench/runs", body);
       reload();
     } catch (e) {
@@ -84,6 +85,15 @@ export function RunPanel({ status, catalog, reload }: { status: BenchStatus | nu
               </label>
             ))}
           </fieldset>
+          <label className="bench-pause" title="Stops every scheduled job and automation while the run is going, so the host and the LLM are quiet">
+            <input type="checkbox" checked={pauseAuto} onChange={(e) => setPauseAuto(e.target.checked)} />
+            <span>Pause automation during this run</span>
+            <span className="help block">
+              {status?.automation_paused
+                ? "Automation is already paused, and stays paused after the run."
+                : "Collectors, reports and automations stop at the start and come back when the run ends, also if it fails or is cancelled."}
+            </span>
+          </label>
           <div className="bench-run-buttons">
             <button className="btn btn-primary" disabled={busy || !llm?.configured || total === 0 || levels.length === 0} onClick={() => void start()}>
               Run all · {total} scenarios · {attempts()} attempts
@@ -127,10 +137,14 @@ export function RunPanel({ status, catalog, reload }: { status: BenchStatus | nu
           </p>
         </div>
       )}
-      <p className="help">
-        Reports and other jobs keep running normally, so timings can be slower while a report is being written; each attempt records whether one overlapped.
-        {status?.report_running && <strong className="warn-text"> A report is being written right now.</strong>}
-      </p>
+      {!running && (
+        <p className="help">
+          {pauseAuto || status?.automation_paused
+            ? "Scheduled jobs and automations are paused for the run, so nothing else loads the host or the LLM."
+            : "With the box unticked the scheduled jobs keep running, so timings can be slower while a report is being written; each attempt records whether one overlapped."}
+          {!pauseAuto && !status?.automation_paused && status?.report_running && <strong className="warn-text"> A report is being written right now.</strong>}
+        </p>
+      )}
     </Panel>
   );
 }

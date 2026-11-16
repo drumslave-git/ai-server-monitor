@@ -23,6 +23,8 @@ export function ReportsPage({ params }: { params: string[] }) {
       setLive({ text: "", active: false, error: null });
       list.reload();
       location.hash = `#/reports/${event.data.id}`;
+    } else if (event.type === "report.cancelled") {
+      setLive({ text: "", active: false, error: null });
     } else if (event.type === "report.failed") {
       setLive({ text: "", active: false, error: event.data.error });
       list.reload();

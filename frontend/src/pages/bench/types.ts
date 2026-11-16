@@ -45,9 +45,10 @@ export type BenchStatus = {
   judge: boolean;
   repeats: number;
   report_running: boolean;
+  automation_paused: boolean;
 };
 
-export type StartBody = { group?: string; repeats?: number; efforts?: Effort[] };
+export type StartBody = { group?: string; repeats?: number; efforts?: Effort[]; pause_automation?: boolean };
 
 /** Peak and average of one measurement over some samples. */
 export type HwStat = { avg: number; peak: number } | null;
@@ -217,6 +218,9 @@ export type Run = {
     hardware?: HwMeta;
     loaded_model?: LoadedModel;
     judge?: { model: string; base_url: string } | null;
+    /** Whether the monitor's scheduled jobs were paused during the run; absent on older runs
+     *  (they were not). `by_run`: this run paused them (and put them back), not the user. */
+    automation?: { paused: boolean; by_run: boolean; was_paused: boolean } | null;
     /** The thinking levels the run tested; absent on older runs. */
     levels?: { tested: Effort[]; applies_to: string; fixed: string };
   } | null;

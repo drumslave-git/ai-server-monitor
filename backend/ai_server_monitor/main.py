@@ -148,9 +148,29 @@ def create_app(
                     "last_success": stats.last_success,
                 },
             },
+            "automation": await ctx.automation_status(),
             "jobs": ctx.scheduler.status(),
             "collectors": ctx.collectors.status(),
         }
+
+    @app.get("/api/automation")
+    async def automation(request: Request) -> dict[str, Any]:
+        """The global pause switch: paused, since when, by whom, and what waits because of it."""
+        return await get_ctx(request).automation_status()
+
+    @app.post("/api/automation/pause")
+    async def pause_automation(request: Request) -> dict[str, Any]:
+        """Stop every scheduled job and cancel the runs in flight. Survives a restart."""
+        ctx = get_ctx(request)
+        cancelled = await ctx.pause_automation("ui")
+        return {**await ctx.automation_status(), "cancelled": cancelled}
+
+    @app.post("/api/automation/resume")
+    async def resume_automation(request: Request) -> dict[str, Any]:
+        """Let the jobs run again, on their normal schedule (the overdue ones staggered)."""
+        ctx = get_ctx(request)
+        await ctx.resume_automation("ui")
+        return await ctx.automation_status()
 
     @app.get("/metrics", include_in_schema=False)
     async def metrics(request: Request) -> Response:

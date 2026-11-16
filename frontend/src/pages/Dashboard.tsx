@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useAutomation, sinceText } from "../automation";
 import { api, type Collectors, type CollectorEntry, type StatusResponse } from "../api";
 import { ago, bytes, duration, pct, rate } from "../fmt";
 import { useMetricHistory, useStream } from "../live";
@@ -24,6 +25,8 @@ export function DashboardPage() {
   const now = useNow();
   const status = usePoll(() => api.get<StatusResponse>("/api/status"), 15_000);
   const collectors = usePoll(() => api.get<Collectors>("/api/collectors"), 15_000);
+  const { state: auto } = useAutomation();
+  const paused = Boolean(auto?.paused);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
 
@@ -51,7 +54,12 @@ export function DashboardPage() {
 
   return (
     <div className="stack">
-      <HealthPanel status={s} now={now} running={running || s.next_report.running} onRun={run} runError={runError} />
+      {paused && (
+        <div className="notice" role="status">
+          <strong>Data paused.</strong> The collectors are stopped{auto?.since ? ` (since ${sinceText(auto.since)})` : ""}, so the numbers below are the last ones collected and are not updating, and no report is written until the automation is resumed.
+        </div>
+      )}
+      <HealthPanel status={s} now={now} running={running || s.next_report.running} onRun={run} runError={runError} paused={paused} />
       <div className="grid-live">
         <LivePanel system={data("system")} gpu={data("gpu")} />
         <DisksPanel system={data("system")} />
@@ -60,7 +68,7 @@ export function DashboardPage() {
         <ContainersPanel docker={data("docker")} system={data("system")} />
         <AttentionPanel systemd={data("systemd")} apt={data("apt")} images={data("image_updates")} />
       </div>
-      <SourcesPanel collectors={c} now={now} />
+      <SourcesPanel collectors={c} now={now} paused={paused} />
     </div>
   );
 }
@@ -73,12 +81,14 @@ function HealthPanel({
   running,
   onRun,
   runError,
+  paused,
 }: {
   status: StatusResponse;
   now: number;
   running: boolean;
   onRun: () => void;
   runError: string | null;
+  paused: boolean;
 }) {
   const r = s.report;
   const level = healthLevel(r?.health);
@@ -106,7 +116,7 @@ function HealthPanel({
             {r ? (
               <>
                 <a href={`#/reports/${r.id}`}>Report {ago(r.ts, now)}</a>
-                <span> · next {s.next_report.next_run ? untilShort(s.next_report.next_run, now) : "soon"}</span>
+                <span> · next {paused ? "paused" : s.next_report.next_run ? untilShort(s.next_report.next_run, now) : "soon"}</span>
               </>
             ) : null}
             <span> · up {duration(s.uptime_s)}</span>
@@ -421,10 +431,10 @@ const SOURCE_LABELS: Record<string, string> = {
   arr: "*arr",
 };
 
-function SourcesPanel({ collectors, now }: { collectors: Collectors; now: number }) {
+function SourcesPanel({ collectors, now, paused }: { collectors: Collectors; now: number; paused: boolean }) {
   const rows = Object.entries(collectors) as [string, CollectorEntry][];
   const level = (c: CollectorEntry): Level =>
-    c.state === "disabled" ? "off" : c.state === "unavailable" ? "off" : c.ok === false ? "crit" : c.ok ? "ok" : "info";
+    c.state === "disabled" ? "off" : c.state === "unavailable" ? "off" : paused ? "off" : c.ok === false ? "crit" : c.ok ? "ok" : "info";
   return (
     <Panel title="Data sources" aside={<a href="#/settings/collectors">Configure</a>}>
       <ul className="sources">
@@ -432,7 +442,7 @@ function SourcesPanel({ collectors, now }: { collectors: Collectors; now: number
           <li key={name} title={c.error ?? c.reason ?? undefined}>
             <Badge level={level(c)}>{SOURCE_LABELS[name] ?? name.replace(/_/g, " ")}</Badge>
             <span className="muted small">
-              {c.state !== "active" ? c.state : c.ok === false ? "failing" : ago(c.last_ts, now)}
+              {c.state !== "active" ? c.state : paused ? `paused · last ${ago(c.last_ts, now)}` : c.ok === false ? "failing" : ago(c.last_ts, now)}
             </span>
           </li>
         ))}

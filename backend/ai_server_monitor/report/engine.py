@@ -36,7 +36,7 @@ NOT_CONFIGURED = "LLM is not configured: set the base URL and model in Settings 
 
 @dataclass
 class RunOutcome:
-    status: str  # ok | failed | skipped
+    status: str  # ok | failed | skipped | cancelled
     report_id: int | None = None
     message: str | None = None
     stored: bool = True
@@ -105,6 +105,10 @@ class ReportEngine:
                 async with asyncio.timeout(limit):
                     outcome = await self._run(force, started_ts)
             except asyncio.CancelledError:
+                # Stopped from outside (the automation pause switch, a shutdown): nothing was
+                # stored, the LLM call is traced as cancelled, and watchers are told.
+                self.last_outcome = RunOutcome("cancelled", message="cancelled", stored=False)
+                self.events.publish("report.cancelled", {"ts": started_ts})
                 raise
             except TimeoutError:
                 outcome = await self._problem(

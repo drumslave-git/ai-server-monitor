@@ -38,6 +38,9 @@ class StartRequest(BaseModel):
     """Thinking levels (the API's reasoning_effort) to run every scenario at; omit for the
     LLM setting only. The level changes the chat answers and the report; helper calls stay at
     none."""
+    pause_automation: bool = True
+    """Pause the app's scheduled jobs and automations for the run (the global switch) and
+    restore it as it was afterwards. False: they keep running and may overlap an attempt."""
 
 
 class SnapshotRequest(BaseModel):
@@ -64,6 +67,7 @@ async def status(request: Request) -> dict[str, Any]:
         "judge": ctx.settings.bench.judge.configured,
         "repeats": ctx.settings.bench.repeats,
         "report_running": bool(job is not None and job.running),
+        "automation_paused": ctx.automation.paused,
     }
 
 
@@ -72,7 +76,11 @@ async def start(request: Request, body: StartRequest) -> dict[str, Any]:
     ctx = _ctx(request)
     try:
         run_id = await ctx.bench.start(
-            group=body.group, ids=body.ids, repeats=body.repeats, efforts=body.efforts
+            group=body.group,
+            ids=body.ids,
+            repeats=body.repeats,
+            efforts=body.efforts,
+            pause_automation=body.pause_automation,
         )
     except BenchBusy as exc:
         raise HTTPException(409, str(exc)) from exc

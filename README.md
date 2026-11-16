@@ -131,6 +131,7 @@ button that checks what you typed, before you save, and says what answered or wh
   (screenshots: `docs/samples/ui/logs-*.png`). Each report and each chat answer links to its
   calls. Passwords, keys and tokens are removed from what is stored; retention and size limits
   are in Settings → Logs.
+- **Pause automation** — the button at the top of every page stops every scheduled job and automation (collectors, reports, the Prometheus planner, the LLM probe, *arr automations, approval sweeps, pruning) and cancels the runs in flight, so a benchmark gets a quiet host and a quiet LLM. Chat, benchmarks, approving/rejecting, the Settings test buttons, "Run report now" and the Telegram bot keep working. It survives a restart; Resume lets the jobs come due again (the overdue ones start a couple of seconds apart). `GET /api/automation`, `POST /api/automation/pause|resume`; `/api/info` shows it per job. Benchmarks pause it for their run by default (screenshots: `docs/samples/ui/automation-*.png`).
 - **Telegram** — reports and alerts arrive by themselves. Write a plain question to chat
   ("what is using the most disk and memory?"); the model looks at live data with read-only tools
   and answers. Commands: `/status` (health and open flags), `/report` (write one now),

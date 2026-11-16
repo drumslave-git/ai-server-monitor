@@ -2,8 +2,9 @@
 
 A run takes the LLM configured in Settings → LLM at the moment it starts, runs every selected
 scenario N times through `AttemptRunner`, stores every attempt as it finishes, and publishes
-`bench.progress` on the event bus (the Benchmarks page follows it). The app's own jobs keep
-running; an attempt records whether the report job overlapped it.
+`bench.progress` on the event bus (the Benchmarks page follows it). By default a run pauses the
+app's own automation (the global switch) for its duration and puts it back as it found it; with
+the switch left alone the jobs keep running and an attempt records whether a report overlapped.
 """
 
 from __future__ import annotations
@@ -132,6 +133,8 @@ class BenchService:
         self._task: asyncio.Task[None] | None = None
         self.progress: dict[str, Any] | None = None
         self._cancelled = False
+        self._restore_to: str | None = None
+        """Set while this run holds the automation switch it turned on."""
 
     # ------------------------------------------------------------------ catalog
 
@@ -174,8 +177,11 @@ class BenchService:
         ids: list[str] | None = None,
         repeats: int | None = None,
         efforts: list[str] | None = None,
+        pause_automation: bool = True,
     ) -> int:
-        """Start a run in the background → its id. Raises BenchBusy / BenchNotReady."""
+        """Start a run in the background → its id. Raises BenchBusy / BenchNotReady.
+        `pause_automation`: turn the global automation switch on for the run, and back to what
+        it was when the run ends (also on failure or cancel)."""
         if self.running:
             raise BenchBusy("a benchmark run is already in progress")
         settings = self.ctx.settings
@@ -198,6 +204,25 @@ class BenchService:
             base_url=llm_cfg.base_url,
         )
         self._cancelled = False
+        was_paused = now_paused = self.ctx.automation.paused
+        self._restore_to = None
+        if pause_automation and not was_paused:
+            by = f"bench #{run_id}"
+            try:
+                await self.ctx.pause_automation(by)
+            except BaseException:
+                await self.store.update_run(
+                    run_id, status="failed", error="could not pause automation"
+                )
+                raise
+            self._restore_to = by
+            now_paused = True
+        automation = {
+            "paused": now_paused,
+            "by_run": self._restore_to is not None,
+            "was_paused": was_paused,
+        }
+        await self.store.update_run(run_id, meta={"automation": automation})
         total = len(plan_attempts(scenarios, levels)) * n
         self.progress = {
             "run_id": run_id,
@@ -222,10 +247,30 @@ class BenchService:
                 settings.bench.attempt_timeout.total_seconds(),
                 chat_cfg,
                 levels,
+                automation,
             ),
             name=f"bench-{run_id}",
         )
+        self._task.add_done_callback(self._on_task_done)
         return run_id
+
+    def _on_task_done(self, task: asyncio.Task[None]) -> None:
+        # A task cancelled before its first step never reaches its own `finally`.
+        if self._restore_to is not None:
+            asyncio.get_running_loop().create_task(self._restore_automation())
+
+    async def _restore_automation(self) -> None:
+        """Put the automation switch back as the run found it (idempotent). Only if it is still
+        the state this run set: someone who resumed or re-paused meanwhile has the say."""
+        by, self._restore_to = self._restore_to, None
+        if by is None:
+            return
+        ctx = self.ctx
+        if ctx.automation.paused and ctx.automation.by == by:
+            try:
+                await ctx.resume_automation(by)
+            except Exception:
+                log.exception("could not resume automation after benchmark run")
 
     async def cancel(self) -> bool:
         if not self.running or self._task is None:
@@ -266,6 +311,7 @@ class BenchService:
         budget_s: float,
         chat_cfg: ChatSettings | None = None,
         efforts: list[str] | None = None,
+        automation: dict[str, Any] | None = None,
     ) -> None:
         ctx = self.ctx
         attempts: list[dict[str, Any]] = []
@@ -286,7 +332,7 @@ class BenchService:
         windows: dict[str, list[tuple[float, float]]] = {}
         try:
             runner, probed = await self._prepare(
-                run_id, llm, llm_cfg, tracing, scenarios, sampler, chat_cfg, efforts
+                run_id, llm, llm_cfg, tracing, scenarios, sampler, chat_cfg, efforts, automation
             )
             if efforts and len(efforts) > 1 and thinking_known_absent(probed):
                 # A model that does not think: every level is the same run.
@@ -333,9 +379,12 @@ class BenchService:
         finally:
             if sampler is not None:
                 await sampler.stop()
-            await self._finish(run_id, status, error, attempts, sampler, windows, llm_cfg)
-            await llm.aclose()
-            await tracing.flush()
+            try:
+                await self._finish(run_id, status, error, attempts, sampler, windows, llm_cfg)
+                await llm.aclose()
+                await tracing.flush()
+            finally:
+                await self._restore_automation()
 
     def _start_sampler(self, run_id: int) -> HardwareSampler | None:
         bench = self.ctx.settings.bench
@@ -370,6 +419,7 @@ class BenchService:
         sampler: HardwareSampler | None = None,
         chat_cfg: ChatSettings | None = None,
         efforts: list[str] | None = None,
+        automation: dict[str, Any] | None = None,
     ) -> tuple[AttemptRunner, dict[str, Any]]:
         ctx = self.ctx
         # The chat settings the run was started with, like the LLM settings.
@@ -433,6 +483,7 @@ class BenchService:
             "backend": probed,
             "gpu": gpu,
             "hardware": {"recorded": sampler is not None},
+            "automation": automation,
             "judge": (
                 {"model": judge_cfg.model, "base_url": judge_cfg.base_url}
                 if judge_cfg.configured

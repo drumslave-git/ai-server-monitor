@@ -221,9 +221,13 @@ into it, because a judge is itself a model.
 - **Reload suspected:** an attempt is flagged (never re-run, never hidden) when Ollama's `/api/ps` shows
   the model gone just before it, or when its first token took more than 5× the run's median (and at
   least 2 s, with at least 4 timed attempts in the run).
-- Every scenario runs N times (default 3); the app's own reports keep running meanwhile, so
-  timings may be slower while a report is being written. Each attempt records whether a report
-  overlapped it.
+- Every scenario runs N times (default 3). By default the run **pauses the monitor's automation**
+  (the global "Pause automation" switch: no collectors, reports, planner, probes, *arr automations)
+  and puts the switch back as it found it when the run ends, also on failure or cancel; a pause the
+  user set beforehand stays. The Bench start panel has a tick for this ("Pause automation during
+  this run", on by default). The run's meta records it (`automation`), the run page and Compare
+  show it. With the tick off, the app's reports keep running meanwhile, so timings may be slower
+  while a report is being written; each attempt records whether a report overlapped it.
 - Stored per attempt: check results, score, time to first token, total time, tokens in/out,
   tokens/s, number of LLM steps and tool calls, tool mode used, errors, the answer, and the
   LLM trace ids (purpose `bench`; the Logs page shows them).

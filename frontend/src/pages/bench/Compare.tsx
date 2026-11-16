@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { api } from "../../api";
 import { Empty, Panel } from "../../ui";
-import { EFFORTS, GROUP_SHORT, backendLabel, chars, coldStartText, effortLabel, gb, gbOf, ms, pct as pctText, routingLabel, runLabel, score, scoreLevel, shortDate, sizeLabel, tps, watts } from "./format";
+import { EFFORTS, GROUP_SHORT, automationText, backendLabel, chars, coldStartText, effortLabel, gb, gbOf, ms, pct as pctText, routingLabel, runLabel, score, scoreLevel, shortDate, sizeLabel, tps, watts } from "./format";
 import { hardwareLabel, hwScope, vramStat } from "./Hardware";
 import { levelsOf } from "./Levels";
 import type { Catalog, Run } from "./types";
@@ -91,6 +91,7 @@ export function Compare({ ids, catalog }: { ids: number[]; catalog: Catalog | nu
               <Row label="Tool mode used" high={null} cells={runs.map((r) => ({ text: r.meta?.tool_mode ?? "—", raw: null }))} />
               <Row label="Tool routing" high={null} cells={runs.map((r) => ({ text: routingLabel(r), raw: null }))} />
               <Row label="Attempts each" high={null} cells={runs.map((r) => ({ text: String(r.repeats), raw: null }))} />
+              <Row label="Automation" high={null} cells={runs.map((r) => ({ text: automationText(r.meta?.automation), raw: null }))} />
               <Row label="Scenario set" high={null} cells={runs.map((r) => ({ text: r.scenario_hash ?? "—", raw: null }))} />
               <tr className="cmp-section"><th colSpan={runs.length + 1}>Accuracy</th></tr>
               <Row label="Overall" high cells={runs.map((r) => pct(r.overall))} className="cmp-strong" />

@@ -9,6 +9,8 @@ const EVENT_TYPES = [
   "report.token",
   "report.done",
   "report.failed",
+  "report.cancelled",
+  "automation.changed",
   "llm.call",
   "bench.progress",
   "bench.done",

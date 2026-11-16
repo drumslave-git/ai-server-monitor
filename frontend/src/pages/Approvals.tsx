@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type ActionRecord, type ApprovalBatch } from "../api";
 import { ago, clock, until } from "../fmt";
+import { useAutomation } from "../automation";
 import { useStream } from "../live";
 import { Badge, Empty, PageHead, Panel, useNow, usePoll, type Level } from "../ui";
 
@@ -41,6 +42,7 @@ type CardProps = {
 };
 
 function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) {
+  const paused = Boolean(useAutomation().state?.paused);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [all, setAll] = useState(false);
   const ref = useRef<HTMLElement>(null);
@@ -80,7 +82,7 @@ function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) 
                   {n} {label(status)}
                 </Badge>
               ))}
-              {batch.queued > 0 && <span className="muted small">{batch.queue_note.replace(/^, /, "")}</span>}
+              {batch.queued > 0 && <span className="muted small">{paused ? "approved; waiting because automation is paused, it runs after the resume" : batch.queue_note.replace(/^, /, "")}</span>}
             </p>
           )}
         </div>

@@ -22,6 +22,8 @@
 .bench-levels { display: flex; flex-wrap: wrap; gap: 4px 16px; border: 0; margin: 0; padding: 0; min-width: 0; }
 .bench-levels legend { padding: 0 0 4px; }
 .bench-level { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.bench-pause { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 2px 8px; cursor: pointer; flex-basis: 100%; }
+.bench-pause .help { grid-column: 2; margin: 0; }
 .bench-run-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .bench-progress { display: grid; gap: 8px; margin-top: 4px; }
 .bench-progress-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }

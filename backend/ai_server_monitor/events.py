@@ -3,6 +3,8 @@
 Event types published today (exposed to browsers by GET /api/stream):
 
     report.started | report.token | report.done | report.failed   (report engine)
+    report.cancelled                                                (a run stopped from outside)
+    automation.changed                                              (the pause switch was flipped)
     metrics.tick                                                    (system/gpu collectors)
     collector.status                                                (collector state changes)
 

@@ -19,6 +19,8 @@ from .actions import ActionService, Notifier
 from .apiaccess import ApiGateway
 from .arr.automations import AutomationEnv
 from .arr.automations import register as register_automations
+from .automation import KV_KEY as AUTOMATION_KEY
+from .automation import AutomationState
 from .bench.service import BenchService
 from .chat import ChatEngine
 from .chat.audit import audit_hook
@@ -93,6 +95,8 @@ class AppContext:
             self.db, scrubber=lambda: Scrubber(self.settings), events=self.events
         )
         """The LLM trace and the app log; survives settings changes like the event bus."""
+        self.automation = AutomationState()
+        """The global pause switch (persisted); a new scheduler is built to match it."""
         self.scheduler = Scheduler()
         self.llm = LLMClient(self.settings.llm, transport=llm_transport, tracing=self.tracing)
         self.tool_mode = ToolModeResolver(self.llm, self.db, self.settings.llm.tool_mode)
@@ -144,6 +148,16 @@ class AppContext:
         if self._seed is not None:
             await self.store.save(self._seed)
         self.settings = await self.store.load()
+        self.automation = AutomationState.from_stored(await self.db.kv_get(AUTOMATION_KEY))
+        if self.automation.paused and (self.automation.by or "").startswith("bench #"):
+            # A benchmark run held the switch and died with the process: it is not running now.
+            log.warning(
+                "automation was paused by %s, which no longer runs: resumed", self.automation.by
+            )
+            self.automation = AutomationState()
+            await self.db.kv_set(AUTOMATION_KEY, self.automation.to_dict())
+        if self.automation.paused:
+            log.warning("automation is paused: nothing runs by itself until it is resumed")
         await self._start_services()
         log.info("started (data=%s, host root=%s)", self.bootstrap.data_dir, self.host_env.root)
 
@@ -174,6 +188,8 @@ class AppContext:
         s = self.settings
         logging.getLogger().setLevel(s.general.log_level.upper())
         self.scheduler = Scheduler()
+        if self.automation.paused:
+            self.scheduler.hold(self.automation.since)
         self.tracing.apply_settings(s.logs)
         self.llm = LLMClient(s.llm, transport=self._llm_transport, tracing=self.tracing)
         self.tool_mode = ToolModeResolver(self.llm, self.db, s.llm.tool_mode)
@@ -302,6 +318,46 @@ class AppContext:
         await self.api_gateway.close()
         await self.mcp.close()
         await self.llm.aclose()
+
+    # ------------------------------------------------------------------ automation switch
+
+    async def automation_status(self) -> dict[str, Any]:
+        """The switch for the UI and /api/info, with what is waiting because of it."""
+        row = await self.db.fetchone("SELECT COUNT(*) AS n FROM actions WHERE status = 'queued'")
+        return {
+            **self.automation.to_dict(),
+            "queued_actions": int(row["n"]) if row else 0,
+            "jobs": len(self.scheduler.jobs),
+            "jobs_cancelled": [
+                j.name for j in self.scheduler.jobs.values() if j.last_status == "cancelled"
+            ],
+        }
+
+    async def pause_automation(self, by: str = "ui") -> list[str]:
+        """Turn the switch on: persist it, cancel what is running, hold every job. Idempotent.
+        Returns the jobs that were cancelled mid-run."""
+        async with self._lock:
+            if self.automation.paused and self.scheduler.paused:
+                return []
+            self.automation = AutomationState(paused=True, since=time.time(), by=by)
+            await self.db.kv_set(AUTOMATION_KEY, self.automation.to_dict())
+            self.scheduler.paused_since = self.automation.since
+            cancelled = await self.scheduler.pause()
+            log.warning("automation paused by %s (cancelled: %s)", by, ", ".join(cancelled) or "-")
+        self.events.publish("automation.changed", await self.automation_status())
+        return cancelled
+
+    async def resume_automation(self, by: str = "ui") -> None:
+        """Turn the switch off: jobs come due on their normal schedule, those that were due
+        meanwhile start a couple of seconds apart. Idempotent."""
+        async with self._lock:
+            if not self.automation.paused and not self.scheduler.paused:
+                return
+            self.automation = AutomationState()
+            await self.db.kv_set(AUTOMATION_KEY, self.automation.to_dict())
+            self.scheduler.resume()
+            log.info("automation resumed by %s", by)
+        self.events.publish("automation.changed", await self.automation_status())
 
     # ------------------------------------------------------------------ reports
 

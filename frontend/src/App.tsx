@@ -1,6 +1,7 @@
 import { Activity, Download, FileText, Gauge, MessageSquare, ScrollText, Settings, ShieldCheck, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, type StatusResponse } from "./api";
+import { AutomationBar, AutomationProvider } from "./automation";
 import { useConnected, useStream } from "./live";
 import { ApprovalsPage } from "./pages/Approvals";
 import { ArrPage } from "./pages/Arr";
@@ -71,6 +72,7 @@ export function App() {
   const params = route.slice(1);
 
   return (
+    <AutomationProvider>
     <div className="app">
       <aside className="sidebar">
         <div className="brand-block">
@@ -92,6 +94,7 @@ export function App() {
         {!connected && <p className="sidebar-foot">Reconnecting…</p>}
       </aside>
       <main className="content">
+        <AutomationBar />
         {page === "reports" ? (
           <ReportsPage params={params} />
         ) : page === "approvals" ? (
@@ -111,5 +114,6 @@ export function App() {
         )}
       </main>
     </div>
+    </AutomationProvider>
   );
 }

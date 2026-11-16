@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../../api";
 import { Badge, Empty, Markdown, Panel } from "../../ui";
 import { ScenarioDetail } from "./Catalog";
-import { GROUP_SHORT, backendLabel, chars, effortLabel, coldStartText, elapsed, gb, ms, pct, routingLabel, score, scoreLevel, shortDate, sizeLabel, statusLevel, tps } from "./format";
+import { GROUP_SHORT, automationText, backendLabel, chars, effortLabel, coldStartText, elapsed, gb, ms, pct, routingLabel, score, scoreLevel, shortDate, sizeLabel, statusLevel, tps } from "./format";
 import { HardwareSection, hwScope, vramStat } from "./Hardware";
 import { LevelMatrix, LevelsPanel } from "./Levels";
 import type { Attempt, AttemptRow, Catalog, GpuInfo, HwNumbers, Run, ScenarioInfo } from "./types";
@@ -114,6 +114,8 @@ export function RunDetail({ id, scenarioId, attemptId, catalog }: { id: number; 
               </dd>
               <dt>GPU</dt>
               <dd>{gpuText(meta.gpu)}</dd>
+              <dt>Automation</dt>
+              <dd>{automationText(meta.automation)}</dd>
               {meta.judge && (
                 <>
                   <dt>Judge</dt>
@@ -125,6 +127,9 @@ export function RunDetail({ id, scenarioId, attemptId, catalog }: { id: number; 
               <p className="help warn-text">
                 {run.summary.reload_suspected} attempt(s) are marked "reload suspected": the backend may have unloaded the model meanwhile. They are included in the numbers; open the scenario to see which.
               </p>
+            )}
+            {meta.automation?.paused && (
+              <p className="help">The monitor's scheduled jobs and automations were paused during this run, so no report or collector loaded the backend.</p>
             )}
             {run.summary && run.summary.overlapped > 0 && (
               <p className="help">

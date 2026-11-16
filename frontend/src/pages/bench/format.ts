@@ -94,3 +94,10 @@ export const clock = (s: number): string => {
   const sec = String(t % 60).padStart(2, "0");
   return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
 };
+
+/** What the run says about the monitor's scheduled jobs: paused for the run, or left running. */
+export function automationText(a: { paused: boolean; by_run: boolean; was_paused: boolean } | null | undefined): string {
+  if (!a) return "running (not paused)";
+  if (!a.paused) return "running (not paused)";
+  return a.by_run ? "paused for the run" : "paused (already paused before the run)";
+}
