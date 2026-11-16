@@ -24,6 +24,7 @@ from ..chat.safety import Scrubber
 from ..config import ChatSettings
 from ..digest import collectors_snapshot
 from ..llm import LLMClient, LLMError
+from ..llm.modelinfo import ModelInfo, read_model_info
 from ..tracing import Tracing
 from ..tracing.config import TraceConfig
 from . import judge as judge_mod
@@ -31,6 +32,7 @@ from .explain import check_labels, explain_run
 from .hardware import HardwareSampler, in_windows, stats, summarize_hardware
 from .probe import ollama_loaded, probe_backend
 from .runner import LEVELS, AttemptRunner, OverlapWatch, summarize, summarize_levels
+from .sampling import effective_sampling
 from .schema import (
     GROUP_TITLES,
     GROUPS,
@@ -148,6 +150,27 @@ class BenchService:
             "problems": problems,
             "repeats": self.ctx.settings.bench.repeats,
         }
+
+    async def _model_info(self, cfg: Any) -> ModelInfo | None:
+        try:
+            return await read_model_info(cfg, transport=self._probe_transport)
+        except Exception:
+            log.debug("model info not read", exc_info=True)
+            return None
+
+    async def with_sampling(self, run: dict[str, Any]) -> dict[str, Any]:
+        """`run` with the sampling values filled in: a run made before they were recorded gets the
+        model's current defaults, labelled as read now (or "auto · not recorded" if unreadable)."""
+        meta = run.get("meta") or {}
+        llm = meta.get("llm") or {}
+        if "effective" in llm or not any(
+            llm.get(k) is not None for k in ("temperature", "top_p", "top_k")
+        ):
+            return run
+        cfg = self.ctx.settings.llm.model_copy(update={"model": run.get("model") or ""})
+        info = await self._model_info(cfg)
+        effective = effective_sampling(llm, info, run.get("backend_kind"), now=True)
+        return {**run, "meta": {**meta, "llm": {**llm, "effective": effective}}}
 
     def scenario_titles(self) -> dict[str, str]:
         """id -> title of every scenario in the installed set (for the PDF export)."""
@@ -464,6 +487,12 @@ class BenchService:
                 "temperature": llm_cfg.temperature,
                 "top_p": llm_cfg.top_p,
                 "top_k": llm_cfg.top_k,
+                # the values that applied: the model's own defaults where the setting is "auto"
+                "effective": effective_sampling(
+                    {k: getattr(llm_cfg, k) for k in ("temperature", "top_p", "top_k")},
+                    await self._model_info(llm_cfg),
+                    probed.get("kind"),
+                ),
                 "max_output_tokens": llm_cfg.max_output_tokens,
                 "reasoning_effort": llm_cfg.reasoning_effort,
                 "max_context_tokens": llm_cfg.max_context_tokens,

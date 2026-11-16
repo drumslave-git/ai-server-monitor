@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { api } from "../../api";
 import { Empty, Panel } from "../../ui";
-import { EFFORTS, EFFORT_HELP, GROUP_SHORT, automationText, backendLabel, bestOf, chars, coldStartText, effortLabel, gb, gbOf, ms, pct as pctText, routingLabel, runLabel, samplingText, score, scoreLevel, shortDate, sizeLabel, tps, watts } from "./format";
+import { EFFORTS, EFFORT_HELP, GROUP_SHORT, automationText, backendLabel, bestOf, chars, coldStartText, effortLabel, gb, gbOf, ms, pct as pctText, routingLabel, runLabel, samplingMissing, samplingText, score, scoreLevel, shortDate, sizeLabel, tps, watts } from "./format";
 import type { Shown } from "./format";
 import { hardwareLabel, hwScope, vramStat } from "./Hardware";
 import { levelsOf } from "./Levels";
@@ -51,14 +51,21 @@ function RunHead({ run, pinned = false }: { run: Run; pinned?: boolean }) {
   );
 }
 
-type Stick = { on: boolean; section: string; left: number; widths: number[]; width: number };
-const NO_STICK: Stick = { on: false, section: "", left: 0, widths: [], width: 0 };
+type Stick = { on: boolean; band: boolean; section: string; left: number; widths: number[]; width: number };
+/** Sub-pixel slack when comparing row tops with the pinned header's edge. */
+const EPS = 0.5;
+const NO_STICK: Stick = { on: false, band: false, section: "", left: 0, widths: [], width: 0 };
 
 /** Pins the column header and the current section's heading at the top of the window while the table
  * scrolls past. CSS `position: sticky` cannot do it: the table sits in a box that scrolls sideways on
  * a phone, and such a box is the only thing a sticky cell would stick to. So a copy of the header is
  * laid over the table (same column widths, shifted by the sideways scroll) once the real one is out of
- * sight, and the heading shown in it is the last section whose row has reached the pinned header. */
+ * sight. Under the pinned header sits a band with the heading of the section whose body is there: the
+ * last section whose real heading row has reached the pinned header's bottom edge, so the band takes
+ * over exactly where that row would have been and covers it. While the next real heading is passing
+ * through the band's own strip it would be half hidden, so the band is left out until it has reached
+ * the edge: a real heading is either fully visible or fully covered. Measured on every scroll and
+ * resize, in a frame. */
 function useStickyHead(table: RefObject<HTMLTableElement | null>, scroller: RefObject<HTMLDivElement | null>, bar: RefObject<HTMLDivElement | null>, key: string): Stick {
   const [st, setSt] = useState<Stick>(NO_STICK);
   useEffect(() => {
@@ -72,22 +79,29 @@ function useStickyHead(table: RefObject<HTMLTableElement | null>, scroller: RefO
       if (!head) return;
       const h = head.getBoundingClientRect();
       const rect = t.getBoundingClientRect();
-      const barHeight = bar.current?.getBoundingClientRect().height ?? 0;
-      // the pinned header is shorter than the real one: a section takes over where it ends
-      const pinned = bar.current?.querySelector("thead")?.getBoundingClientRect().height || h.height;
+      // the pinned header is shorter than the real one; its bottom edge is where a section takes over
+      const edge = bar.current?.querySelector("thead")?.getBoundingClientRect().bottom ?? h.bottom;
+      const rows = Array.from(t.querySelectorAll<HTMLElement>("tr.cmp-section"));
+      const strip = rows[0]?.getBoundingClientRect().height ?? 0;
       let section = "";
-      for (const row of Array.from(t.querySelectorAll<HTMLElement>("tr.cmp-section"))) {
-        if (row.getBoundingClientRect().top > pinned + 1) break;
+      let passing = false;
+      for (const row of rows) {
+        const top = row.getBoundingClientRect().top;
+        if (top > edge + EPS) {
+          passing = top < edge + strip - EPS;
+          break;
+        }
         section = row.dataset.title ?? "";
       }
       const next: Stick = {
-        on: h.bottom <= 0 && rect.bottom > barHeight,
+        on: h.bottom <= 0 && rect.bottom > edge + strip,
+        band: !passing,
         section,
         left: box.scrollLeft,
         widths: Array.from(head.rows[0].cells).map((c) => c.getBoundingClientRect().width),
         width: rect.width,
       };
-      setSt((p) => (p.on === next.on && p.section === next.section && p.left === next.left && p.width === next.width && p.widths.join() === next.widths.join() ? p : next));
+      setSt((p) => (p.on === next.on && p.band === next.band && p.section === next.section && p.left === next.left && p.width === next.width && p.widths.join() === next.widths.join() ? p : next));
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(measure);
@@ -97,6 +111,7 @@ function useStickyHead(table: RefObject<HTMLTableElement | null>, scroller: RefO
     box.addEventListener("scroll", schedule, { passive: true });
     const ro = new ResizeObserver(schedule);
     ro.observe(t);
+    if (bar.current) ro.observe(bar.current);
     measure();
     return () => {
       window.removeEventListener("scroll", schedule);
@@ -143,7 +158,7 @@ export function Compare({ ids, catalog }: { ids: number[]; catalog: Catalog | nu
   const sampling = (key: string): Cell[] =>
     runs.map((r) => {
       const text = samplingText(r.meta?.llm, key);
-      return plain(text, text === "not recorded");
+      return plain(text, samplingMissing(text));
     });
 
   return (
@@ -174,7 +189,7 @@ export function Compare({ ids, catalog }: { ids: number[]; catalog: Catalog | nu
                     ))}
                   </tr>
                 </thead>
-                <tbody>
+                <tbody style={stick.band ? undefined : { display: "none" }}>
                   <tr className="cmp-section">
                     <th colSpan={cols}><span className="cmp-section-title" style={{ transform: `translateX(${stick.left}px)` }}>{stick.section}</span></th>
                   </tr>

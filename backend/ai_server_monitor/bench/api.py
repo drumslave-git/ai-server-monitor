@@ -108,7 +108,7 @@ async def run_detail(request: Request, run_id: int) -> dict[str, Any]:
     if run is None:
         raise HTTPException(404, "no such run")
     return {
-        **run,
+        **await bench.with_sampling(run),
         "attempts": await bench.store.attempts(run_id),
         # a short reason per scenario, from the recorded checks (no model involved)
         "explanations": await bench.explanations(run_id),
@@ -176,7 +176,7 @@ async def export_pdf(request: Request, run_id: int) -> Response:
     recorded = ((run.get("meta") or {}).get("hardware") or {}).get("recorded")
     data = await asyncio.to_thread(
         pdf.render_run,
-        run,
+        await bench.with_sampling(run),
         titles=bench.scenario_titles(),
         samples=await store.hardware_samples(run_id) if recorded else [],
         attempts=await store.attempts(run_id),
@@ -203,7 +203,7 @@ async def compare_pdf(
         run = await bench.store.get_run(run_id)
         if run is None:
             raise HTTPException(404, f"no such run: {run_id}")
-        runs.append(run)
+        runs.append(await bench.with_sampling(run))
         notes[run_id] = await bench.explanations(run_id)
     data = await asyncio.to_thread(
         pdf.render_compare, runs, titles=bench.scenario_titles(), explanations=notes

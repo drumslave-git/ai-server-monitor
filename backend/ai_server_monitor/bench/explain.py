@@ -1,7 +1,7 @@
 """A short plain-language reason for every scenario score, built from the recorded checks.
 
 No model is involved: for each scenario the failed checks of its attempts are counted (a check
-is named by the scenario author's note when there is one, else by its description), plus the
+is named by its plain-English label from `check_labels`, else by its type), plus the
 attempts that errored or gave no answer. The Compare page and its PDF show the text under the
 numbers: "missed: names the restart count (2 of 3 attempts)".
 """
@@ -12,12 +12,10 @@ from collections import Counter
 from collections.abc import Iterable
 from typing import Any
 
+from .check_labels import CHECK_LABELS, label_for_type
+
 MAX_MISSED = 2
 """Missed checks named in a cell; the rest is "+N more"."""
-MAX_LABEL = 50
-MAX_NOTE = 44
-"""A scenario author's note names the check when it is this short; a longer one explains rather than
-names, so the check's own description is used."""
 MAX_ERROR = 48
 
 
@@ -33,25 +31,28 @@ def _short(text: str, limit: int) -> str:
 
 
 def check_labels(scenarios: Iterable[Any]) -> dict[str, dict[str, str]]:
-    """scenario id -> {check description -> the author's note}, for the checks that have a note."""
+    """scenario id -> {check description -> plain-English label}, for the installed scenarios.
+
+    The label is taken from `CHECK_LABELS` by the check's position, so a run recorded before a
+    label was written reads the same as a new one; a scenario whose checks no longer line up with
+    its labels (a check added or changed) gets none, and its checks read by type."""
     out: dict[str, dict[str, str]] = {}
     for s in scenarios:
-        notes = {
-            c["describe"]: c["note"]
-            for c in s.public()["checks"]
-            if c.get("note") and c["describe"]
+        entries = CHECK_LABELS.get(s.id)
+        checks = s.public()["checks"]
+        if entries is None or len(entries) != len(checks):
+            continue
+        out[s.id] = {
+            c["describe"]: label
+            for c, (kind, label) in zip(checks, entries, strict=True)
+            if kind == c["type"] and c["describe"]
         }
-        if notes:
-            out[s.id] = notes
     return out
 
 
-def _label(check: dict[str, Any], notes: dict[str, str]) -> str:
-    describe = check.get("describe") or ""
-    note = notes.get(describe, "")
-    if note and len(note) <= MAX_NOTE:
-        return note
-    return _short(describe or check.get("type") or "?", MAX_LABEL)
+def _label(check: dict[str, Any], labels: dict[str, str]) -> str:
+    """The reader's name of a check: its label, else one by type (never the raw description)."""
+    return labels.get(check.get("describe") or "") or label_for_type(check.get("type") or "")
 
 
 def _plural(n: int, one: str, many: str) -> str:
@@ -59,11 +60,11 @@ def _plural(n: int, one: str, many: str) -> str:
 
 
 def explain_scenario(
-    attempts: list[dict[str, Any]], notes: dict[str, str] | None = None
+    attempts: list[dict[str, Any]], labels: dict[str, str] | None = None
 ) -> dict[str, Any]:
     """The explanation of one scenario for one run: `lines` (at most two short sentences),
     `ok` (every attempt passed every check) and the raw counts."""
-    notes = notes or {}
+    labels = labels or {}
     n = len(attempts)
     missed: Counter[str] = Counter()
     weight: dict[str, float] = {}
@@ -83,7 +84,7 @@ def explain_scenario(
         failed = [c for c in (a.get("checks") or []) if not c.get("passed")]
         seen: set[str] = set()
         for c in failed:
-            label = _label(c, notes)
+            label = _label(c, labels)
             if label in seen:
                 continue
             seen.add(label)

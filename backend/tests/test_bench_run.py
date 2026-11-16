@@ -33,6 +33,7 @@ OLLAMA_PROBE = {
             "format": "gguf",
         },
         "model_info": {"gemma.context_length": 131072, "general.architecture": "gemma"},
+        "parameters": "top_k 64\ntop_p 0.95",
     },
 }
 
@@ -211,6 +212,11 @@ def test_run_records_backend_model_and_settings(bootstrap: Bootstrap) -> None:
         assert run["meta"]["llm"]["temperature"] == 0.3
         # top_p / top_k as resolved for the run: a number stays a number, "auto" stays "auto"
         assert run["meta"]["llm"]["top_p"] == 0.9 and run["meta"]["llm"]["top_k"] == "auto"
+        # the values that applied: set by the user, the model's own default, else Ollama's
+        eff = run["meta"]["llm"]["effective"]
+        assert eff["temperature"]["text"] == "0.3 (set)"
+        assert eff["top_p"]["text"] == "0.9 (set)"
+        assert eff["top_k"]["text"] == "64 (model default)"
         assert run["meta"]["tool_mode"] == "native"
         assert run["app_version"] and run["scenario_hash"]
         assert run["finished"] >= run["started"]

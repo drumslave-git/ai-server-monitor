@@ -53,13 +53,15 @@ function Tiles({ run, hw }: { run: Run; hw: NonNullable<HwNumbers> }) {
   const ram = avgPeak(hw.ram_used, (v) => gbOf(v, hw.ram_total));
   const elsewhere = meta?.llm_here === "elsewhere";
   const host = elsewhere ? "Host " : "";
+  // the same wording as the Compare page's "Measured from" row
+  const where = hardwareLabel(meta, run.backend_kind);
   return (
     <div className="hw-tiles">
       {meta?.gpu ? (
         <>
           <Tile label={`${host}VRAM, peak`} value={vram.value} sub={vram.sub ? `${vram.sub} · whole GPU` : undefined} title="Memory in use on the whole GPU, all programs together" />
           {own ? (
-            <Tile label="Model's VRAM, peak" value={mine.value} sub={`${mine.sub} · ${meta.llm_process ?? "LLM server"}`} title="Memory held by the LLM server's own process" />
+            <Tile label="Model's VRAM, peak" value={mine.value} sub={`${mine.sub} · ${where}`} title={`Memory held by ${where}`} />
           ) : (
             <Tile label="Model's VRAM" value="—" sub={elsewhere ? "server is elsewhere" : "process not recognised"} title="The GPU did not list an LLM server process, so only the whole-GPU figure is known" />
           )}

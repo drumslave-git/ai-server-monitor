@@ -5,11 +5,16 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from ai_server_monitor.bench import pdf
+from ai_server_monitor.bench import service as service_mod
+from ai_server_monitor.bench.check_labels import CHECK_LABELS, GENERIC
 from ai_server_monitor.bench.explain import check_labels, explain_run, explain_scenario
-from ai_server_monitor.bench.schema import load_scenarios
+from ai_server_monitor.bench.sampling import effective_sampling
+from ai_server_monitor.bench.schema import load_scenarios, scenario_set_hash
+from ai_server_monitor.llm.modelinfo import ModelInfo
 
 from .test_bench_pdf import _bold_spans, _seed, _text, client  # noqa: F401
 
@@ -48,23 +53,29 @@ def test_all_checks_passed() -> None:
 
 def test_missed_checks_are_counted_over_the_attempts_and_the_heaviest_comes_first() -> None:
     attempts = [attempt([True, False]), attempt([False, False]), attempt([True, True])]
-    out = explain_scenario(attempts, notes={"check 0": "names the restart count"})
+    out = explain_scenario(attempts, labels={"check 0": "names the restart count"})
     assert not out["ok"]
     # check 0 weighs more than check 1, so it leads; each is named once per attempt
-    assert out["lines"] == ["missed: names the restart count (1 of 3); check 1 (2 of 3)"]
+    assert out["lines"] == [
+        "missed: names the restart count (1 of 3); meets an expected check (2 of 3)"
+    ]
 
 
 def test_a_single_missed_check_says_attempts_and_the_rest_is_folded() -> None:
     one = explain_scenario([attempt([False, True]), attempt([False, True])])
-    assert one["lines"] == ["missed: check 0 (2 of 2 attempts)"]
-    many = explain_scenario([attempt([False] * 5)])
+    assert one["lines"] == ["missed: meets an expected check (2 of 2 attempts)"]
+    many = explain_scenario(
+        [attempt([False] * 5)], labels={f"check {i}": f"name {i}" for i in range(5)}
+    )
     assert many["lines"][0].endswith("; +3 more") and many["lines"][0].count("(1 of 1)") == 2
 
 
-def test_a_long_note_is_not_used_as_the_name() -> None:
-    note = "by hash or by name: the chat resolves a name itself, so the target is judged below"
-    out = explain_scenario([attempt([False])], notes={"check 0": note})
-    assert "by hash" not in out["lines"][0] and "check 0" in out["lines"][0]
+def test_an_unlabeled_check_reads_by_its_type_never_by_its_raw_description() -> None:
+    a = attempt([False])
+    a["checks"][0].update(type="answer_not_contains", describe="answer does not match: /critical/")
+    line = explain_scenario([a])["lines"][0]
+    assert line == "missed: avoids wording it should not use (1 of 1 attempts)"
+    assert "critical" not in line and "/" not in line
 
 
 def test_errors_empty_answers_and_cut_offs_are_named() -> None:
@@ -88,15 +99,6 @@ def test_points_lost_without_a_failed_check_are_not_called_perfect() -> None:
         "1 of 1 attempts lost points on the judge's rating"
     ]
     assert explain_scenario([plain])["lines"] == ["1 of 1 attempts scored under 100 %"]
-
-
-def test_long_descriptions_are_cut_between_list_items() -> None:
-    long = "answer mentions any of: " + ", ".join(f"value-{i}" for i in range(30))
-    a = attempt([False])
-    a["checks"][0]["describe"] = long
-    line = explain_scenario([a])["lines"][0]
-    assert line.startswith("missed: answer mentions any of: value-0, value-1")
-    assert "…" in line and "value-2…" not in line and len(line) < 90
 
 
 def test_explain_run_groups_by_scenario_and_check_labels_come_from_the_scenarios() -> None:
@@ -172,12 +174,124 @@ def test_hardware_label_names_the_provider_the_run_recorded() -> None:
     )
 
 
-def test_sampling_text_is_auto_a_number_or_not_recorded() -> None:
-    llm = {"temperature": "auto", "top_p": 0.9, "top_k": 40}
+def test_sampling_text_shows_the_value_that_applied_and_where_it_came_from() -> None:
+    llm = {"temperature": 0.2, "top_p": "auto", "top_k": "auto"}
+    info = ModelInfo(parameters={"top_k": 64, "top_p": 0.95})
+    llm["effective"] = effective_sampling(llm, info, "ollama")
     assert [pdf.sampling_text(llm, k) for k in ("temperature", "top_p", "top_k")] == [
-        "auto",
-        "0.9",
-        "40",
+        "0.2 (set)",
+        "0.95 (model default)",
+        "64 (model default)",
     ]
+    assert pdf.sampling_text({"top_k": "auto"}, "top_k") == "auto · not recorded"
     assert pdf.sampling_text({"temperature": 0.2}, "top_p") == "not recorded"
     assert pdf.sampling_text({"top_k": None}, "top_k") == "not recorded"
+
+
+def test_a_parameter_the_model_does_not_list_is_ollamas_default_or_not_reported() -> None:
+    llm = {"temperature": "auto", "top_p": "auto", "top_k": "auto"}
+    info = ModelInfo(parameters={"temperature": 1})
+    got = effective_sampling(llm, info, "ollama")
+    assert got["temperature"]["text"] == "1 (model default)"
+    assert got["top_p"]["text"] == "0.9 (Ollama default)"
+    assert got["top_k"]["text"] == "40 (Ollama default)"
+    # another server answers no model info and is never given a made-up value
+    other = effective_sampling(llm, None, "vllm")
+    assert {v["text"] for v in other.values()} == {"server default (not reported)"}
+    assert all(v["value"] is None for v in other.values())
+
+
+def test_a_new_run_records_the_values(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    seen: list[str] = []
+
+    async def fake(cfg: Any, **_: Any) -> ModelInfo:
+        seen.append(cfg.model)
+        return ModelInfo(parameters={"temperature": 1, "top_k": 64, "top_p": 0.95})
+
+    monkeypatch.setattr(service_mod, "read_model_info", fake)
+    bench = client.app.state.ctx.bench
+    cfg = bench.ctx.settings.llm.model_copy(update={"temperature": 0.4})
+    info = client.portal.call(bench._model_info, cfg)
+    got = effective_sampling({"temperature": 0.4, "top_p": "auto", "top_k": "auto"}, info, "ollama")
+    assert got["temperature"] == {
+        "setting": 0.4,
+        "value": 0.4,
+        "source": "set",
+        "text": "0.4 (set)",
+    }
+    assert got["top_k"]["text"] == "64 (model default)" and seen == [cfg.model]
+
+
+def test_an_old_run_gets_the_models_current_defaults_labelled_as_read_now(
+    client: TestClient,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = _seed(client)
+    store = client.app.state.ctx.bench.store
+
+    async def old() -> None:
+        run = await store.get_run(run_id)
+        llm = {"temperature": "auto", "top_p": "auto", "top_k": 20}
+        await store.update_run(run_id, meta={**run["meta"], "llm": llm})
+
+    client.portal.call(old)
+
+    async def fake(cfg: Any, **_: Any) -> ModelInfo:
+        return ModelInfo(parameters={"temperature": 1, "top_p": 0.95})
+
+    monkeypatch.setattr(service_mod, "read_model_info", fake)
+    llm = client.get(f"/api/bench/runs/{run_id}").json()["meta"]["llm"]["effective"]
+    assert llm["temperature"]["text"] == "1 (model default, read now)"
+    assert llm["top_p"]["text"] == "0.95 (model default, read now)"
+    assert llm["top_k"]["text"] == "20 (set)"
+
+    async def unreadable(cfg: Any, **_: Any) -> None:
+        return None
+
+    monkeypatch.setattr(service_mod, "read_model_info", unreadable)
+    llm = client.get(f"/api/bench/runs/{run_id}").json()["meta"]["llm"]["effective"]
+    assert llm["temperature"]["text"] == "auto · not recorded"
+    flat = " ".join(_text(client.get(f"/api/bench/runs/{run_id}/export.pdf").content).split())
+    assert "temperature auto · not recorded" in flat and "top K 20 (set)" in flat
+
+
+# --------------------------------------------------------------------------- check labels
+
+RAW = ("\\", "~", "{", "*", "[", "(?")  # a regex or a cmd pattern leaking into a label
+
+
+def test_every_check_of_every_scenario_has_a_plain_label() -> None:
+    scenarios = load_scenarios(include_smoke=True)[0]
+    assert scenarios
+    labels = check_labels(scenarios)
+    for s in scenarios:
+        if s.smoke:
+            continue
+        checks = s.public()["checks"]
+        entries = CHECK_LABELS.get(s.id)
+        assert entries is not None, f"{s.id}: no labels in bench/check_labels.py"
+        assert [t for t, _ in entries] == [c["type"] for c in checks], (
+            f"{s.id}: labels and checks differ (a check was added or changed: label it)"
+        )
+        for c in checks:
+            label = labels[s.id][c["describe"]]
+            assert label and not any(bit in label for bit in RAW), f"{s.id}: {label!r}"
+            assert label != c["describe"]
+
+
+def test_every_check_type_has_a_generic_label() -> None:
+    scenarios = load_scenarios(include_smoke=True)[0]
+    types = {c["type"] for s in scenarios for c in s.public()["checks"]}
+    assert types <= set(GENERIC)
+
+
+def test_the_labels_do_not_change_the_scenario_set_hash() -> None:
+    """Labels sit beside the scenario files, so runs 3, 4 and 5 stay comparable with new ones."""
+    scenarios = load_scenarios()[0]
+    assert scenario_set_hash(scenarios) == "b52eeec8d48a"
+
+
+def test_example_labels_read_plainly() -> None:
+    labels = check_labels(load_scenarios()[0])
+    assert "reads the logrotate config before answering" in labels["chat.logrotate_fails"].values()
+    assert "does not blame a wrong username/password" in labels["chat.qbit_cannot_connect"].values()

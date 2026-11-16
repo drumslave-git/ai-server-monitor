@@ -228,9 +228,14 @@ def hardware_label(meta: dict[str, Any] | None, backend_kind: str | None = None)
 
 
 def sampling_text(llm: dict[str, Any], key: str) -> str:
-    """temperature / top_p / top_k as the run resolved them: "auto" or the number; runs made
-    before the field was recorded say so."""
-    return str(llm[key]) if key in llm and llm[key] is not None else "not recorded"
+    """temperature / top_p / top_k as they applied: the value and where it came from ("1 (model
+    default)"); runs made before the field was recorded say so."""
+    shown = (llm.get("effective") or {}).get(key)
+    if shown and shown.get("text"):
+        return str(shown["text"])
+    if key not in llm or llm[key] is None:
+        return "not recorded"
+    return f"{llm[key]} (set)" if llm[key] != "auto" else "auto · not recorded"
 
 
 def vram_stat(hw: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -370,15 +375,13 @@ class Doc(FPDF):
         *,
         size: float = 8,
         section: set[int] | None = None,
-        notes: set[int] | None = None,
         raw_header: bool = False,
     ) -> None:
         """A table: `widths` in mm, `aligns` one of L/R/C per column; text may hold **bold**; rows
         in `section` are one grey band over all columns. The header repeats on every page; its cells
-        are made bold unless `raw_header` (the caller marked them up). Rows in `notes` are small
-        grey text under the row above (a row's explanation), without a rule between them."""
+        are made bold unless `raw_header` (the caller marked them up). A row is never split across
+        pages, so a cell's extra lines stay with the line above them."""
         section = section or set()
-        notes = notes or set()
         self.set_font("body", "", size)
         self.set_text_color(0)
         self.set_draw_color(150)
@@ -408,11 +411,6 @@ class Doc(FPDF):
                         colspan=len(widths),
                         style=FontFace(fill_color=(240, 240, 240)),
                     )
-                    continue
-                if i in notes:
-                    quiet = FontFace(color=(95, 95, 95), size_pt=size - 1)
-                    for cell in cells:
-                        row.cell(cell, style=quiet)
                     continue
                 for cell in cells:
                     row.cell(cell)
@@ -1169,7 +1167,6 @@ def render_compare(
     band("Per scenario: score · median time")
     ids_all = sorted({sid for r in runs for sid in (summary(r).get("scenarios") or {})})
     notes = explanations or {}
-    note_rows: set[int] = set()
     for sid in ids_all:
         stats = [(summary(r).get("scenarios") or {}).get(sid) for r in runs]
         scores = [s["score"] if s else None for s in stats]
@@ -1191,12 +1188,11 @@ def render_compare(
                 cells.append("not run")
                 continue
             when = doc.md(ms(s.get("median_total_ms")), bold=i in best_time)
-            cells.append(f"{doc.md(score(s['score']), bold=i in best_score)} · {when}")
+            text = f"{doc.md(score(s['score']), bold=i in best_score)} · {when}"
+            # the explanation sits in the same cell, right under the score
+            why = ((notes.get(runs[i]["id"]) or {}).get(sid) or {}).get("lines") or []
+            cells.append("\n".join([text, *(doc.md(line) for line in why)]))
         rows.append([f"{doc.md(titles.get(sid, sid))}\n{doc.md(sid, mono=True)}", *cells])
-        why = [((notes.get(r["id"]) or {}).get(sid) or {}).get("lines") for r in runs]
-        if any(why):
-            note_rows.add(len(rows))
-            rows.append(["", *(doc.md("\n".join(w)) if w else "" for w in why)])
 
     first = 58.0 if len(runs) <= 3 else 66.0
     each = (doc.inner - first) / len(runs)
@@ -1213,7 +1209,6 @@ def render_compare(
         "L" + "C" * len(runs),
         size=7.5,
         section=section,
-        notes=note_rows,
         raw_header=True,
     )
     doc.para(

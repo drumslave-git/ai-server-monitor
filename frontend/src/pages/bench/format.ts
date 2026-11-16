@@ -119,12 +119,20 @@ export function bestOf(cells: Shown[], high: boolean): Set<number> {
   return winners.length === real.length ? new Set() : new Set(winners);
 }
 
-/** temperature / top_p / top_k as the run resolved them ("auto" or the number); "not recorded" for
- * runs made before the field was kept. */
+/** temperature / top_p / top_k as they applied, with where the value came from ("1 (model default)",
+ * "0.2 (set)"). The run recorded it, or the server filled it in from the model's current defaults for
+ * an old run ("model default, read now"). Without either it says so; "not recorded" for runs made
+ * before the setting was kept. */
 export const samplingText = (llm: Record<string, unknown> | undefined, key: string): string => {
+  const shown = (llm?.effective as Record<string, { text?: string } | undefined> | undefined)?.[key]?.text;
+  if (shown) return shown;
   const v = llm?.[key];
-  return v === undefined || v === null ? "not recorded" : String(v);
+  if (v === undefined || v === null) return "not recorded";
+  return v === "auto" ? "auto · not recorded" : `${v} (set)`;
 };
+
+/** A sampling text that is not a value (muted in the tables). */
+export const samplingMissing = (text: string): boolean => /not (recorded|reported)/.test(text);
 
 const PROVIDERS: Record<string, string> = { ollama: "Ollama", "llama.cpp": "llama.cpp", vllm: "vLLM" };
 
