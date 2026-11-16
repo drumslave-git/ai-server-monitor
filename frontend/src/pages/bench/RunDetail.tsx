@@ -86,7 +86,7 @@ export function RunDetail({ id, scenarioId, attemptId, catalog }: { id: number; 
               </dd>
               <dt>Settings</dt>
               <dd>
-                temperature {String(llm.temperature ?? "—")} · max output {String(llm.max_output_tokens ?? "—")} tokens · context setting {String(llm.max_context_tokens ?? "—")}
+                temperature {String(llm.temperature ?? "—")} · max output {String(llm.max_output_tokens ?? "—")} tokens · thinking {String(llm.reasoning_effort ?? "—")} · context setting {String(llm.max_context_tokens ?? "—")}
               </dd>
               <dt>Tool mode</dt>
               <dd>

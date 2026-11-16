@@ -334,7 +334,8 @@ def create_app(
                 completion = await client.complete(
                     [{"role": "user", "content": "Reply with the single word OK."}],
                     temperature=0,
-                    max_tokens=256,
+                    max_tokens=1024,
+                    reasoning_effort="none",
                 )
             return {
                 "ok": True,

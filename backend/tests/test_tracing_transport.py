@@ -13,7 +13,7 @@ import pytest
 
 from ai_server_monitor.config import LLMSettings
 from ai_server_monitor.db import Database
-from ai_server_monitor.llm import LLMClient, LLMError
+from ai_server_monitor.llm import LLMClient, LLMEmptyAnswerError, LLMError
 from ai_server_monitor.tracing import Tracing, trace_call, trace_scope
 
 from .conftest import LLM_URL, chat_response, sse
@@ -391,3 +391,62 @@ async def test_event_published_when_a_call_is_stored(make_rig: Any) -> None:
     event = await asyncio.wait_for(sub.get(), 1)
     assert event.type == "llm.call" and event.data["purpose"] == "report"
     assert event.data["status"] == "ok" and event.data["id"] > 0
+
+
+async def test_reply_cut_off_before_any_answer_is_recorded_as_an_error(make_rig: Any) -> None:
+    """HTTP 200 + finish_reason "length" + only reasoning: the trace must not say "ok"."""
+    body = {
+        "model": "test-model",
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": "", "reasoning": "hmm " * 100},
+                "finish_reason": "length",
+            }
+        ],
+        "usage": {"prompt_tokens": 40, "completion_tokens": 700},
+    }
+    rig: Rig = await make_rig(lambda r: httpx.Response(200, json=body))
+    with trace_scope("report"), pytest.raises(LLMEmptyAnswerError):
+        await rig.client.complete(MESSAGES, max_tokens=700)
+    (row,) = await rig.rows()
+    assert row["status"] == "error" and row["finish_reason"] == "length"
+    assert "700 tokens" in row["error"] and "thinking" in row["error"]
+    assert row["reasoning"].startswith("hmm") and row["completion_tokens"] == 700
+
+
+async def test_cut_off_stream_with_only_reasoning_is_recorded_as_an_error(make_rig: Any) -> None:
+    events = [
+        {"choices": [{"delta": {"reasoning": "thinking about it"}}]},
+        {"choices": [{"delta": {}, "finish_reason": "length"}]},
+        "[DONE]",
+    ]
+    rig: Rig = await make_rig(
+        lambda r: httpx.Response(
+            200, content=sse(*events), headers={"content-type": "text/event-stream"}
+        )
+    )
+    with trace_scope("report"), pytest.raises(LLMEmptyAnswerError):
+        _ = [c async for c in rig.client.stream(MESSAGES, max_tokens=300)]
+    (row,) = await rig.rows()
+    assert row["status"] == "error" and "300 tokens" in row["error"]
+
+
+async def test_cut_off_reply_that_has_an_answer_stays_ok_in_the_trace(make_rig: Any) -> None:
+    body = {
+        "choices": [
+            {"message": {"role": "assistant", "content": "Half"}, "finish_reason": "length"}
+        ]
+    }
+    rig: Rig = await make_rig(lambda r: httpx.Response(200, json=body))
+    await rig.client.complete(MESSAGES)
+    (row,) = await rig.rows()
+    assert row["status"] == "ok" and row["finish_reason"] == "length"
+
+
+async def test_stream_dropped_before_any_answer_is_recorded_as_an_error(make_rig: Any) -> None:
+    body = sse({"choices": [{"delta": {"reasoning": "hm"}}]}, "[DONE]")
+    rig: Rig = await make_rig(lambda r: httpx.Response(200, content=body))
+    with trace_scope("report"), pytest.raises(LLMError):
+        _ = [c async for c in rig.client.stream(MESSAGES)]
+    rows = await rig.rows()
+    assert rows and all(r["status"] == "error" and "closed the stream" in r["error"] for r in rows)

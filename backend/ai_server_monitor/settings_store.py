@@ -57,7 +57,10 @@ def _delete_path(data: Any, loc: tuple[Any, ...]) -> bool:
     return True
 
 
-OLD_DEFAULTS: dict[tuple[str, str], str] = {("chat", "tool_timeout"): "30s"}
+OLD_DEFAULTS: dict[tuple[str, str], Any] = {
+    ("chat", "tool_timeout"): "30s",
+    ("llm", "max_output_tokens"): 4096,  # a thinking model spent all of it before the answer
+}
 """Stored values that are the OLD default of a setting whose default was raised. The database
 holds every setting (not only the changed ones), so an installation that never touched
 `chat.tool_timeout` would keep 30 s forever; such a value is dropped and the new default applies."""

@@ -35,7 +35,9 @@ ALWAYS = ("get_status", MORE_TOOLS)
 """Sent with every question, whatever the classifier says."""
 
 ROUTE_TIMEOUT_S = 60.0
-ROUTE_MAX_TOKENS = 150
+ROUTE_MAX_TOKENS = 400
+"""The answer is a few words; the rest is room for a model that thinks despite
+`reasoning_effort: none` (a thinking model that spends the whole limit gives no answer)."""
 MCP_PREFIX = "mcp:"
 STICKY_TOOL_CALLS = 60
 """How many of the newest tool results of a conversation tell which groups are in use."""
@@ -278,7 +280,10 @@ async def classify(
         async with asyncio.timeout(ROUTE_TIMEOUT_S):
             with trace_scope("chat_route", link_kind="chat", link_id=session_id, turn=turn):
                 completion = await llm.complete(
-                    messages, temperature=0.0, max_tokens=ROUTE_MAX_TOKENS
+                    messages,
+                    temperature=0.0,
+                    max_tokens=ROUTE_MAX_TOKENS,
+                    reasoning_effort="none",
                 )
     except Exception as exc:
         log.info("chat: routing call failed (%s: %s)", type(exc).__name__, exc)

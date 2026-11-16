@@ -157,6 +157,7 @@ class GeneralSettings(_Model):
 
 
 ToolMode = Literal["auto", "native", "json", "none"]
+ReasoningEffort = Literal["auto", "none", "low", "medium", "high"]
 
 
 class LLMSettings(_Model):
@@ -172,8 +173,14 @@ class LLMSettings(_Model):
     json = JSON-in-text fallback for models without tool calling; none = no tools."""
     max_context_tokens: int = Field(default=8192, ge=1024)
     """Context window to plan prompts for. For Ollama, also raise OLLAMA_CONTEXT_LENGTH."""
-    max_output_tokens: int = Field(default=4096, ge=64)
-    """Maximum tokens per answer/report."""
+    max_output_tokens: int = Field(default=16384, ge=64)
+    """Maximum tokens per answer/report, counting a thinking model's reasoning too. Too low and
+    a model that thinks long runs out before it writes the answer (shown as an error)."""
+    reasoning_effort: ReasoningEffort = "auto"
+    """How much a thinking model reasons before answering chat questions and reports, sent as
+    the API's reasoning_effort. auto = not sent, the model decides; none = no thinking (fast,
+    shallower); low / medium / high = as the model supports. Short helper calls (chat titles,
+    tool routing, tests) always ask for none."""
     temperature: float = Field(default=0.2, ge=0, le=2)
     """Randomness of answers: 0 is the most predictable, higher is more varied."""
     timeout: Duration = timedelta(minutes=3)

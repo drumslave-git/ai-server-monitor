@@ -18,7 +18,7 @@ import httpx
 from ..chat.prompts import system_prompt
 from ..chat.tools import build_tools
 from ..config import LLMSettings, Settings
-from ..llm import LLMClient, LLMError
+from ..llm import LLMClient, LLMEmptyAnswerError, LLMError
 from ..tracing import TraceScope, trace_scope
 from .probe import ollama_loaded
 
@@ -66,7 +66,10 @@ async def warm_up(
             try:
                 async with asyncio.timeout(timeout_s):
                     async for chunk in llm.stream(
-                        warmup_messages(), temperature=0, max_tokens=WARMUP_MAX_TOKENS
+                        warmup_messages(),
+                        temperature=0,
+                        max_tokens=WARMUP_MAX_TOKENS,
+                        reasoning_effort="none",
                     ):
                         if not chunk.done:
                             if ttft_ms is None:
@@ -75,6 +78,8 @@ async def warm_up(
                 last = None
             except TimeoutError:
                 last = LLMError(f"no answer to the warm-up request within {timeout_s:.0f}s")
+            except LLMEmptyAnswerError:
+                last = None  # it thought through the tiny limit: loaded and responding is enough
             except LLMError as exc:
                 last = exc
             if last is None:

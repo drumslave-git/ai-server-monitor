@@ -15,10 +15,13 @@ import httpx
 
 from ..config import BenchJudgeSettings
 from ..llm.text import strip_reasoning
+from ..tracing.parse import empty_answer_message
 
 log = logging.getLogger(__name__)
 
 TIMEOUT_S = 120.0
+MAX_TOKENS = 4096
+"""The grade is a few words, but the judge may be a thinking model: its reasoning counts too."""
 SYSTEM = """\
 You grade answers written by a server-monitoring assistant. You get the task, a rubric that \
 says what a 5/5 answer contains, and the assistant's answer (with the tools it used). Grade \
@@ -80,7 +83,7 @@ async def grade(
         "model": cfg.model,
         "messages": judge_messages(task, rubric, answer, tools),
         "temperature": 0,
-        "max_tokens": 400,
+        "max_tokens": MAX_TOKENS,
         "stream": False,
     }
     try:
@@ -92,7 +95,10 @@ async def grade(
             )
         if response.status_code != 200:
             return None, f"judge HTTP {response.status_code}"
-        content = response.json()["choices"][0]["message"].get("content") or ""
+        choice = response.json()["choices"][0]
+        content = choice["message"].get("content") or ""
+        if choice.get("finish_reason") == "length" and not strip_reasoning(content):
+            return None, empty_answer_message(MAX_TOKENS)
     except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
         log.info("judge call failed: %s", exc)
         return None, f"judge failed: {type(exc).__name__}"

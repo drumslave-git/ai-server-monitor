@@ -533,9 +533,7 @@ class Planner:
 
     async def _ask(self, messages: list[dict[str, Any]]) -> str:
         with trace_scope("prom_plan"):
-            completion = await self.llm.complete(
-                messages, max_tokens=min(self.llm.cfg.max_output_tokens, 2000)
-            )
+            completion = await self.llm.complete(messages)  # the full output limit: it may think
         return completion.content
 
     async def _plan_job(

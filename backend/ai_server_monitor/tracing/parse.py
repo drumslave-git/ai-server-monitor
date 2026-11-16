@@ -29,6 +29,19 @@ class Parsed:
     error: str | None = None
 
 
+STREAM_DROPPED = "The model's reply stopped before any answer: the server closed the stream early."
+
+
+def empty_answer_message(limit: Any) -> str:
+    """The plain-language failure for a reply that was cut off by the output limit before the
+    model wrote any answer (a thinking model that spent everything on reasoning)."""
+    where = f" ({limit} tokens)" if limit else ""
+    return (
+        f"The model used the whole output limit{where} on thinking and wrote no answer. "
+        "Raise the output limit or lower the thinking level in Settings → LLM."
+    )
+
+
 def split_think(content: str, reasoning: str) -> tuple[str, str]:
     """Move inline `<think>` blocks out of the answer. An unclosed block (cut off by the token
     limit) is all reasoning."""

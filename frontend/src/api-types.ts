@@ -1741,8 +1741,9 @@ export interface components {
             max_context_tokens: number;
             /**
              * Max Output Tokens
-             * @description Maximum tokens per answer/report.
-             * @default 4096
+             * @description Maximum tokens per answer/report, counting a thinking model's reasoning too. Too low and
+             *     a model that thinks long runs out before it writes the answer (shown as an error).
+             * @default 16384
              */
             max_output_tokens: number;
             /**
@@ -1757,6 +1758,16 @@ export interface components {
              * @default
              */
             model: string;
+            /**
+             * Reasoning Effort
+             * @description How much a thinking model reasons before answering chat questions and reports, sent as
+             *     the API's reasoning_effort. auto = not sent, the model decides; none = no thinking (fast,
+             *     shallower); low / medium / high = as the model supports. Short helper calls (chat titles,
+             *     tool routing, tests) always ask for none.
+             * @default auto
+             * @enum {string}
+             */
+            reasoning_effort: "auto" | "none" | "low" | "medium" | "high";
             /**
              * Stream Usage
              * @description Ask the endpoint for token usage while streaming (turned off automatically if
@@ -2924,9 +2935,10 @@ export interface components {
              *       "base_url": "",
              *       "extra_body": {},
              *       "max_context_tokens": 8192,
-             *       "max_output_tokens": 4096,
+             *       "max_output_tokens": 16384,
              *       "max_retries": 2,
              *       "model": "",
+             *       "reasoning_effort": "auto",
              *       "stream_usage": true,
              *       "temperature": 0.2,
              *       "timeout": "3m",

@@ -37,7 +37,7 @@ from .humanize import humanize
 from .prompts import STEP_LIMIT_NOTE, system_prompt
 from .safety import Scrubber, shrink, wrap_untrusted
 from .store import ChatStore
-from .title import TITLE_TIMEOUT_S, clean_title, title_messages
+from .title import TITLE_MAX_TOKENS, TITLE_TIMEOUT_S, clean_title, title_messages
 from .tools import Tool, ToolContext, ToolError, build_tools, failure_hint
 
 if TYPE_CHECKING:
@@ -195,7 +195,10 @@ class ChatEngine:
                     "chat_title", link_kind="chat", link_id=session_id, turn=trace_turn
                 ):
                     completion = await self.app.llm.complete(
-                        title_messages(question, answer), temperature=0.2, max_tokens=40
+                        title_messages(question, answer),
+                        temperature=0.2,
+                        max_tokens=TITLE_MAX_TOKENS,
+                        reasoning_effort="none",
                     )
             title = clean_title(completion.content)
             if title is None:

@@ -12,6 +12,9 @@ from ..llm.text import strip_reasoning
 
 TITLE_MAX_CHARS = 60
 TITLE_MAX_WORDS = 10
+TITLE_MAX_TOKENS = 200
+"""The title is a few words; the rest is room for a model that thinks despite
+`reasoning_effort: none`."""
 TITLE_TIMEOUT_S = 10.0
 """Longest wait for the model; after that the fallback title stays."""
 

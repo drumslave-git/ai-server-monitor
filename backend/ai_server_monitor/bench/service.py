@@ -349,6 +349,7 @@ class BenchService:
             "llm": {
                 "temperature": llm_cfg.temperature,
                 "max_output_tokens": llm_cfg.max_output_tokens,
+                "reasoning_effort": llm_cfg.reasoning_effort,
                 "max_context_tokens": llm_cfg.max_context_tokens,
                 "tool_mode": llm_cfg.tool_mode,
                 "timeout_s": llm_cfg.timeout.total_seconds(),

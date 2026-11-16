@@ -33,6 +33,7 @@ PROBE_TOOL: dict[str, Any] = {
         },
     },
 }
+PROBE_MAX_TOKENS = 1024
 _QUESTION = "What is today's magic number? Call the get_magic_number tool to find out."
 # Statuses that mean "this endpoint/model does not accept tools" rather than "broken".
 _TOOLS_UNSUPPORTED = {400, 404, 422, 500, 501}
@@ -54,7 +55,12 @@ async def _probe_tool_mode(client: LLMClient) -> ResolvedToolMode:
     ]
     try:
         result = await client.complete(
-            native_messages, tools=[PROBE_TOOL], tool_choice="auto", temperature=0, max_tokens=300
+            native_messages,
+            tools=[PROBE_TOOL],
+            tool_choice="auto",
+            temperature=0,
+            max_tokens=PROBE_MAX_TOKENS,
+            reasoning_effort="none",
         )
         if any(call.name == "get_magic_number" for call in result.tool_calls):
             return "native"
@@ -68,7 +74,9 @@ async def _probe_tool_mode(client: LLMClient) -> ResolvedToolMode:
         {"role": "system", "content": json_tool_system_prompt([PROBE_TOOL])},
         {"role": "user", "content": _QUESTION},
     ]
-    result = await client.complete(json_messages, temperature=0, max_tokens=300)
+    result = await client.complete(
+        json_messages, temperature=0, max_tokens=PROBE_MAX_TOKENS, reasoning_effort="none"
+    )
     if parse_tool_request(result.content, {"get_magic_number"}):
         return "json"
     return "none"

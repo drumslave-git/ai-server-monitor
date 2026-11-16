@@ -18,7 +18,13 @@ from typing import Any
 
 import httpx
 
-from .parse import Parsed, StreamParser, parse_json_response
+from .parse import (
+    STREAM_DROPPED,
+    Parsed,
+    StreamParser,
+    empty_answer_message,
+    parse_json_response,
+)
 from .scope import CallGroup, TraceScope, current_group, current_scope
 from .store import CallRecord, estimate_tokens
 
@@ -140,6 +146,23 @@ class PendingCall:
         rec.reasoning = parsed.reasoning
         rec.tool_calls = parsed.tool_calls
         rec.finish_reason = parsed.finish_reason
+        if (
+            rec.status == "ok"
+            and parsed.finish_reason == "length"
+            and not parsed.content.strip()
+            and not parsed.tool_calls
+        ):  # HTTP 200, but the whole limit went on reasoning: that is no answer
+            rec.status = "error"
+            rec.error = empty_answer_message(params.get("max_tokens"))
+        elif (
+            rec.status == "ok"
+            and self.stream
+            and parsed.finish_reason is None
+            and not parsed.content.strip()
+            and not parsed.tool_calls
+        ):  # the server dropped the reply (a crashed model runner does this)
+            rec.status = "error"
+            rec.error = STREAM_DROPPED
         if parsed.model:
             rec.params = {**rec.params, "response_model": parsed.model}
         if self.parser is not None and self.parser.first_token_at is not None:

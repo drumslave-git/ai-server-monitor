@@ -6,7 +6,12 @@ import httpx
 import pytest
 import respx
 
-from ai_server_monitor.llm import LLMClient, LLMConnectionError, LLMStatusError
+from ai_server_monitor.llm import (
+    LLMClient,
+    LLMConnectionError,
+    LLMEmptyAnswerError,
+    LLMStatusError,
+)
 
 from .conftest import LLM_URL, chat_response, sse
 
@@ -168,3 +173,181 @@ async def test_extra_body_passthrough(llm_cfg) -> None:  # type: ignore[no-untyp
     finally:
         await client.aclose()
     assert json.loads(route.calls.last.request.content)["top_k"] == 20
+
+
+def _length_response(content: str | None, **message: object) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "model": "test-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": content, **message},
+                    "finish_reason": "length",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 4096},
+        },
+    )
+
+
+@respx.mock
+async def test_complete_cut_off_by_the_limit_before_any_answer_is_an_error(llm: LLMClient) -> None:
+    """A thinking model that spends the whole limit on reasoning returns HTTP 200 with an
+    empty answer and finish_reason "length": that must not look like a success."""
+    route = respx.post(f"{LLM_URL}/chat/completions").mock(
+        return_value=_length_response("", reasoning="Let me think about the disks..." * 50)
+    )
+    with pytest.raises(LLMEmptyAnswerError) as info:
+        await llm.complete([{"role": "user", "content": "report"}], max_tokens=4096)
+    assert "4096 tokens" in str(info.value) and "thinking" in str(info.value)
+    assert info.value.limit == 4096
+    assert route.call_count == 1  # never retried: it would do the same again
+    assert llm.stats.errors == 1 and llm.stats.last_error is not None
+
+
+@respx.mock
+async def test_complete_cut_off_inside_an_unclosed_think_block_is_an_error(llm: LLMClient) -> None:
+    respx.post(f"{LLM_URL}/chat/completions").mock(
+        return_value=_length_response("<think>still working on it")
+    )
+    with pytest.raises(LLMEmptyAnswerError):
+        await llm.complete([{"role": "user", "content": "x"}])
+
+
+@respx.mock
+async def test_complete_cut_off_after_some_answer_is_not_an_error(llm: LLMClient) -> None:
+    respx.post(f"{LLM_URL}/chat/completions").mock(return_value=_length_response("Half a rep"))
+    result = await llm.complete([{"role": "user", "content": "x"}])
+    assert result.content == "Half a rep" and result.finish_reason == "length"
+
+
+@respx.mock
+async def test_stream_cut_off_by_the_limit_before_any_answer_is_an_error(llm: LLMClient) -> None:
+    body = sse(
+        _delta(None, reasoning="hmm " * 20),
+        _delta(None, finish="length"),
+        {"choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 2000}},
+        "[DONE]",
+    )
+    respx.post(f"{LLM_URL}/chat/completions").mock(
+        return_value=httpx.Response(
+            200, content=body, headers={"content-type": "text/event-stream"}
+        )
+    )
+    with pytest.raises(LLMEmptyAnswerError) as info:
+        _ = [c async for c in llm.stream([{"role": "user", "content": "x"}], max_tokens=2000)]
+    assert info.value.limit == 2000
+    assert llm.stats.errors == 1 and llm.stats.completion_tokens == 0
+
+
+@respx.mock
+async def test_stream_cut_off_with_a_tool_call_is_not_an_error(llm: LLMClient) -> None:
+    call = {"index": 0, "id": "c1", "function": {"name": "t", "arguments": "{}"}}
+    body = sse(_delta(None, tool_calls=[call]), _delta(None, finish="length"), "[DONE]")
+    respx.post(f"{LLM_URL}/chat/completions").mock(
+        return_value=httpx.Response(
+            200, content=body, headers={"content-type": "text/event-stream"}
+        )
+    )
+    chunks = [c async for c in llm.stream([{"role": "user", "content": "x"}], tools=[{}])]
+    assert chunks[-1].tool_calls[0].name == "t"
+
+
+def _sent(route: respx.Route) -> dict:
+    return json.loads(route.calls.last.request.content)
+
+
+@respx.mock
+async def test_reasoning_effort_is_not_sent_by_default(llm: LLMClient) -> None:
+    route = respx.post(f"{LLM_URL}/chat/completions").mock(return_value=chat_response("ok"))
+    await llm.complete([{"role": "user", "content": "x"}])
+    assert "reasoning_effort" not in _sent(route)
+    assert _sent(route)["max_tokens"] == 16384
+
+
+@respx.mock
+async def test_reasoning_effort_from_settings_and_per_call_override(llm_cfg) -> None:  # type: ignore[no-untyped-def]
+    client = LLMClient(llm_cfg.model_copy(update={"reasoning_effort": "low"}))
+    try:
+        route = respx.post(f"{LLM_URL}/chat/completions").mock(return_value=chat_response("ok"))
+        await client.complete([{"role": "user", "content": "x"}])
+        assert _sent(route)["reasoning_effort"] == "low"
+        await client.complete([{"role": "user", "content": "x"}], reasoning_effort="none")
+        assert _sent(route)["reasoning_effort"] == "none"
+    finally:
+        await client.aclose()
+
+
+@respx.mock
+async def test_stream_sends_the_per_call_reasoning_effort(llm: LLMClient) -> None:
+    route = respx.post(f"{LLM_URL}/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            content=sse(_delta("hi"), _delta(None, finish="stop"), "[DONE]"),
+            headers={"content-type": "text/event-stream"},
+        )
+    )
+    _ = [c async for c in llm.stream([{"role": "user", "content": "x"}], reasoning_effort="none")]
+    assert _sent(route)["reasoning_effort"] == "none"
+
+
+@respx.mock
+async def test_endpoint_that_rejects_reasoning_effort_gets_the_request_without_it(
+    llm: LLMClient,
+) -> None:
+    route = respx.post(f"{LLM_URL}/chat/completions").mock(
+        side_effect=[
+            httpx.Response(
+                400, json={"error": {"message": "Unrecognized request argument: reasoning_effort"}}
+            ),
+            chat_response("fine"),
+            chat_response("fine again"),
+        ]
+    )
+    result = await llm.complete([{"role": "user", "content": "x"}], reasoning_effort="none")
+    assert result.content == "fine" and route.call_count == 2
+    assert "reasoning_effort" not in _sent(route)
+    # remembered: the next call does not even try
+    await llm.complete([{"role": "user", "content": "x"}], reasoning_effort="none")
+    assert route.call_count == 3 and "reasoning_effort" not in _sent(route)
+
+
+@respx.mock
+async def test_other_400s_are_not_taken_for_a_rejected_reasoning_effort(llm: LLMClient) -> None:
+    route = respx.post(f"{LLM_URL}/chat/completions").mock(
+        return_value=httpx.Response(400, text="context length exceeded")
+    )
+    with pytest.raises(LLMStatusError):
+        await llm.complete([{"role": "user", "content": "x"}], reasoning_effort="none")
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_stream_dropped_before_any_answer_is_an_error_not_an_empty_success(
+    llm: LLMClient,
+) -> None:
+    """A crashed model runner ends the stream with no text, no tool call and no finish_reason."""
+    body = sse(_delta(None, reasoning="hm"), "[DONE]")
+    route = respx.post(f"{LLM_URL}/chat/completions").mock(
+        return_value=httpx.Response(
+            200, content=body, headers={"content-type": "text/event-stream"}
+        )
+    )
+    with pytest.raises(LLMConnectionError, match="closed the stream"):
+        _ = [c async for c in llm.stream([{"role": "user", "content": "x"}])]
+    assert route.call_count == 2  # retried once (max_retries=1), then given up on
+    assert llm.stats.errors == 1
+
+
+@respx.mock
+async def test_stream_without_finish_reason_but_with_text_is_fine(llm: LLMClient) -> None:
+    body = sse(_delta("an answer"), "[DONE]")
+    respx.post(f"{LLM_URL}/chat/completions").mock(
+        return_value=httpx.Response(
+            200, content=body, headers={"content-type": "text/event-stream"}
+        )
+    )
+    chunks = [c async for c in llm.stream([{"role": "user", "content": "x"}])]
+    assert chunks[0].text == "an answer" and chunks[-1].done

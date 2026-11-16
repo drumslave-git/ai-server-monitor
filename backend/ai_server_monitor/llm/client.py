@@ -19,8 +19,9 @@ from typing import Any
 import httpx
 
 from ..config import LLMSettings
+from ..tracing.parse import STREAM_DROPPED, empty_answer_message
 from ..tracing.scope import scoped_iter, trace_call
-from .text import estimate_tokens
+from .text import estimate_tokens, strip_reasoning
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +43,15 @@ class LLMStatusError(LLMError):
         super().__init__(f"HTTP {status_code}: {body[:300]}")
         self.status_code = status_code
         self.body = body
+
+
+class LLMEmptyAnswerError(LLMError):
+    """The reply was cut off by the output limit before any answer was written: a thinking
+    model that spent the whole limit on reasoning. Never retried (it would do the same)."""
+
+    def __init__(self, limit: int | None):
+        super().__init__(empty_answer_message(limit))
+        self.limit = limit
 
 
 @dataclass
@@ -243,6 +253,8 @@ class LLMClient:
             transport=transport,
         )
         self._stream_usage_supported = cfg.stream_usage
+        self._effort_supported = True
+        """Cleared once the endpoint rejects `reasoning_effort` (not every API knows it)."""
 
     @property
     def model(self) -> str:
@@ -253,7 +265,11 @@ class LLMClient:
 
     # ------------------------------------------------------------------ requests
 
-    def _payload(self, messages: Sequence[Message], **kwargs: Any) -> dict[str, Any]:
+    def _payload(
+        self, messages: Sequence[Message], reasoning_effort: str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        """`reasoning_effort` is the call's own choice (short helper calls pass "none"); None
+        takes the Settings value, where "auto" means not sent."""
         payload: dict[str, Any] = {
             **self.cfg.extra_body,
             "model": self.cfg.model,
@@ -262,12 +278,37 @@ class LLMClient:
             "max_tokens": self.cfg.max_output_tokens,
         }
         payload.update({k: v for k, v in kwargs.items() if v is not None})
+        effort = reasoning_effort or self.cfg.reasoning_effort
+        if effort != "auto" and self._effort_supported:
+            payload["reasoning_effort"] = effort
         return payload
+
+    def _effort_rejected(self, status_code: int, body: str, payload: dict[str, Any]) -> bool:
+        """The endpoint refused `reasoning_effort`: stop sending it (to this client) and let the
+        caller send the request again without it. Only a 400/422 that names the field counts."""
+        if (
+            status_code in (400, 422)
+            and "reasoning_effort" in payload
+            and "reasoning" in body.lower()
+        ):
+            log.info("endpoint rejected reasoning_effort; not sending it any more")
+            self._effort_supported = False
+            payload.pop("reasoning_effort", None)
+            return True
+        return False
 
     async def _backoff(self, attempt: int) -> None:
         await asyncio.sleep(min(2**attempt, 10))
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await self._post_with_retries(payload)
+        except LLMStatusError as exc:
+            if not self._effort_rejected(exc.status_code, exc.body, payload):
+                raise
+        return await self._post_with_retries(payload)  # the same request without the field
+
+    async def _post_with_retries(self, payload: dict[str, Any]) -> dict[str, Any]:
         last_exc: Exception | None = None
         for attempt in range(self.cfg.max_retries + 1):
             try:
@@ -301,9 +342,11 @@ class LLMClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
+        reasoning_effort: str | None = None,
     ) -> Completion:
         payload = self._payload(
             messages,
+            reasoning_effort,
             tools=tools or None,
             tool_choice=tool_choice if tools else None,
             temperature=temperature,
@@ -323,6 +366,12 @@ class LLMClient:
             content = message.get("content") or ""
             if not isinstance(content, str):
                 content = json.dumps(content)
+            if (
+                choice.get("finish_reason") == "length"
+                and not strip_reasoning(content)
+                and not _parse_tool_calls(message.get("tool_calls"))
+            ):
+                raise LLMEmptyAnswerError(payload.get("max_tokens"))
             usage = Usage.from_api(data.get("usage")) or Usage(
                 prompt_tokens=estimate_tokens(_messages_text(messages)),
                 completion_tokens=estimate_tokens(content),
@@ -350,6 +399,7 @@ class LLMClient:
         tool_choice: str | dict[str, Any] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream a completion. Yields text chunks, then one final chunk with done=True
         (which carries the assembled `tool_calls` when `tools` were offered).
@@ -360,10 +410,18 @@ class LLMClient:
         text_parts: list[str] = []
         try:
             async for chunk in scoped_iter(
-                self._stream_with_retries(messages, temperature, max_tokens, tools, tool_choice),
+                self._stream_with_retries(
+                    messages, temperature, max_tokens, tools, tool_choice, reasoning_effort
+                ),
                 call=True,
             ):
                 if chunk.done:
+                    if (
+                        chunk.finish_reason == "length"
+                        and not strip_reasoning("".join(text_parts))
+                        and not chunk.tool_calls
+                    ):
+                        raise LLMEmptyAnswerError(max_tokens or self.cfg.max_output_tokens)
                     chunk.latency_s = time.perf_counter() - started
                     if chunk.usage is None:
                         chunk.usage = Usage(
@@ -386,11 +444,13 @@ class LLMClient:
         max_tokens: int | None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         attempt = 0
         while True:
             payload = self._payload(
                 messages,
+                reasoning_effort,
                 tools=tools or None,
                 tool_choice=tool_choice if tools else None,
                 temperature=temperature,
@@ -410,6 +470,8 @@ class LLMClient:
                     log.info("endpoint rejected stream_options; disabling usage in streams")
                     self._stream_usage_supported = False
                     continue
+                if not yielded and self._effort_rejected(exc.status_code, exc.body, payload):
+                    continue
                 if yielded or exc.status_code not in _RETRY_STATUS:
                     raise
                 last_exc: LLMError = exc
@@ -426,6 +488,7 @@ class LLMClient:
     async def _stream_once(self, payload: dict[str, Any]) -> AsyncIterator[StreamChunk]:
         usage: Usage | None = None
         finish_reason: str | None = None
+        got_content = False
         assembler = _ToolCallAssembler()
         try:
             async with self._http.stream("POST", "chat/completions", json=payload) as response:
@@ -458,13 +521,19 @@ class LLMClient:
                         content = delta.get("content")
                         # reasoning_content / reasoning deltas are intentionally ignored
                         if isinstance(content, str) and content:
+                            got_content = True
                             yield StreamChunk(text=content)
                         if choice.get("finish_reason"):
                             finish_reason = choice["finish_reason"]
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise LLMConnectionError(f"{type(exc).__name__}: {exc}") from exc
+        tool_calls = assembler.result()
+        if finish_reason is None and not got_content and not tool_calls:
+            # No text, no tool call and no end marker: the server dropped the reply (a crashed
+            # model runner does this) — not an empty answer to hand on as a success.
+            raise LLMConnectionError(STREAM_DROPPED)
         yield StreamChunk(
-            done=True, usage=usage, finish_reason=finish_reason, tool_calls=assembler.result()
+            done=True, usage=usage, finish_reason=finish_reason, tool_calls=tool_calls
         )
 
     async def list_models(self) -> list[str]:

@@ -251,7 +251,8 @@ a fresh install starts with.
 | `llm.model` | string | empty | Model name as the endpoint knows it, e.g. qwen2.5:14b or gpt-4o-mini. |
 | `llm.tool_mode` | auto / native / json / none | `auto` | How the model calls tools in chat. auto = detect; native = OpenAI tool calls; json = JSON-in-text fallback for models without tool calling; none = no tools. |
 | `llm.max_context_tokens` | integer (min 1024) | `8192` | Context window to plan prompts for. For Ollama, also raise OLLAMA_CONTEXT_LENGTH. |
-| `llm.max_output_tokens` | integer (min 64) | `4096` | Maximum tokens per answer/report. |
+| `llm.max_output_tokens` | integer (min 64) | `16384` | Maximum tokens per answer/report, counting a thinking model's reasoning too. Too low and a model that thinks long runs out before it writes the answer (shown as an error). |
+| `llm.reasoning_effort` | auto / none / low / medium / high | `auto` | How much a thinking model reasons before answering chat questions and reports, sent as the API's reasoning_effort. auto = not sent, the model decides; none = no thinking (fast, shallower); low / medium / high = as the model supports. Short helper calls (chat titles, tool routing, tests) always ask for none. |
 | `llm.temperature` | number (min 0, max 2) | `0.2` | Randomness of answers: 0 is the most predictable, higher is more varied. |
 | `llm.timeout` | duration | `3m` | Per-request timeout. Local models on CPU can be slow. |
 | `llm.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up. |
@@ -292,6 +293,8 @@ a fresh install starts with.
 | `chat.tool_timeout` | duration | `1h` | Longest one tool call (a disk scan, a command, an API call) may run before the chat gives up on it. The answer waits for the tool; the chat shows what is running and for how long. |
 | `chat.shell` | boolean | on | Let the chat run read-only commands on the host (journalctl, systemctl status, ss, df, ps, ...) to answer questions. They run in a sandbox as an unprivileged user and can change nothing. Off = the chat only sees the collected data. |
 | `chat.disk_cache_ttl` | duration | `10m` | How long a finished disk scan of a path is reused. |
+| `chat.tool_routing` | auto / always / off | `auto` | Send the model only the tool groups a question needs (host, media, metrics, containers, actions, one per MCP server). A short model call picks the groups before the answer; the model can load another group itself. auto = only when the full tool definitions are bigger than the token limit below (strong models cope with all tools); always = every question; off = every tool every time. |
+| `chat.tool_routing_tokens` | integer (min 200, max 100000) | `2000` | With tool routing auto: the size of the tool definitions (about 4 characters per token) above which routing is used. |
 
 ### Data retention (`storage`)
 

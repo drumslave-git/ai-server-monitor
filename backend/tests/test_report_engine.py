@@ -255,3 +255,23 @@ async def test_output_cut_off_by_the_token_limit_is_flagged(db: Database, make: 
         row is not None and "cut off" in row["markdown"] and "max output tokens" in row["markdown"]
     )
     assert row["status"] == "ok"
+
+
+@respx.mock
+async def test_report_that_used_the_whole_limit_on_thinking_is_a_failure(
+    db: Database, make: Any
+) -> None:
+    """A thinking model can spend all of max_output_tokens on reasoning: HTTP 200, no text,
+    finish_reason "length". The report must show that as a failure with the limit named, not
+    store an empty report."""
+    respx.post(f"{LLM_URL}/chat/completions").mock(
+        return_value=stream_response("", finish="length")
+    )
+    h = make()
+    out = await h.engine.run()
+    limit = h.settings.llm.max_output_tokens
+    assert out.status == "failed"
+    assert f"{limit} tokens" in (out.message or "") and "thinking" in (out.message or "")
+    assert (await h.engine.store.latest(status="ok")) is None
+    row = await h.engine.store.get(out.report_id or 0)
+    assert row is not None and row["status"] == "failed" and "thinking" in row["error"]
