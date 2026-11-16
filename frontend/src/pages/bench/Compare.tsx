@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { Empty, Panel } from "../../ui";
-import { GROUP_SHORT, backendLabel, coldStartText, ms, runLabel, score, scoreLevel, shortDate, sizeLabel, tps } from "./format";
+import { GROUP_SHORT, backendLabel, coldStartText, gbOf, ms, pct as pctText, runLabel, score, scoreLevel, shortDate, sizeLabel, tps, watts } from "./format";
+import { hardwareLabel, hwScope } from "./Hardware";
 import type { Catalog, Run } from "./types";
 
 type Cell = { text: string; raw: number | null };
@@ -101,6 +102,7 @@ export function Compare({ ids, catalog }: { ids: number[]; catalog: Catalog | nu
               <Row label="Median attempt time" high={false} cells={runs.map((r) => msCell(r.summary?.median_total_ms))} />
               <Row label="Cold start (not in the numbers)" high={false} cells={runs.map((r) => ({ text: coldStartText(r.meta?.cold_start), raw: null }))} />
               <Row label="Generation speed" high cells={runs.map((r) => ({ text: tps(r.summary?.median_tokens_per_s), raw: num(r.summary?.median_tokens_per_s) }))} />
+              <HardwareRows runs={runs} />
               <tr className="cmp-section"><th colSpan={runs.length + 1}>Per scenario: score · median time</th></tr>
               {scenarioIds.map((id) => (
                 <ScenarioRow key={id} id={id} label={title(id)} runs={runs} />
@@ -108,9 +110,53 @@ export function Compare({ ids, catalog }: { ids: number[]; catalog: Catalog | nu
             </tbody>
           </table>
         </div>
-        <p className="help">The best value in each row is highlighted. Time and failures: lower is better; scores and speed: higher is better.</p>
+        <p className="help">The best value in each row is highlighted. Time, failures and hardware load: lower is better; scores, speed and the share of the model on the GPU: higher is better. Hardware numbers of a model served from another machine are the host's, labelled "(host)" and not highlighted.</p>
       </Panel>
     </div>
+  );
+}
+
+type Picker = (r: Run) => Cell | null;
+
+/** The hardware rows. Lower is better for what the model costs (VRAM, power, CPU, RAM); GPU load is
+ * only shown. When the LLM server was on another machine the numbers are this host's, so they are
+ * labelled and never highlighted as the model's. */
+function HardwareRows({ runs }: { runs: Run[] }) {
+  const cell = (r: Run, pick: Picker): Cell => {
+    if (hwScope(r) === "old") return { text: "not recorded", raw: null };
+    const c = r.summary?.hardware ? pick(r) : null;
+    if (!c) return { text: "—", raw: null };
+    return hwScope(r) === "elsewhere" ? { text: `${c.text} (host)`, raw: null } : c;
+  };
+  const gpuCell = (r: Run, pick: Picker): Cell => {
+    const meta = r.meta?.hardware;
+    return meta?.recorded && !meta.gpu ? { text: "no GPU", raw: null } : cell(r, pick);
+  };
+  const vram: Picker = (r) => {
+    const hw = r.summary?.hardware;
+    const s = hw ? hw.llm_vram ?? hw.vram_used : null;
+    return s ? { text: gbOf(s.peak, hw?.vram_total ?? null), raw: s.peak } : null;
+  };
+  const stat = (key: "gpu_util" | "power_w" | "cpu" | "ram_used", part: "avg" | "peak", text: (v: number, r: Run) => string): Picker => (r) => {
+    const s = r.summary?.hardware?.[key];
+    return s ? { text: text(s[part], r), raw: s[part] } : null;
+  };
+  const loaded: Picker = (r) => {
+    const g = r.meta?.loaded_model?.gpu_percent;
+    return g === null || g === undefined ? null : { text: `${g}%`, raw: g };
+  };
+  const ownVram = runs.some((r) => r.summary?.hardware?.llm_vram);
+  return (
+    <>
+      <tr className="cmp-section"><th colSpan={runs.length + 1}>Hardware</th></tr>
+      <Row label="Measured on" high={null} cells={runs.map((r) => ({ text: hardwareLabel(r.meta?.hardware), raw: null }))} />
+      <Row label="VRAM, peak" sub={ownVram ? "model's own process when seen" : "whole GPU"} high={false} cells={runs.map((r) => gpuCell(r, vram))} />
+      <Row label="GPU busy, average" high={null} cells={runs.map((r) => gpuCell(r, stat("gpu_util", "avg", (v) => pctText(v))))} />
+      <Row label="GPU power, average" high={false} cells={runs.map((r) => gpuCell(r, stat("power_w", "avg", (v) => watts(v))))} />
+      <Row label="CPU, average" high={false} cells={runs.map((r) => cell(r, stat("cpu", "avg", (v) => pctText(v))))} />
+      <Row label="RAM, peak" high={false} cells={runs.map((r) => cell(r, stat("ram_used", "peak", (v, run) => gbOf(v, run.summary?.hardware?.ram_total ?? null))))} />
+      <Row label="Model on GPU" sub="rest runs on the CPU" high cells={runs.map((r) => (hwScope(r) === "old" ? { text: "not recorded", raw: null } : (loaded(r) ?? { text: "—", raw: null })))} />
+    </>
   );
 }
 

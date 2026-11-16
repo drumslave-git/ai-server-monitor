@@ -44,3 +44,27 @@ export const statusLevel = (s: string): "ok" | "warn" | "crit" | "off" | "info" 
 
 /** A compact label for a run in comparisons and lists. */
 export const runLabel = (r: Run): string => `${r.model ?? "?"}${r.quantization ? ` ${r.quantization}` : ""}`;
+
+// ---- hardware
+
+const GIB = 1024 ** 3;
+
+/** Bytes as "18.2 GB" (binary gigabytes, the way GPUs report them). */
+export const gb = (bytes: number | null | undefined): string => (bytes === null || bytes === undefined ? "—" : `${(bytes / GIB).toFixed(bytes / GIB < 10 ? 1 : 0)} GB`);
+
+export const pct = (v: number | null | undefined): string => (v === null || v === undefined ? "—" : `${Math.round(v)}%`);
+
+export const watts = (v: number | null | undefined): string => (v === null || v === undefined ? "—" : `${Math.round(v)} W`);
+
+/** "18 GB · 76%" of a total. */
+export const gbOf = (bytes: number | null | undefined, total: number | null | undefined): string =>
+  bytes === null || bytes === undefined ? "—" : total ? `${gb(bytes)} · ${Math.round((bytes / total) * 100)}%` : gb(bytes);
+
+/** Seconds since the start as "0:42" / "1:05:03". */
+export const clock = (s: number): string => {
+  const t = Math.max(0, Math.round(s));
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const sec = String(t % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
+};

@@ -25,6 +25,7 @@ from ..llm import LLMClient, LLMError
 from ..tracing import Tracing
 from ..tracing.config import TraceConfig
 from . import judge as judge_mod
+from .hardware import HardwareSampler, in_windows, stats, summarize_hardware
 from .probe import ollama_loaded, probe_backend
 from .runner import AttemptRunner, OverlapWatch, summarize
 from .schema import (
@@ -45,6 +46,7 @@ log = logging.getLogger(__name__)
 
 PRIVATE_HISTORY_COLLECTORS = ("system", "docker", "systemd")
 PRIVATE_HISTORY_POINTS = 24
+MIN_INTERVAL_S = 0.5
 
 
 class BenchBusy(Exception):
@@ -53,6 +55,29 @@ class BenchBusy(Exception):
 
 class BenchNotReady(Exception):
     """The LLM is not configured, or the selection is empty."""
+
+
+def loaded_model(probed: dict[str, Any], ps: dict[str, Any] | None) -> dict[str, Any] | None:
+    """What the backend has in memory for the model: Ollama's `/api/ps` after the warm-up (size,
+    the part in VRAM, context) or, for llama.cpp, what its probe said. None = nothing known."""
+    if ps and ps.get("size"):
+        size, vram = ps["size"], ps.get("size_vram")
+        return {
+            "source": "ollama /api/ps",
+            "size": size,
+            "size_vram": vram,
+            "gpu_percent": round(vram / size * 100) if vram is not None else None,
+            "context_length": ps.get("context_length"),
+        }
+    if probed.get("kind") == "llama.cpp" and probed.get("size_bytes"):
+        return {
+            "source": "llama.cpp /props",
+            "size": probed["size_bytes"],
+            "size_vram": None,
+            "gpu_percent": None,
+            "context_length": probed.get("context_length"),
+        }
+    return None
 
 
 class BenchService:
@@ -207,14 +232,20 @@ class BenchService:
         )
         llm = LLMClient(llm_cfg, transport=self._llm_transport, tracing=tracing)
         status, error = "done", None
+        sampler = self._start_sampler(run_id)
+        windows: dict[str, list[tuple[float, float]]] = {}
         try:
-            runner = await self._prepare(run_id, llm, llm_cfg, tracing, scenarios)
+            runner = await self._prepare(run_id, llm, llm_cfg, tracing, scenarios, sampler)
             for scenario in scenarios:
                 for attempt in range(1, repeats + 1):
                     self._progress(scenario, attempt)
                     gone = await self._model_gone(llm_cfg)
                     row = await runner.run(scenario, attempt, float(scenario.timeout_s or budget_s))
                     outcome = row.pop("outcome")
+                    if sampler is not None:
+                        span = (float(row["started"]), time.time())
+                        windows.setdefault(scenario.id, []).append(span)
+                        row["hw"] = stats(in_windows(sampler.samples, [span]))
                     attempt_id = await self.store.add_attempt(run_id, row)
                     row["id"] = attempt_id
                     if gone:
@@ -238,9 +269,22 @@ class BenchService:
             log.exception("benchmark run %d failed", run_id)
             status, error = "failed", f"{type(exc).__name__}: {exc}"
         finally:
-            await self._finish(run_id, status, error, attempts)
+            if sampler is not None:
+                await sampler.stop()
+            await self._finish(run_id, status, error, attempts, sampler, windows, llm_cfg)
             await llm.aclose()
             await tracing.flush()
+
+    def _start_sampler(self, run_id: int) -> HardwareSampler | None:
+        bench = self.ctx.settings.bench
+        if not bench.record_hardware:
+            return None
+        interval = min(max(bench.hardware_interval.total_seconds(), MIN_INTERVAL_S), 10.0)
+        sampler = HardwareSampler(
+            self.ctx.db, run_id, self.ctx.collectors.collectors.get("gpu"), interval
+        )
+        sampler.start()
+        return sampler
 
     async def _model_gone(self, llm_cfg: Any) -> str | None:
         """Before an attempt: did the backend unload the model since the last one? (Ollama only)"""
@@ -261,6 +305,7 @@ class BenchService:
         llm_cfg: Any,
         tracing: Tracing,
         scenarios: list[Scenario],
+        sampler: HardwareSampler | None = None,
     ) -> AttemptRunner:
         ctx = self.ctx
         probed = await probe_backend(llm_cfg, transport=self._probe_transport)
@@ -300,6 +345,7 @@ class BenchService:
             "tool_mode": mode,
             "backend": probed,
             "gpu": gpu,
+            "hardware": {"recorded": sampler is not None},
             "judge": (
                 {"model": judge_cfg.model, "base_url": judge_cfg.base_url}
                 if judge_cfg.configured
@@ -331,7 +377,8 @@ class BenchService:
             await runner.relink_traces(run_id, "warmup", 0, sorted(set(scope.call_ids)))
             self._watch_ps = bool(cold.get("supported"))
             meta["cold_start"] = cold
-            await self.store.update_run(run_id, meta=meta)
+        meta["loaded_model"] = loaded_model(probed, (meta.get("cold_start") or {}).get("model"))
+        await self.store.update_run(run_id, meta=meta)
         return runner
 
     def _progress(self, scenario: Scenario, attempt: int) -> None:
@@ -364,7 +411,14 @@ class BenchService:
         await self.store.set_judge(attempt_id, score, reason)
 
     async def _finish(
-        self, run_id: int, status: str, error: str | None, attempts: list[dict[str, Any]]
+        self,
+        run_id: int,
+        status: str,
+        error: str | None,
+        attempts: list[dict[str, Any]],
+        sampler: HardwareSampler | None = None,
+        windows: dict[str, list[tuple[float, float]]] | None = None,
+        llm_cfg: Any = None,
     ) -> None:
         try:
             for attempt_id, why in reload_suspects(attempts).items():
@@ -373,6 +427,19 @@ class BenchService:
                     if a.get("id") == attempt_id and not a.get("reload_suspected"):
                         a["reload_suspected"] = why
             summary = summarize(attempts) if attempts else {}
+            body = summary.get("summary")
+            extra: dict[str, Any] = {}
+            if sampler is not None:
+                hw = summarize_hardware(sampler.samples, windows or {})
+                body = body or {}
+                body["hardware"] = hw["run"]
+                for sid, stat in hw["scenarios"].items():
+                    if sid in body.get("scenarios", {}):
+                        body["scenarios"][sid]["hw"] = stat
+                run = await self.store.get_run(run_id)
+                meta = (run or {}).get("meta") or {}
+                meta["hardware"] = sampler.describe(getattr(llm_cfg, "base_url", None))
+                extra["meta"] = meta
             await self.store.update_run(
                 run_id,
                 status=status,
@@ -380,7 +447,8 @@ class BenchService:
                 finished=time.time(),
                 overall=summary.get("overall"),
                 group_scores=summary.get("group_scores"),
-                summary=summary.get("summary"),
+                summary=body,
+                **extra,
             )
         except Exception:
             log.exception("could not finish benchmark run %d", run_id)

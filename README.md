@@ -467,6 +467,8 @@ a fresh install starts with.
 |---|---|---|---|
 | `bench.repeats` | integer (min 1, max 20) | `3` | How many times every scenario runs. More runs smooth out the model's randomness. |
 | `bench.attempt_timeout` | duration | `5m` | Time budget of one attempt; a slower one counts as failed. |
+| `bench.record_hardware` | boolean | on | Record the GPU, VRAM, power, CPU and RAM load of this host while a run goes, and show it with the results. Read from the same sources as the dashboard. |
+| `bench.hardware_interval` | duration | `1s` | How often the load is sampled during a run (between 500ms and 10s). |
 | **bench.judge** | group |  | A second model that grades the answers of a benchmark run. |
 | `bench.judge.enabled` | boolean | off | Grade every answer 1-5 against the scenario's rubric. The grade is shown next to the rule score and never mixed into it. Costs one extra model call per graded attempt. |
 | `bench.judge.base_url` | string | empty | OpenAI-compatible API base URL of the judge, e.g. https://api.openai.com/v1. |

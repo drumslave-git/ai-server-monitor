@@ -93,6 +93,7 @@ async def warm_up(
     if after is not None:
         record["size_vram"] = after.get("size_vram")
         record["loaded_after"] = after["loaded"]
+        record["model"] = {k: after.get(k) for k in ("size", "size_vram", "context_length")}
     return record, scope
 
 

@@ -9,11 +9,11 @@ from typing import Any
 from ..db import Database
 
 _RUN_JSON = ("group_scores", "summary", "meta")
-_ATTEMPT_JSON = ("checks", "trace_ids", "detail")
+_ATTEMPT_JSON = ("checks", "trace_ids", "detail", "hw")
 _ATTEMPT_LIST = (
     "id, run_id, scenario_id, grp, attempt, started, status, score, error, ttft_ms, total_ms, "
     "tokens_in, tokens_out, tokens_per_s, llm_calls, tool_calls, tool_mode, report_overlap, "
-    "judge_score, json_extract(detail, '$.reload_suspected') AS reload_suspected"
+    "judge_score, json_extract(detail, '$.reload_suspected') AS reload_suspected, hw"
 )
 
 
@@ -141,6 +141,16 @@ class BenchStore:
             (run_id,),
         )
         return [_attempt(r, full=True) for r in rows]
+
+    # ------------------------------------------------------------------ hardware samples
+
+    async def hardware_samples(self, run_id: int) -> list[dict[str, Any]]:
+        rows = await self.db.fetchall(
+            "SELECT ts, gpu_util, vram_used, vram_total, llm_vram, power_w, temp_c, cpu, "
+            "ram_used, ram_total FROM bench_hw_samples WHERE run_id = ? ORDER BY ts",
+            (run_id,),
+        )
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------ snapshots
 

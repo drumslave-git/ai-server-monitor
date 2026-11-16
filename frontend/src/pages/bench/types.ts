@@ -46,6 +46,55 @@ export type BenchStatus = {
   report_running: boolean;
 };
 
+/** Peak and average of one measurement over some samples. */
+export type HwStat = { avg: number; peak: number } | null;
+
+/** Hardware numbers over a set of samples (one attempt, one scenario, or the whole run). */
+export type HwNumbers = {
+  n: number;
+  gpu_util: HwStat;
+  vram_used: HwStat;
+  llm_vram: HwStat;
+  power_w: HwStat;
+  temp_c: HwStat;
+  cpu: HwStat;
+  ram_used: HwStat;
+  vram_total: number | null;
+  ram_total: number | null;
+} | null;
+
+/** What the recording says about itself. `llm_here`: the LLM server was seen on this host's GPU
+ * ("here"), is not on this host ("elsewhere"), or the endpoint is local but no process was
+ * recognised ("unknown"). */
+export type HwMeta = {
+  recorded: boolean;
+  interval_s?: number;
+  samples?: number;
+  gpu?: boolean;
+  gpu_name?: string | null;
+  gpu_count?: number;
+  llm_process?: string | null;
+  llm_here?: "here" | "elsewhere" | "unknown";
+  baseline?: { vram_used: number | null; ram_used: number | null; cpu: number | null; gpu_util: number | null } | null;
+};
+
+/** What the backend has in memory for the model. */
+export type LoadedModel = {
+  source: string;
+  size: number | null;
+  size_vram: number | null;
+  gpu_percent: number | null;
+  context_length: number | null;
+} | null;
+
+/** The time series of a run, one array per column. */
+export type HwSeries = {
+  recorded: boolean;
+  interval_s: number | null;
+  count: number;
+  points: Record<"ts" | "gpu_util" | "vram_used" | "vram_total" | "llm_vram" | "power_w" | "temp_c" | "cpu" | "ram_used" | "ram_total", (number | null)[]>;
+};
+
 export type ScenarioStat = {
   group: string;
   score: number;
@@ -54,6 +103,7 @@ export type ScenarioStat = {
   failed: number;
   median_total_ms: number | null;
   median_ttft_ms: number | null;
+  hw?: HwNumbers;
 };
 
 export type RunSummaryData = {
@@ -68,6 +118,7 @@ export type RunSummaryData = {
   tokens_out: number;
   overlapped: number;
   reload_suspected?: number;
+  hardware?: HwNumbers;
 };
 
 export type GpuInfo = {
@@ -118,6 +169,9 @@ export type Run = {
     tool_mode?: string;
     backend?: Record<string, unknown>;
     gpu?: GpuInfo;
+    /** Absent on runs made before hardware was recorded. */
+    hardware?: HwMeta;
+    loaded_model?: LoadedModel;
     judge?: { model: string; base_url: string } | null;
   } | null;
   attempts?: AttemptRow[];
@@ -145,6 +199,8 @@ export type AttemptRow = {
   judge_score: number | null;
   /** Why the model may have been (re)loaded during this attempt; null = no sign of it. */
   reload_suspected: string | null;
+  /** Hardware numbers while this attempt ran; null when not recorded. */
+  hw?: HwNumbers;
 };
 
 export type CheckResult = { type: string; describe: string; weight: number; passed: boolean; reason: string };

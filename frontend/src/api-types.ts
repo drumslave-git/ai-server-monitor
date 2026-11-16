@@ -174,6 +174,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/bench/runs/{run_id}/hardware": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hardware
+         * @description The load samples of a run for the chart, thinned to a few hundred points and laid out
+         *     by column. `recorded` is false for runs made before this was recorded.
+         */
+        get: operations["hardware_api_bench_runs__run_id__hardware_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/bench/snapshots": {
         parameters: {
             query?: never;
@@ -1090,6 +1111,17 @@ export interface components {
              */
             attempt_timeout: string;
             /**
+             * Hardware Interval
+             * Format: duration
+             * @description How often the load is sampled during a run (between 500ms and 10s).
+             * @default 1s
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            hardware_interval: string;
+            /**
              * @default {
              *       "api_key": "",
              *       "base_url": "",
@@ -1098,6 +1130,13 @@ export interface components {
              *     }
              */
             judge: components["schemas"]["BenchJudgeSettings"];
+            /**
+             * Record Hardware
+             * @description Record the GPU, VRAM, power, CPU and RAM load of this host while a run goes, and show it
+             *     with the results. Read from the same sources as the dashboard.
+             * @default true
+             */
+            record_hardware: boolean;
             /**
              * Repeats
              * @description How many times every scenario runs. More runs smooth out the model's randomness.
@@ -2753,12 +2792,14 @@ export interface components {
             /**
              * @default {
              *       "attempt_timeout": "5m",
+             *       "hardware_interval": "1s",
              *       "judge": {
              *         "api_key": "",
              *         "base_url": "",
              *         "enabled": false,
              *         "model": ""
              *       },
+             *       "record_hardware": true,
              *       "repeats": 3
              *     }
              */
@@ -3679,6 +3720,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hardware_api_bench_runs__run_id__hardware_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

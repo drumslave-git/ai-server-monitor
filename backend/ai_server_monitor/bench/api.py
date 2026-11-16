@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..context import AppContext
+from . import hardware as hw
 from .service import BenchBusy, BenchNotReady
 
 router = APIRouter(prefix="/api/bench", tags=["benchmarks"])
@@ -89,6 +90,24 @@ async def run_detail(request: Request, run_id: int) -> dict[str, Any]:
     if run is None:
         raise HTTPException(404, "no such run")
     return {**run, "attempts": await store.attempts(run_id)}
+
+
+@router.get("/runs/{run_id}/hardware")
+async def hardware(request: Request, run_id: int) -> dict[str, Any]:
+    """The load samples of a run for the chart, thinned to a few hundred points and laid out
+    by column. `recorded` is false for runs made before this was recorded."""
+    store = _ctx(request).bench.store
+    run = await store.get_run(run_id)
+    if run is None:
+        raise HTTPException(404, "no such run")
+    info = ((run.get("meta") or {}).get("hardware")) or {}
+    rows = await store.hardware_samples(run_id) if info.get("recorded") else []
+    return {
+        "recorded": bool(info.get("recorded")),
+        "interval_s": info.get("interval_s"),
+        "count": len(rows),
+        "points": hw.columnar(hw.thin(rows)),
+    }
 
 
 @router.get("/runs/{run_id}/attempts/{attempt_id}")

@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../../api";
 import { Badge, Empty, Markdown, Panel } from "../../ui";
 import { ScenarioDetail } from "./Catalog";
-import { GROUP_SHORT, backendLabel, coldStartText, elapsed, ms, score, scoreLevel, shortDate, sizeLabel, statusLevel, tps } from "./format";
-import type { Attempt, AttemptRow, Catalog, GpuInfo, Run, ScenarioInfo } from "./types";
+import { GROUP_SHORT, backendLabel, coldStartText, elapsed, gb, ms, pct, score, scoreLevel, shortDate, sizeLabel, statusLevel, tps } from "./format";
+import { HardwareSection, hwScope, vramStat } from "./Hardware";
+import type { Attempt, AttemptRow, Catalog, GpuInfo, HwNumbers, Run, ScenarioInfo } from "./types";
 
 export function ScoreBar({ value }: { value: number | null | undefined }) {
   const level = scoreLevel(value);
@@ -146,6 +147,8 @@ export function RunDetail({ id, scenarioId, attemptId, catalog }: { id: number; 
             </ul>
           </Panel>
 
+          <HardwareSection run={run} />
+
           <ScenarioTable run={run} catalog={catalog} />
         </>
       )}
@@ -159,6 +162,9 @@ function ScenarioTable({ run, catalog }: { run: Run; catalog: Catalog | null }) 
   const stats = run.summary?.scenarios ?? {};
   const title = (id: string) => catalog?.scenarios.find((s) => s.id === id)?.title ?? id;
   const ids = Object.keys(stats);
+  const scope = hwScope(run);
+  const showHw = scope !== "old";
+  const host = scope === "elsewhere" ? "Host " : "";
   if (ids.length === 0) return <Panel title="Scenarios"><Empty>No attempts finished.</Empty></Panel>;
   return (
     <Panel title="Scenarios" aside={<span className="muted small">Open one to see every attempt, its checks and its answer</span>}>
@@ -172,6 +178,9 @@ function ScenarioTable({ run, catalog }: { run: Run; catalog: Catalog | null }) 
               <th className="num">Passed</th>
               <th className="num">Time</th>
               <th className="num">TTFT</th>
+              {showHw && <th className="num">{host}VRAM peak</th>}
+              {showHw && <th className="num">{host}GPU avg</th>}
+              {showHw && <th className="num">{host}CPU avg</th>}
             </tr>
           </thead>
           <tbody>
@@ -189,6 +198,7 @@ function ScenarioTable({ run, catalog }: { run: Run; catalog: Catalog | null }) 
                   <td data-label="Passed" className="num">{s.passed}/{s.attempts}{s.failed > 0 && <span className="crit-text"> · {s.failed} failed</span>}</td>
                   <td data-label="Time" className="num">{ms(s.median_total_ms)}</td>
                   <td data-label="TTFT" className="num">{ms(s.median_ttft_ms)}</td>
+                  {showHw && <HwCells hw={s.hw} />}
                 </tr>
               );
             })}
@@ -196,6 +206,18 @@ function ScenarioTable({ run, catalog }: { run: Run; catalog: Catalog | null }) 
         </table>
       </div>
     </Panel>
+  );
+}
+
+/** VRAM peak, GPU avg and CPU avg cells of a scenario or attempt row. */
+function HwCells({ hw }: { hw: HwNumbers | undefined }) {
+  const vram = vramStat(hw);
+  return (
+    <>
+      <td data-label="VRAM peak" className="num">{vram ? gb(vram.peak) : "—"}</td>
+      <td data-label="GPU avg" className="num">{hw?.gpu_util ? pct(hw.gpu_util.avg) : "—"}</td>
+      <td data-label="CPU avg" className="num">{hw?.cpu ? pct(hw.cpu.avg) : "—"}</td>
+    </>
   );
 }
 
@@ -226,6 +248,9 @@ function ScenarioView({ run, scenarioId, info, attemptId }: { run: Run; scenario
                   <th className="num">Tools</th>
                   <th>Mode</th>
                   <th className="num">Judge</th>
+                  {hwScope(run) !== "old" && <th className="num">{hwScope(run) === "elsewhere" ? "Host " : ""}VRAM peak</th>}
+                  {hwScope(run) !== "old" && <th className="num">{hwScope(run) === "elsewhere" ? "Host " : ""}GPU avg</th>}
+                  {hwScope(run) !== "old" && <th className="num">{hwScope(run) === "elsewhere" ? "Host " : ""}CPU avg</th>}
                 </tr>
               </thead>
               <tbody>
@@ -260,6 +285,7 @@ function AttemptLine({ a, run, active }: { a: AttemptRow; run: Run; active: bool
       <td data-label="Tools" className="num">{a.tool_calls ?? "—"}</td>
       <td data-label="Mode" className="muted">{a.tool_mode ?? "—"}</td>
       <td data-label="Judge" className="num">{a.judge_score ?? "—"}</td>
+      {hwScope(run) !== "old" && <HwCells hw={a.hw} />}
     </tr>
   );
 }

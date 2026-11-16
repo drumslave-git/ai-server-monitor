@@ -310,6 +310,11 @@ class BenchSettings(_Model):
     """How many times every scenario runs. More runs smooth out the model's randomness."""
     attempt_timeout: Duration = timedelta(minutes=5)
     """Time budget of one attempt; a slower one counts as failed."""
+    record_hardware: bool = True
+    """Record the GPU, VRAM, power, CPU and RAM load of this host while a run goes, and show it
+    with the results. Read from the same sources as the dashboard."""
+    hardware_interval: Duration = timedelta(seconds=1)
+    """How often the load is sampled during a run (between 500ms and 10s)."""
     judge: BenchJudgeSettings = BenchJudgeSettings()
 
 

@@ -232,4 +232,19 @@ into it, because a judge is itself a model.
   otherwise the OpenAI-compatible `/v1/models` entry), the effective LLM settings (temperature,
   max output tokens, tool mode, context), app version, scenario-set hash (two runs with
   different hashes did not measure the same thing), start/finish times and a GPU snapshot.
+- **Hardware:** while a run goes, the monitor samples this host about once a second (Settings →
+  Benchmarks → `record_hardware`, `hardware_interval`; 0.5-10 s) from its own readers, not a new
+  agent: GPU busy %, VRAM (whole GPU, and the LLM server's own process when the GPU lists
+  `llama-server`, `ollama`, `vllm` ...), power, temperature (NVML via the GPU collector), host CPU % and RAM
+  (psutil). Samples are stored with the run (`bench_hw_samples`); each attempt keeps its peak and
+  average (`hw`), each scenario and the run the numbers over their attempts (the warm-up request
+  and the judge are left out). The run page shows tiles, a chart over the run with attempt starts
+  marked, and VRAM/GPU/CPU columns per scenario and attempt; Compare puts the numbers side by
+  side. Also stored once per run: what the backend says it has loaded (Ollama `/api/ps` after
+  the warm-up: size, part in VRAM → "model on GPU", context; llama.cpp: model size from `/props`).
+  - If no LLM process shows on the GPU and the endpoint is not a local address, the LLM server is
+    elsewhere: the page labels the numbers "this host" and never presents them as the model's
+    usage, and Compare does not highlight them. A local endpoint without a recognised process
+    says the VRAM figure covers the whole GPU. No GPU: "no GPU on this host", CPU and RAM only.
+  - Runs from before this existed show "Hardware was not recorded for this run".
 - Runs are kept until deleted in the UI; a run can be exported as JSON.

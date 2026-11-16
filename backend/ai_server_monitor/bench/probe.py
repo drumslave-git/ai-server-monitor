@@ -157,7 +157,8 @@ async def ollama_loaded(
     cfg: LLMSettings, *, transport: httpx.AsyncBaseTransport | None = None
 ) -> dict[str, Any] | None:
     """Is the configured model in memory right now? Ollama's `/api/ps` → {loaded, size,
-    size_vram}; None when the backend has no such endpoint (not Ollama) or does not answer."""
+    size_vram, context_length}; None when the backend has no such endpoint (not Ollama)
+    or does not answer."""
     base = cfg.base_url.strip()
     if not base:
         return None
@@ -179,5 +180,6 @@ async def ollama_loaded(
                 "loaded": True,
                 "size": entry.get("size"),
                 "size_vram": entry.get("size_vram"),
+                "context_length": entry.get("context_length"),
             }
     return {"loaded": False, "size": None, "size_vram": None}
