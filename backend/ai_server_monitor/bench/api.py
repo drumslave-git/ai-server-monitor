@@ -3,15 +3,17 @@ private snapshots. Live progress goes over the event bus (`bench.progress`, `ben
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..context import AppContext
 from . import hardware as hw
+from . import pdf
 from .service import BenchBusy, BenchNotReady
 
 router = APIRouter(prefix="/api/bench", tags=["benchmarks"])
@@ -147,6 +149,57 @@ async def export(request: Request, run_id: int) -> Response:
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="{name}.json"'},
     )
+
+
+def _pdf_response(data: bytes, filename: str) -> Response:
+    return Response(
+        data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/runs/{run_id}/export.pdf")
+async def export_pdf(request: Request, run_id: int) -> Response:
+    """The run page as a PDF: what was measured, results, levels, hardware, scenarios and an
+    appendix of the failed attempts."""
+    bench = _ctx(request).bench
+    store = bench.store
+    run = await store.get_run(run_id)
+    if run is None:
+        raise HTTPException(404, "no such run")
+    recorded = ((run.get("meta") or {}).get("hardware") or {}).get("recorded")
+    data = await asyncio.to_thread(
+        pdf.render_run,
+        run,
+        titles=bench.scenario_titles(),
+        samples=await store.hardware_samples(run_id) if recorded else [],
+        attempts=await store.attempts(run_id),
+        failed=await store.failed_attempts(run_id),
+    )
+    return _pdf_response(data, pdf.run_filename(run))
+
+
+@router.get("/compare.pdf")
+async def compare_pdf(
+    request: Request, ids: str = Query(description="run ids, comma separated")
+) -> Response:
+    """The Compare page as a PDF."""
+    try:
+        run_ids = list(dict.fromkeys(int(i) for i in ids.split(",") if i.strip()))
+    except ValueError as exc:
+        raise HTTPException(400, "ids: run numbers separated by commas") from exc
+    if not 2 <= len(run_ids) <= 12:
+        raise HTTPException(400, "ids: pick between 2 and 12 runs")
+    bench = _ctx(request).bench
+    runs = []
+    for run_id in run_ids:
+        run = await bench.store.get_run(run_id)
+        if run is None:
+            raise HTTPException(404, f"no such run: {run_id}")
+        runs.append(run)
+    data = await asyncio.to_thread(pdf.render_compare, runs, titles=bench.scenario_titles())
+    return _pdf_response(data, pdf.compare_filename(runs))
 
 
 @router.delete("/runs/{run_id}", status_code=204)

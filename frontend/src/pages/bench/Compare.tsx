@@ -63,7 +63,12 @@ export function Compare({ ids, catalog }: { ids: number[]; catalog: Catalog | nu
   return (
     <div className="stack bench-compare">
       <a className="back-link" href="#/bench">← All runs</a>
-      <div className="page-head"><h2>Comparing {runs.length} runs</h2></div>
+      <div className="page-head">
+        <h2>Comparing {runs.length} runs</h2>
+        <div className="page-actions">
+          <a className="btn" href={`/api/bench/compare.pdf?ids=${ids.join(",")}`} download>Download PDF</a>
+        </div>
+      </div>
       {!sameSet && (
         <div className="notice">
           These runs used different scenario sets or scopes, so scores are only comparable on the scenarios they share. Differences are marked in the table below.

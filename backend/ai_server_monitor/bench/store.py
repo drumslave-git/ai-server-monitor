@@ -135,6 +135,18 @@ class BenchStore:
         row = await self.db.fetchone("SELECT * FROM bench_attempts WHERE id = ?", (attempt_id,))
         return _attempt(row, full=True) if row else None
 
+    async def failed_attempts(self, run_id: int) -> list[dict[str, Any]]:
+        """The attempts that did not pass (an error or timeout, or a score under 100 %) with their
+        checks and answer, for the PDF appendix. Passed attempts are not read."""
+        rows = await self.db.fetchall(
+            "SELECT id, scenario_id, grp, attempt, effort, status, score, error, checks, answer, "
+            "answer_issue FROM bench_attempts WHERE run_id = ? "
+            "AND (status != 'ok' OR coalesce(score, 0) < 0.999) "
+            "ORDER BY scenario_id, effort, attempt",
+            (run_id,),
+        )
+        return [_attempt(r, full=True) for r in rows]
+
     async def full_attempts(self, run_id: int) -> list[dict[str, Any]]:
         """Everything, for the JSON export."""
         rows = await self.db.fetchall(

@@ -148,6 +148,11 @@ class BenchService:
             "repeats": self.ctx.settings.bench.repeats,
         }
 
+    def scenario_titles(self) -> dict[str, str]:
+        """id -> title of every scenario in the installed set (for the PDF export)."""
+        scenarios, _ = load_scenarios(include_smoke=True)
+        return {s.id: s.title for s in scenarios}
+
     def select(self, *, group: str | None = None, ids: list[str] | None = None) -> list[Scenario]:
         if group == SMOKE_GROUP:
             return [s for s in load_scenarios(include_smoke=True)[0] if s.smoke]

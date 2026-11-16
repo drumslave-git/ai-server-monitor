@@ -20,6 +20,7 @@ dependencies = [
     "dbus-fast>=2.0",
     "nvidia-ml-py>=12.535",
     "mcp>=1.27,<2",
+    "fpdf2>=2.8",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +28,7 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "respx>=0.21",
+    "pypdf>=5.0",
     "ruff>=0.7",
 ]
 

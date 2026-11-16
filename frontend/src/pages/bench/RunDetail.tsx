@@ -66,6 +66,7 @@ export function RunDetail({ id, scenarioId, attemptId, catalog }: { id: number; 
         </h2>
         <div className="page-actions">
           <Badge level={statusLevel(run.status)}>{run.status}</Badge>
+          <a className="btn" href={`/api/bench/runs/${id}/export.pdf`} download>Download PDF</a>
           <a className="btn" href={`/api/bench/runs/${id}/export`} download>Export JSON</a>
           <button className="btn" onClick={() => void remove()}>Delete</button>
         </div>

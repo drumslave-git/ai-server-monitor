@@ -258,4 +258,4 @@ into it, because a judge is itself a model.
     usage, and Compare does not highlight them. A local endpoint without a recognised process
     says the VRAM figure covers the whole GPU. No GPU: "no GPU on this host", CPU and RAM only.
   - Runs from before this existed show "Hardware was not recorded for this run".
-- Runs are kept until deleted in the UI; a run can be exported as JSON.
+- Runs are kept until deleted in the UI; a run can be exported as JSON, and a run or a comparison as a PDF (Download PDF on the run page and on Compare: the page's content as text, a load chart drawn as lines, and an appendix of the attempts that did not pass).
