@@ -516,3 +516,5 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .batch-bar-buttons { flex-wrap: wrap; }
   .batch-bar-buttons .btn { flex: 1; }
 }
+
+.field-note { margin: 0; padding: 10px 0 2px; color: var(--muted); font-size: 13px; }

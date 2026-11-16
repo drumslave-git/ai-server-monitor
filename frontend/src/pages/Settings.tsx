@@ -1,7 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, type FieldError, type JsonObject, type LlmTestResult, type SettingsDoc } from "../api";
+import { api, ApiError, type FieldError, type JsonObject, type LlmTestResult, type ModelInfo, type SettingsDoc } from "../api";
 import { PromAuto } from "../components/PromAuto";
 import { ObjectFields, resolve, type FormContext } from "../components/SchemaForm";
+
+function modelDefaultsLine(info: ModelInfo): string {
+  const p = info.parameters;
+  const sampling = ["temperature", "top_k", "top_p"].filter((k) => p[k] !== undefined).map((k) => `${k.replace("_", " ")} ${p[k]}`);
+  const parts = [`Model default: ${sampling.length ? sampling.join(", ") : "no sampling values set"}`];
+  if (info.capabilities.length) parts.push(info.capabilities.filter((c) => c !== "completion").join(", "));
+  if (info.context_length) parts.push(`context ${info.context_length}`);
+  return parts.filter(Boolean).join(" · ");
+}
+
+/** What the selected model reports about itself (Ollama only), re-read when the endpoint or
+    model changes. */
+function useModelInfo(baseUrl: string, model: string, llm: JsonObject): ModelInfo | null {
+  const [info, setInfo] = useState<ModelInfo | null>(null);
+  const latest = useRef(llm);
+  latest.current = llm;
+  useEffect(() => {
+    setInfo(null);
+    if (!baseUrl.trim() || !model.trim()) return;
+    let stale = false;
+    const timer = setTimeout(() => {
+      api.post<ModelInfo>("/api/settings/llm-model-info", latest.current).then(
+        (r) => { if (!stale) setInfo(r); },
+        () => undefined,
+      );
+    }, 500);
+    return () => { stale = true; clearTimeout(timer); };
+  }, [baseUrl, model]);
+  return info;
+}
 
 export function SettingsPage() {
   const [doc, setDoc] = useState<SettingsDoc | null>(null);
@@ -44,13 +74,23 @@ export function SettingsPage() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
 
+  const llm = (values?.llm ?? {}) as JsonObject;
+  const modelInfo = useModelInfo(String(llm.base_url ?? ""), String(llm.model ?? ""), llm);
+
   if (loadError) return <p className="error">Could not load settings: {loadError}</p>;
   if (!doc || !values) return <p className="muted">Loading…</p>;
 
   const defs = doc.schema.$defs ?? {};
   const sectionSchema = resolve(doc.schema.properties![section], defs);
   const errorCount = (key: string) => Object.keys(errors).filter((p) => p === key || p.startsWith(`${key}.`)).length;
-  const ctx: FormContext = { defs, errors, suggestions: { "llm.model": models } };
+  const ctx: FormContext = {
+    defs,
+    errors,
+    suggestions: { "llm.model": models },
+    notes: modelInfo?.available ? { "llm.temperature": modelDefaultsLine(modelInfo) } : {},
+    // a model that does not report "thinking" has no reasoning to set
+    hidden: modelInfo?.available && !modelInfo.capabilities.includes("thinking") ? ["llm.reasoning_effort"] : [],
+  };
 
   const save = async () => {
     setSaving(true);

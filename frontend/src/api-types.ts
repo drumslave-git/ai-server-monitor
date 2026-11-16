@@ -727,6 +727,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/llm-model-info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Llm Model Info
+         * @description What the model named in the given (possibly unsaved) LLM settings reports about
+         *     itself: its own sampling defaults, capabilities and context length. Ollama only;
+         *     anything else answers `available: false`.
+         */
+        post: operations["llm_model_info_api_settings_llm_model_info_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/test-llm": {
         parameters: {
             query?: never;
@@ -1777,10 +1799,11 @@ export interface components {
             stream_usage: boolean;
             /**
              * Temperature
-             * @description Randomness of answers: 0 is the most predictable, higher is more varied.
-             * @default 0.2
+             * @description Randomness of answers: 0 is the most predictable, higher is more varied. auto = not sent,
+             *     so the model's own default applies (for Ollama models it is shown above).
+             * @default auto
              */
-            temperature: number;
+            temperature: number | "auto";
             /**
              * Timeout
              * Format: duration
@@ -1800,6 +1823,20 @@ export interface components {
              * @enum {string}
              */
             tool_mode: "auto" | "native" | "json" | "none";
+            /**
+             * Top K
+             * @description Only the this-many most likely words are considered at each step (0 = no limit). auto =
+             *     not sent, the model's own default applies. Not every endpoint honours it.
+             * @default auto
+             */
+            top_k: number | "auto";
+            /**
+             * Top P
+             * @description Nucleus sampling: only the most likely words that together cover this share of the
+             *     probability are considered. auto = not sent, the model's own default applies.
+             * @default auto
+             */
+            top_p: number | "auto";
         };
         /**
          * LastAttempt
@@ -2244,6 +2281,22 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+        };
+        /**
+         * ModelInfoResult
+         * @description What the selected LLM model says about itself (Ollama only), for Settings → LLM.
+         */
+        ModelInfoResult: {
+            /** Available */
+            available: boolean;
+            /** Capabilities */
+            capabilities?: string[];
+            /** Context Length */
+            context_length?: number | null;
+            /** Parameters */
+            parameters?: {
+                [key: string]: number;
+            };
         };
         /** NextReport */
         NextReport: {
@@ -2950,9 +3003,11 @@ export interface components {
              *       "model": "",
              *       "reasoning_effort": "auto",
              *       "stream_usage": true,
-             *       "temperature": 0.2,
+             *       "temperature": "auto",
              *       "timeout": "3m",
-             *       "tool_mode": "auto"
+             *       "tool_mode": "auto",
+             *       "top_k": "auto",
+             *       "top_p": "auto"
              *     }
              */
             llm: components["schemas"]["LLMSettings"];
@@ -3093,6 +3148,8 @@ export interface components {
         };
         /** StartRequest */
         StartRequest: {
+            /** Efforts */
+            efforts?: ("auto" | "none" | "low" | "medium" | "high")[] | null;
             /** Group */
             group?: string | null;
             /** Ids */
@@ -4715,6 +4772,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsValues"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    llm_model_info_api_settings_llm_model_info_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelInfoResult"];
                 };
             };
             /** @description Validation Error */

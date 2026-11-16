@@ -181,8 +181,15 @@ class LLMSettings(_Model):
     the API's reasoning_effort. auto = not sent, the model decides; none = no thinking (fast,
     shallower); low / medium / high = as the model supports. Short helper calls (chat titles,
     tool routing, tests) always ask for none."""
-    temperature: float = Field(default=0.2, ge=0, le=2)
-    """Randomness of answers: 0 is the most predictable, higher is more varied."""
+    temperature: Annotated[float, Field(ge=0, le=2)] | Literal["auto"] = "auto"
+    """Randomness of answers: 0 is the most predictable, higher is more varied. auto = not sent,
+    so the model's own default applies (for Ollama models it is shown above)."""
+    top_p: Annotated[float, Field(gt=0, le=1)] | Literal["auto"] = "auto"
+    """Nucleus sampling: only the most likely words that together cover this share of the
+    probability are considered. auto = not sent, the model's own default applies."""
+    top_k: Annotated[int, Field(ge=0)] | Literal["auto"] = "auto"
+    """Only the this-many most likely words are considered at each step (0 = no limit). auto =
+    not sent, the model's own default applies. Not every endpoint honours it."""
     timeout: Duration = timedelta(minutes=3)
     """Per-request timeout. Local models on CPU can be slow."""
     max_retries: int = Field(default=2, ge=0, le=10)

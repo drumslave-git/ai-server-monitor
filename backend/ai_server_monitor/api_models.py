@@ -175,6 +175,19 @@ class SettingsValues(BaseModel):
     values: Settings
 
 
+class ModelInfoResult(BaseModel):
+    """What the selected LLM model says about itself (Ollama only), for Settings → LLM."""
+
+    available: bool
+    """False when the endpoint is not Ollama, is unreachable, or no model is set."""
+    parameters: dict[str, float] = Field(default_factory=dict)
+    """The model's own sampling defaults, e.g. temperature, top_k, top_p."""
+    capabilities: list[str] = Field(default_factory=list)
+    """e.g. completion, vision, tools, thinking."""
+    context_length: int | None = None
+    """The model's maximum context, in tokens. Information only."""
+
+
 class ConnectionTestResult(BaseModel):
     """Outcome of a Settings → Test button."""
 

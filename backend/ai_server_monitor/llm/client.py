@@ -274,9 +274,14 @@ class LLMClient:
             **self.cfg.extra_body,
             "model": self.cfg.model,
             "messages": list(messages),
-            "temperature": self.cfg.temperature,
             "max_tokens": self.cfg.max_output_tokens,
         }
+        # "auto" = not sent, so the model's own sampling defaults apply. A call's explicit
+        # temperature (short helper calls use 0) is added below and always wins.
+        for name in ("temperature", "top_p", "top_k"):
+            value = getattr(self.cfg, name)
+            if value != "auto":
+                payload[name] = value
         payload.update({k: v for k, v in kwargs.items() if v is not None})
         effort = reasoning_effort or self.cfg.reasoning_effort
         if effort != "auto" and self._effort_supported:

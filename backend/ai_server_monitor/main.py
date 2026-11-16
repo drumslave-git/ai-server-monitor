@@ -27,6 +27,7 @@ from .context import AppContext
 from .digest import collectors_snapshot
 from .digest.snapshot import Snapshot
 from .llm import LLMClient, LLMConnectionError, LLMError
+from .llm.modelinfo import read_model_info
 from .llm.text import strip_reasoning
 from .outputs.metrics import CONTENT_TYPE, report_families
 from .outputs.sse import SSE_HEADERS, event_stream, parse_types
@@ -350,6 +351,22 @@ def create_app(
             return {"ok": False, "error": str(exc), "models": models[:100] if models else None}
         finally:
             await client.aclose()
+
+    @app.post("/api/settings/llm-model-info")
+    async def llm_model_info(request: Request, body: JsonBody) -> api_models.ModelInfoResult:
+        """What the model named in the given (possibly unsaved) LLM settings reports about
+        itself: its own sampling defaults, capabilities and context length. Ollama only;
+        anything else answers `available: false`."""
+        ctx = get_ctx(request)
+        current = ctx.settings.llm.model_dump(mode="json", context={"reveal_secrets": True})
+        try:
+            cfg = LLMSettings.model_validate(merge_secrets(body, current))
+        except ValidationError as exc:
+            raise _validation_error(exc) from exc
+        info = await read_model_info(cfg, transport=llm_transport)
+        if info is None:
+            return api_models.ModelInfoResult(available=False)
+        return api_models.ModelInfoResult(available=True, **info.as_dict())
 
     @app.post("/api/settings/test/{kind}")
     async def test_connection(

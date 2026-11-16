@@ -253,7 +253,9 @@ a fresh install starts with.
 | `llm.max_context_tokens` | integer (min 1024) | `8192` | Context window to plan prompts for. For Ollama, also raise OLLAMA_CONTEXT_LENGTH. |
 | `llm.max_output_tokens` | integer (min 64) | `16384` | Maximum tokens per answer/report, counting a thinking model's reasoning too. Too low and a model that thinks long runs out before it writes the answer (shown as an error). |
 | `llm.reasoning_effort` | auto / none / low / medium / high | `auto` | How much a thinking model reasons before answering chat questions and reports, sent as the API's reasoning_effort. auto = not sent, the model decides; none = no thinking (fast, shallower); low / medium / high = as the model supports. Short helper calls (chat titles, tool routing, tests) always ask for none. |
-| `llm.temperature` | number (min 0, max 2) | `0.2` | Randomness of answers: 0 is the most predictable, higher is more varied. |
+| `llm.temperature` | number or auto | `auto` | Randomness of answers: 0 is the most predictable, higher is more varied. auto = not sent, so the model's own default applies (for Ollama models it is shown above). |
+| `llm.top_p` | number or auto | `auto` | Nucleus sampling: only the most likely words that together cover this share of the probability are considered. auto = not sent, the model's own default applies. |
+| `llm.top_k` | integer or auto | `auto` | Only the this-many most likely words are considered at each step (0 = no limit). auto = not sent, the model's own default applies. Not every endpoint honours it. |
 | `llm.timeout` | duration | `3m` | Per-request timeout. Local models on CPU can be slow. |
 | `llm.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up. |
 | `llm.stream_usage` | boolean | on | Ask the endpoint for token usage while streaming (turned off automatically if the endpoint rejects it). |

@@ -31,6 +31,7 @@ export type Progress = {
   scenario: string | null;
   title?: string;
   attempt: number | null;
+  effort?: Effort | null;
   scenarios: number;
   started: number;
   last_score?: number;
@@ -45,6 +46,8 @@ export type BenchStatus = {
   repeats: number;
   report_running: boolean;
 };
+
+export type StartBody = { group?: string; repeats?: number; efforts?: Effort[] };
 
 /** Peak and average of one measurement over some samples. */
 export type HwStat = { avg: number; peak: number } | null;
@@ -95,7 +98,32 @@ export type HwSeries = {
   points: Record<"ts" | "gpu_util" | "vram_used" | "vram_total" | "llm_vram" | "power_w" | "temp_c" | "cpu" | "ram_used" | "ram_total", (number | null)[]>;
 };
 
+/** The thinking levels: the API's reasoning_effort values (auto = not sent). */
+export type Effort = "auto" | "none" | "low" | "medium" | "high";
+
+/** One thinking level of a run: what the model did at it, over every attempt made at it. */
+export type LevelStat = {
+  attempts: number;
+  overall: number | null;
+  group_scores: Record<string, number>;
+  pass_rate: number | null;
+  failed: number;
+  /** Answers that never came: the model used the whole output limit on thinking, or only thought. */
+  empty: number;
+  /** Answers that were written but cut off by the output limit. */
+  limit: number;
+  median_total_ms: number | null;
+  median_tokens_out: number | null;
+  median_reasoning_chars: number | null;
+  tokens_out: number;
+  reasoning_chars: number;
+  hw?: HwNumbers;
+};
+
+export type ScenarioLevelStat = { score: number; attempts: number; failed: number; empty: number; median_total_ms: number | null };
+
 export type ScenarioStat = {
+  levels?: Partial<Record<Effort, ScenarioLevelStat>>;
   group: string;
   score: number;
   attempts: number;
@@ -117,6 +145,10 @@ export type RunSummaryData = {
   tokens_in: number;
   tokens_out: number;
   overlapped: number;
+  empty_answers?: number;
+  limit_hits?: number;
+  /** Per thinking level; absent on runs made at one level before levels existed. */
+  levels?: Partial<Record<Effort, LevelStat>>;
   reload_suspected?: number;
   hardware?: HwNumbers;
 };
@@ -171,7 +203,7 @@ export type Run = {
   gpu?: GpuInfo;
   cold_start?: ColdStart | null;
   tool_mode?: string | null;
-  temperature?: number | null;
+  temperature?: number | string | null;
   // detail view
   meta?: {
     cold_start?: ColdStart | null;
@@ -185,6 +217,8 @@ export type Run = {
     hardware?: HwMeta;
     loaded_model?: LoadedModel;
     judge?: { model: string; base_url: string } | null;
+    /** The thinking levels the run tested; absent on older runs. */
+    levels?: { tested: Effort[]; applies_to: string; fixed: string };
   } | null;
   attempts?: AttemptRow[];
 };
@@ -213,6 +247,11 @@ export type AttemptRow = {
   reload_suspected: string | null;
   /** Hardware numbers while this attempt ran; null when not recorded. */
   hw?: HwNumbers;
+  /** The thinking level it ran at; null = one no level changes (Prometheus planner) or an older run. */
+  effort?: Effort | null;
+  /** Characters of reasoning the model wrote over the attempt's calls. */
+  reasoning_chars?: number | null;
+  answer_issue?: "empty" | "limit" | null;
 };
 
 export type CheckResult = { type: string; describe: string; weight: number; passed: boolean; reason: string };

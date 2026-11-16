@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { McpToolPicker, mcpTools } from "./McpTools";
 import { api, type ConnectionTestResult, type Json, type JsonObject, type JsonSchema } from "../api";
 
@@ -24,6 +24,10 @@ export type FormContext = {
   defs: Record<string, JsonSchema>;
   errors: Record<string, string>;
   suggestions: Record<string, string[]>;
+  /** A line shown above the row at this path (e.g. what the model says about itself). */
+  notes?: Record<string, string>;
+  /** Paths of rows that do not apply and are left out. */
+  hidden?: string[];
 };
 
 export function resolve(schema: JsonSchema, defs: Record<string, JsonSchema>): JsonSchema {
@@ -64,17 +68,23 @@ export function ObjectFields({ schema, value, onChange, path, ctx }: Omit<FieldP
   const obj = (value ?? {}) as JsonObject;
   return (
     <>
-      {Object.entries(s.properties ?? {}).map(([key, prop]) => (
-        <Field
-          key={key}
-          name={key}
-          schema={prop}
-          value={obj[key] ?? null}
-          onChange={(v) => onChange({ ...obj, [key]: v })}
-          path={path ? `${path}.${key}` : key}
-          ctx={ctx}
-        />
-      ))}
+      {Object.entries(s.properties ?? {}).map(([key, prop]) => {
+        const fieldPath = path ? `${path}.${key}` : key;
+        if (ctx.hidden?.includes(fieldPath)) return null;
+        return (
+          <Fragment key={key}>
+            {ctx.notes?.[fieldPath] && <p className="field-note">{ctx.notes[fieldPath]}</p>}
+            <Field
+              name={key}
+              schema={prop}
+              value={obj[key] ?? null}
+              onChange={(v) => onChange({ ...obj, [key]: v })}
+              path={fieldPath}
+              ctx={ctx}
+            />
+          </Fragment>
+        );
+      })}
     </>
   );
 }
@@ -118,6 +128,27 @@ export function Field(props: FieldProps) {
               <option value="on">On</option>
               <option value="off">Off</option>
             </select>
+          )}
+        </Row>
+      );
+    }
+    const numeric = nonNull.find((x) => x.type === "number" || x.type === "integer");
+    if (numeric && nonNull.some((x) => x.const === "auto")) {
+      // a number, or "auto" (= not sent) while the box is empty
+      return (
+        <Row {...props} label={label} description={s.description}>
+          {(id) => (
+            <input
+              id={id}
+              type="number"
+              className="input-short"
+              placeholder="auto"
+              value={value === "auto" || value === null || value === undefined ? "" : String(value)}
+              min={numeric.minimum}
+              max={numeric.maximum}
+              step={numeric.type === "integer" ? 1 : "any"}
+              onChange={(e) => onChange(e.target.value === "" ? "auto" : Number(e.target.value))}
+            />
           )}
         </Row>
       );

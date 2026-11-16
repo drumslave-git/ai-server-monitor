@@ -95,6 +95,13 @@ export type LlmTestResult = {
   error?: string;
 };
 
+export type ModelInfo = {
+  available: boolean;
+  parameters: Record<string, number>;
+  capabilities: string[];
+  context_length: number | null;
+};
+
 // ---- generated types (src/api-types.ts is produced by `npm run gen:api`)
 import type { components } from "./api-types";
 export type Schemas = components["schemas"];
