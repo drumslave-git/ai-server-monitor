@@ -101,3 +101,32 @@ export function automationText(a: { paused: boolean; by_run: boolean; was_paused
   if (!a.paused) return "running (not paused)";
   return a.by_run ? "paused for the run" : "paused (already paused before the run)";
 }
+
+// ---- comparing
+
+/** One cell of a comparison: what it prints and the number behind it (null = not comparable). */
+export type Shown = { text: string; raw: number | null };
+
+/** The cells holding the best value, judged on what they print: cells that print the same tie and
+ * are all marked; when every cell prints the same, nothing is marked. The number is the part of
+ * the text before " · " ("8.9 GB · 37%" compares as "8.9 GB"). `high`: larger is better. */
+export function bestOf(cells: Shown[], high: boolean): Set<number> {
+  const real = cells.map((c, i) => [c, i] as const).filter((p): p is readonly [Shown & { raw: number }, number] => p[0].raw !== null);
+  if (real.length < 2) return new Set();
+  const top = real.reduce((a, b) => ((high ? b[0].raw > a[0].raw : b[0].raw < a[0].raw) ? b : a));
+  const key = (c: Shown) => c.text.split(" · ")[0];
+  const winners = real.filter((p) => key(p[0]) === key(top[0])).map((p) => p[1]);
+  return winners.length === real.length ? new Set() : new Set(winners);
+}
+
+/** temperature / top_p / top_k as the run resolved them ("auto" or the number); "not recorded" for
+ * runs made before the field was kept. */
+export const samplingText = (llm: Record<string, unknown> | undefined, key: string): string => {
+  const v = llm?.[key];
+  return v === undefined || v === null ? "not recorded" : String(v);
+};
+
+const PROVIDERS: Record<string, string> = { ollama: "Ollama", "llama.cpp": "llama.cpp", vllm: "vLLM" };
+
+/** The provider as the run recorded it ("Ollama"); null for a generic OpenAI-compatible endpoint. */
+export const providerName = (kind: string | null | undefined): string | null => (kind ? PROVIDERS[kind] ?? null : null);

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../../api";
 import { Badge, Empty, Markdown, Panel } from "../../ui";
 import { ScenarioDetail } from "./Catalog";
-import { GROUP_SHORT, automationText, backendLabel, chars, effortLabel, coldStartText, elapsed, gb, ms, pct, routingLabel, score, scoreLevel, shortDate, sizeLabel, statusLevel, tps } from "./format";
+import { GROUP_SHORT, automationText, backendLabel, chars, effortLabel, coldStartText, elapsed, gb, ms, pct, routingLabel, samplingText, score, scoreLevel, shortDate, sizeLabel, statusLevel, tps } from "./format";
 import { HardwareSection, hwScope, vramStat } from "./Hardware";
 import { LevelMatrix, LevelsPanel } from "./Levels";
 import type { Attempt, AttemptRow, Catalog, GpuInfo, HwNumbers, Run, ScenarioInfo } from "./types";
@@ -88,7 +88,7 @@ export function RunDetail({ id, scenarioId, attemptId, catalog }: { id: number; 
               </dd>
               <dt>Settings</dt>
               <dd>
-                temperature {String(llm.temperature ?? "—")} · max output {String(llm.max_output_tokens ?? "—")} tokens · thinking {meta.levels ? `tested at ${meta.levels.tested.join(", ")}` : String(llm.reasoning_effort ?? "—")} · context setting {String(llm.max_context_tokens ?? "—")}
+                temperature {samplingText(llm, "temperature")} · top P <Sampled llm={llm} k="top_p" /> · top K <Sampled llm={llm} k="top_k" /> · max output {String(llm.max_output_tokens ?? "—")} tokens · thinking {meta.levels ? `tested at ${meta.levels.tested.join(", ")}` : String(llm.reasoning_effort ?? "—")} · context setting {String(llm.max_context_tokens ?? "—")}
               </dd>
               <dt>Tool mode</dt>
               <dd>
@@ -417,4 +417,10 @@ function AttemptDetail({ run, row }: { run: Run; row: AttemptRow }) {
       </div>
     </>
   );
+}
+
+/** A sampling setting as the run resolved it; "not recorded" (muted) for runs made before it was kept. */
+function Sampled({ llm, k }: { llm: Record<string, unknown>; k: string }) {
+  const text = samplingText(llm, k);
+  return text === "not recorded" ? <span className="muted">{text}</span> : <>{text}</>;
 }

@@ -1,5 +1,5 @@
 import { Empty, Panel } from "../../ui";
-import { EFFORTS, EFFORT_HELP, chars, effortLabel, gb, ms, score, scoreLevel } from "./format";
+import { EFFORTS, EFFORT_HELP, bestOf, chars, effortLabel, gb, ms, score, scoreLevel } from "./format";
 import { vramStat } from "./Hardware";
 import type { Catalog, Effort, LevelStat, Run } from "./types";
 
@@ -16,7 +16,8 @@ const issues = (l: LevelStat): string => {
 export function LevelsPanel({ run }: { run: Run }) {
   const levels = levelsOf(run);
   if (levels.length === 0) return null;
-  const best = Math.max(...levels.map((e) => run.summary?.levels?.[e]?.overall ?? 0));
+  // the best level is marked on the accuracy shown; levels that tie are all marked, equal ones none
+  const winners = bestOf(levels.map((e) => ({ text: score(run.summary?.levels?.[e]?.overall), raw: run.summary?.levels?.[e]?.overall ?? null })), true);
   const note = run.meta?.levels;
   return (
     <Panel title="Thinking levels" aside={<span className="muted small">every scenario at each level</span>}>
@@ -36,7 +37,7 @@ export function LevelsPanel({ run }: { run: Run }) {
             </tr>
           </thead>
           <tbody>
-            {levels.map((e) => {
+            {levels.map((e, i) => {
               const l = run.summary?.levels?.[e] as LevelStat;
               const vram = vramStat(l.hw);
               return (
@@ -46,7 +47,7 @@ export function LevelsPanel({ run }: { run: Run }) {
                     <span className="block muted small">{EFFORT_HELP[e]} · {l.attempts} attempts</span>
                   </td>
                   <td data-label="Accuracy" className="num">
-                    <span className={`score score-${scoreLevel(l.overall)}${l.overall === best && levels.length > 1 ? " cmp-best" : ""}`}>{score(l.overall)}</span>
+                    <span className={`score score-${scoreLevel(l.overall)}${winners.has(i) ? " cmp-best" : ""}`}>{score(l.overall)}</span>
                   </td>
                   <td data-label="Pass rate" className="num">{score(l.pass_rate)}</td>
                   <td data-label="Time per answer" className="num">{ms(l.median_total_ms)}</td>

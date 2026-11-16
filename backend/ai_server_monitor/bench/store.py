@@ -147,6 +147,16 @@ class BenchStore:
         )
         return [_attempt(r, full=True) for r in rows]
 
+    async def explain_rows(self, run_id: int) -> list[dict[str, Any]]:
+        """What the per-scenario explanations are built from: status, error, score and checks of
+        every attempt (not the answers)."""
+        rows = await self.db.fetchall(
+            "SELECT scenario_id, status, error, score, judge_score, checks, answer_issue "
+            "FROM bench_attempts WHERE run_id = ?",
+            (run_id,),
+        )
+        return [_attempt(r, full=True) for r in rows]
+
     async def full_attempts(self, run_id: int) -> list[dict[str, Any]]:
         """Everything, for the JSON export."""
         rows = await self.db.fetchall(

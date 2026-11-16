@@ -91,6 +91,7 @@ def make_app(
                 "tool_mode": mode,
                 "max_retries": 0,
                 "temperature": 0.3,
+                "top_p": 0.9,
             },
             "bench": bench or {},
         }
@@ -208,6 +209,8 @@ def test_run_records_backend_model_and_settings(bootstrap: Bootstrap) -> None:
         assert run["params"] == "7.9B" and run["quantization"] == "Q4_K_M"
         assert run["context_length"] == 131072
         assert run["meta"]["llm"]["temperature"] == 0.3
+        # top_p / top_k as resolved for the run: a number stays a number, "auto" stays "auto"
+        assert run["meta"]["llm"]["top_p"] == 0.9 and run["meta"]["llm"]["top_k"] == "auto"
         assert run["meta"]["tool_mode"] == "native"
         assert run["app_version"] and run["scenario_hash"]
         assert run["finished"] >= run["started"]

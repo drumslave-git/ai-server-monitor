@@ -208,7 +208,12 @@ def hw_scope(run: dict[str, Any]) -> str:
     return where if where in ("here", "elsewhere") else "unknown"
 
 
-def hardware_label(meta: dict[str, Any] | None) -> str:
+PROVIDERS = {"ollama": "Ollama", "llama.cpp": "llama.cpp", "vllm": "vLLM"}
+
+
+def hardware_label(meta: dict[str, Any] | None, backend_kind: str | None = None) -> str:
+    """Where the hardware numbers were taken from: the model's process on this host, named after
+    the provider the run recorded (Ollama's model server is a process called llama-server)."""
     if not meta or not meta.get("recorded"):
         return "not recorded"
     if not meta.get("gpu"):
@@ -216,8 +221,16 @@ def hardware_label(meta: dict[str, Any] | None) -> str:
     if meta.get("llm_here") == "elsewhere":
         return "this host; the LLM server is elsewhere"
     if meta.get("llm_here") == "here":
-        return f"LLM seen on this host ({meta.get('llm_process')})"
-    return "this host; LLM process not recognised"
+        provider = PROVIDERS.get(backend_kind or "")
+        who = f"{provider}'s model process" if provider else "the LLM server's process"
+        return f"{who} on this host ({meta.get('llm_process')})"
+    return "this host; model process not recognised"
+
+
+def sampling_text(llm: dict[str, Any], key: str) -> str:
+    """temperature / top_p / top_k as the run resolved them: "auto" or the number; runs made
+    before the field was recorded say so."""
+    return str(llm[key]) if key in llm and llm[key] is not None else "not recorded"
 
 
 def vram_stat(hw: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -357,12 +370,15 @@ class Doc(FPDF):
         *,
         size: float = 8,
         section: set[int] | None = None,
+        notes: set[int] | None = None,
         raw_header: bool = False,
     ) -> None:
         """A table: `widths` in mm, `aligns` one of L/R/C per column; text may hold **bold**; rows
         in `section` are one grey band over all columns. The header repeats on every page; its cells
-        are made bold unless `raw_header` (the caller marked them up)."""
+        are made bold unless `raw_header` (the caller marked them up). Rows in `notes` are small
+        grey text under the row above (a row's explanation), without a rule between them."""
         section = section or set()
+        notes = notes or set()
         self.set_font("body", "", size)
         self.set_text_color(0)
         self.set_draw_color(150)
@@ -392,6 +408,11 @@ class Doc(FPDF):
                         colspan=len(widths),
                         style=FontFace(fill_color=(240, 240, 240)),
                     )
+                    continue
+                if i in notes:
+                    quiet = FontFace(color=(95, 95, 95), size_pt=size - 1)
+                    for cell in cells:
+                        row.cell(cell, style=quiet)
                     continue
                 for cell in cells:
                     row.cell(cell)
@@ -553,7 +574,9 @@ def _facts(run: dict[str, Any]) -> list[tuple[str, str]]:
         ("Size", size),
         (
             "Settings",
-            f"temperature {llm.get('temperature', DASH)} · max output "
+            f"temperature {sampling_text(llm, 'temperature')} · "
+            f"top P {sampling_text(llm, 'top_p')} · top K {sampling_text(llm, 'top_k')} · "
+            "max output "
             f"{llm.get('max_output_tokens', DASH)} tokens · thinking {thinking} · context setting "
             f"{llm.get('max_context_tokens', DASH)}",
         ),
@@ -1018,20 +1041,34 @@ def render_run(
 # --------------------------------------------------------------------------- comparison
 
 
-def _best(cells: Sequence[float | None], high: bool) -> set[int]:
-    """Index (or indices) of the best value; ties all count; all equal marks nothing."""
+def _best(
+    cells: Sequence[float | None], high: bool, shown: Sequence[str] | None = None
+) -> set[int]:
+    """Index (or indices) of the best value, judged on what the cells show: values that print the
+    same tie and are all marked; when every cell prints the same, nothing is marked. `shown` is
+    each cell's text (its number is the part before " · "); without it the raw values are
+    compared."""
     real = [(c, i) for i, c in enumerate(cells) if c is not None]
     if len(real) < 2:
         return set()
-    target = (max if high else min)(c for c, _ in real)
-    winners = {i for c, i in real if abs(c - target) < 1e-9}
+    _, at = (max if high else min)(real, key=lambda p: p[0])
+
+    def key(i: int) -> Any:
+        return shown[i].split(" · ")[0] if shown is not None else cells[i]
+
+    winners = {i for c, i in real if key(i) == key(at)}
     return set() if len(winners) == len(real) else winners
 
 
 Cell = tuple[str, float | None]
 
 
-def render_compare(runs: list[dict[str, Any]], *, titles: dict[str, str]) -> bytes:
+def render_compare(
+    runs: list[dict[str, Any]],
+    *,
+    titles: dict[str, str],
+    explanations: dict[int, dict[str, Any]] | None = None,
+) -> bytes:
     """The PDF of the Compare page: the same rows, the best value of each in bold."""
     ids = ", ".join(f"#{r['id']}" for r in runs)
     doc = Doc(
@@ -1062,7 +1099,9 @@ def render_compare(runs: list[dict[str, Any]], *, titles: dict[str, str]) -> byt
         rows.append([label])
 
     def row(label: str, cells: Sequence[Cell], high: bool | None, sub: str = "") -> None:
-        winners = _best([c[1] for c in cells], high) if high is not None else set()
+        winners = (
+            _best([c[1] for c in cells], high, [c[0] for c in cells]) if high is not None else set()
+        )
         head = doc.md(label) + (f"\n{doc.md(sub)}" if sub else "")
         rows.append([head, *(doc.md(t, bold=i in winners) for i, (t, _) in enumerate(cells))])
 
@@ -1082,14 +1121,8 @@ def render_compare(runs: list[dict[str, Any]], *, titles: dict[str, str]) -> byt
         return r.get("summary") or {}
 
     band("Setup")
-    row(
-        "Temperature",
-        [
-            plain(str(((r.get("meta") or {}).get("llm") or {}).get("temperature", DASH)))
-            for r in runs
-        ],
-        None,
-    )
+    for label, key in (("Temperature", "temperature"), ("Top P", "top_p"), ("Top K", "top_k")):
+        row(label, [plain(sampling_text(_meta(r).get("llm") or {}, key)) for r in runs], None)
     row("Tool mode used", [plain(str(_meta(r).get("tool_mode") or DASH)) for r in runs], None)
     row("Tool routing", [plain(routing_label(r)) for r in runs], None)
     row("Attempts each", [plain(str(r.get("repeats"))) for r in runs], None)
@@ -1135,18 +1168,23 @@ def render_compare(runs: list[dict[str, Any]], *, titles: dict[str, str]) -> byt
     _compare_levels(runs, band, row, plain)
     band("Per scenario: score · median time")
     ids_all = sorted({sid for r in runs for sid in (summary(r).get("scenarios") or {})})
+    notes = explanations or {}
+    note_rows: set[int] = set()
     for sid in ids_all:
         stats = [(summary(r).get("scenarios") or {}).get(sid) for r in runs]
         scores = [s["score"] if s else None for s in stats]
         times = [s.get("median_total_ms") if s else None for s in stats]
-        best_score = _best(scores, True)
+        best_score = _best(scores, True, [score(v) for v in scores])
         real = [s for s in scores if s is not None]
         top = max(real) if real else None
+        # among the runs that tie on the best score as shown, the fastest one wins the time
         eligible = [
-            t if scores[i] is not None and top is not None and abs(scores[i] - top) < 1e-9 else None
+            t
+            if scores[i] is not None and top is not None and score(scores[i]) == score(top)
+            else None
             for i, t in enumerate(times)
         ]
-        best_time = _best(eligible, False)
+        best_time = _best(eligible, False, [ms(v) for v in eligible])
         cells = []
         for i, s in enumerate(stats):
             if not s:
@@ -1155,6 +1193,10 @@ def render_compare(runs: list[dict[str, Any]], *, titles: dict[str, str]) -> byt
             when = doc.md(ms(s.get("median_total_ms")), bold=i in best_time)
             cells.append(f"{doc.md(score(s['score']), bold=i in best_score)} · {when}")
         rows.append([f"{doc.md(titles.get(sid, sid))}\n{doc.md(sid, mono=True)}", *cells])
+        why = [((notes.get(r["id"]) or {}).get(sid) or {}).get("lines") for r in runs]
+        if any(why):
+            note_rows.add(len(rows))
+            rows.append(["", *(doc.md("\n".join(w)) if w else "" for w in why)])
 
     first = 58.0 if len(runs) <= 3 else 66.0
     each = (doc.inner - first) / len(runs)
@@ -1171,6 +1213,7 @@ def render_compare(runs: list[dict[str, Any]], *, titles: dict[str, str]) -> byt
         "L" + "C" * len(runs),
         size=7.5,
         section=section,
+        notes=note_rows,
         raw_header=True,
     )
     doc.para(
@@ -1217,7 +1260,12 @@ def _compare_hardware(runs: list[dict[str, Any]], band: Any, row: Any, plain: An
 
     own = any(((r.get("summary") or {}).get("hardware") or {}).get("llm_vram") for r in runs)
     band("Hardware")
-    row("Measured on", [plain(hardware_label(_meta(r).get("hardware"))) for r in runs], None)
+    row(
+        "Measured from",
+        [plain(hardware_label(_meta(r).get("hardware"), r.get("backend_kind"))) for r in runs],
+        None,
+        "the process that holds this model in VRAM",
+    )
     row(
         "VRAM, peak",
         [cell(r, vram, gpu=True) for r in runs],

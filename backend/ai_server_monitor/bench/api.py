@@ -103,11 +103,16 @@ async def runs(request: Request) -> dict[str, Any]:
 
 @router.get("/runs/{run_id}")
 async def run_detail(request: Request, run_id: int) -> dict[str, Any]:
-    store = _ctx(request).bench.store
-    run = await store.get_run(run_id)
+    bench = _ctx(request).bench
+    run = await bench.store.get_run(run_id)
     if run is None:
         raise HTTPException(404, "no such run")
-    return {**run, "attempts": await store.attempts(run_id)}
+    return {
+        **run,
+        "attempts": await bench.store.attempts(run_id),
+        # a short reason per scenario, from the recorded checks (no model involved)
+        "explanations": await bench.explanations(run_id),
+    }
 
 
 @router.get("/runs/{run_id}/hardware")
@@ -193,12 +198,16 @@ async def compare_pdf(
         raise HTTPException(400, "ids: pick between 2 and 12 runs")
     bench = _ctx(request).bench
     runs = []
+    notes: dict[int, dict[str, Any]] = {}
     for run_id in run_ids:
         run = await bench.store.get_run(run_id)
         if run is None:
             raise HTTPException(404, f"no such run: {run_id}")
         runs.append(run)
-    data = await asyncio.to_thread(pdf.render_compare, runs, titles=bench.scenario_titles())
+        notes[run_id] = await bench.explanations(run_id)
+    data = await asyncio.to_thread(
+        pdf.render_compare, runs, titles=bench.scenario_titles(), explanations=notes
+    )
     return _pdf_response(data, pdf.compare_filename(runs))
 
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { Empty, Panel } from "../../ui";
-import { clock, gb, gbOf, pct, watts } from "./format";
+import { clock, gb, gbOf, pct, providerName, watts } from "./format";
 import type { AttemptRow, HwMeta, HwNumbers, HwSeries, HwStat, Run } from "./types";
 
 /** Does this host's load stand for the model's? "elsewhere" = no, the LLM server is on another machine. */
@@ -15,11 +15,17 @@ export const hwScope = (run: Pick<Run, "meta">): "none" | "old" | "here" | "else
 /** The VRAM figure that stands for the model: its own process when the GPU lists it, else the whole GPU. */
 export const vramStat = (hw: HwNumbers | undefined): HwStat => (hw ? hw.llm_vram ?? hw.vram_used : null);
 
-export function hardwareLabel(meta: HwMeta | undefined): string {
+/** Where the hardware numbers come from: the model's own process on this host, named after the provider
+ * the run recorded (Ollama runs its models in a process called llama-server). */
+export function hardwareLabel(meta: HwMeta | undefined, backendKind?: string | null): string {
   if (!meta?.recorded) return "not recorded";
   if (!meta.gpu) return "no GPU on this host";
   if (meta.llm_here === "elsewhere") return "this host; the LLM server is elsewhere";
-  return meta.llm_here === "here" ? `LLM seen on this host (${meta.llm_process})` : "this host; LLM process not recognised";
+  if (meta.llm_here === "here") {
+    const provider = providerName(backendKind);
+    return `${provider ? `${provider}'s model process` : "the LLM server's process"} on this host (${meta.llm_process})`;
+  }
+  return "this host; model process not recognised";
 }
 
 function Tile({ label, value, sub, title }: { label: string; value: string; sub?: string; title?: string }) {

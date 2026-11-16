@@ -27,6 +27,7 @@ from ..llm import LLMClient, LLMError
 from ..tracing import Tracing
 from ..tracing.config import TraceConfig
 from . import judge as judge_mod
+from .explain import check_labels, explain_run
 from .hardware import HardwareSampler, in_windows, stats, summarize_hardware
 from .probe import ollama_loaded, probe_backend
 from .runner import LEVELS, AttemptRunner, OverlapWatch, summarize, summarize_levels
@@ -152,6 +153,11 @@ class BenchService:
         """id -> title of every scenario in the installed set (for the PDF export)."""
         scenarios, _ = load_scenarios(include_smoke=True)
         return {s.id: s.title for s in scenarios}
+
+    async def explanations(self, run_id: int) -> dict[str, dict[str, Any]]:
+        """scenario id -> a short plain-language reason for the score (see explain.py)."""
+        scenarios, _ = load_scenarios(include_smoke=True)
+        return explain_run(await self.store.explain_rows(run_id), check_labels(scenarios))
 
     def select(self, *, group: str | None = None, ids: list[str] | None = None) -> list[Scenario]:
         if group == SMOKE_GROUP:
@@ -456,6 +462,8 @@ class BenchService:
         meta = {
             "llm": {
                 "temperature": llm_cfg.temperature,
+                "top_p": llm_cfg.top_p,
+                "top_k": llm_cfg.top_k,
                 "max_output_tokens": llm_cfg.max_output_tokens,
                 "reasoning_effort": llm_cfg.reasoning_effort,
                 "max_context_tokens": llm_cfg.max_context_tokens,

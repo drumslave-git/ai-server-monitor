@@ -96,18 +96,40 @@
 .attempts-table td { white-space: nowrap; }
 
 /* ---- comparison */
-.cmp-panel { padding: 0; overflow: hidden; }
-.cmp-panel > .help { padding: 0 20px 16px; }
+/* overflow: clip, not hidden: hidden would make the panel a scroll container for the pinned header */
+.cmp-panel { padding: 0; overflow: clip; position: relative; }
+.cmp-panel > .help { padding: 12px 20px 16px; }
 .compare-table th, .compare-table td { padding: 8px 16px; }
 .compare-table th.cmp-label { position: sticky; left: 0; z-index: 1; background: var(--surface); font-weight: 400; color: var(--text); min-width: 180px; max-width: 260px; text-align: left; font-size: 14px; }
-.compare-table .cmp-head { min-width: 170px; text-align: right; vertical-align: bottom; font-weight: 500; color: var(--text); font-size: 14px; }
+.compare-table .cmp-head { min-width: 170px; text-align: right; vertical-align: bottom; font-weight: 500; color: var(--text); font-size: 14px; background: var(--surface); }
 .compare-table .cmp-head .block { text-align: right; font-weight: 400; }
-.compare-table .cmp-section th { padding-top: 20px; font-size: 12px; color: var(--muted); font-weight: 500; background: var(--surface-2); text-align: left; position: static; }
+.compare-table thead th { border-bottom: 1px solid var(--border); }
+/* a section: a gap, then a heading with a firm rule under it; the pinned copy has the same height */
+.compare-table .cmp-gap td { height: 28px; padding: 0; border: 0; }
+.compare-table .cmp-section th { height: 44px; padding: 0; font-size: 16px; line-height: 24px; font-weight: 600; color: var(--text); background: var(--surface); text-align: left; vertical-align: middle; border-bottom: 2px solid var(--border); position: static; }
+.compare-table .cmp-section-title { position: sticky; left: 0; display: inline-block; padding: 0 16px; }
+/* a thinking level: a tinted heading row, a gap between the groups */
+.compare-table .cmp-gap-sm td { height: 20px; }
+.compare-table .cmp-level th { padding: 0; height: 36px; font-size: 14px; font-weight: 600; color: var(--text); text-align: left; vertical-align: middle; background: var(--surface-2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.compare-table .cmp-level .muted { font-weight: 400; }
+.compare-table .cmp-level-title { position: sticky; left: 0; display: inline-block; padding: 0 16px; }
 .compare-table .cmp-strong td, .compare-table .cmp-strong th { font-weight: 500; }
 .compare-table td.num, .compare-table .cmp-cell { text-align: right; white-space: nowrap; }
+.compare-table .cmp-cell { vertical-align: top; }
+.compare-table td.cmp-wrap { white-space: normal; }
+.compare-table th.cmp-label .block { overflow-wrap: anywhere; }
 .cmp-best { background: color-mix(in srgb, var(--ok) 16%, transparent); border-radius: 4px; font-weight: 600; }
 span.cmp-best { padding: 0 4px; }
 .cmp-time { font-size: 12px; }
+.cmp-why { white-space: normal; color: var(--muted); line-height: 16px; margin-top: 2px; overflow-wrap: anywhere; }
+.cmp-why-ok { color: var(--faint); }
+/* the pinned header: zero height in the flow, drawn over the table once the real header is gone */
+.cmp-stick { position: sticky; top: 0; z-index: 5; height: 0; }
+.cmp-stick-bar { position: absolute; top: 0; left: 0; right: 0; overflow: hidden; background: var(--surface); box-shadow: 0 1px 0 var(--border); visibility: hidden; border-radius: 12px 12px 0 0; }
+.cmp-stick.is-on .cmp-stick-bar { visibility: visible; }
+.cmp-stick-inner { will-change: transform; }
+.cmp-stick .compare-table { table-layout: fixed; }
+.cmp-stick .cmp-head a { pointer-events: none; }
 
 /* ---- phone */
 @media (max-width: 1080px) {
@@ -121,7 +143,9 @@ span.cmp-best { padding: 0 4px; }
   .bench-run-buttons .btn { flex: 1 1 100%; white-space: normal; text-align: center; }
   .bench-repeats input { width: 100%; }
   .bench-controls { align-items: stretch; flex-direction: column; }
-  .compare-table .cmp-head, .compare-table td.num, .compare-table .cmp-cell { min-width: 120px; }
+  .compare-table .cmp-head, .compare-table td.num { min-width: 120px; }
+  .compare-table .cmp-cell { min-width: 150px; }
+  .cmp-pin-date { display: none; }
   .compare-table th.cmp-label { min-width: 120px; max-width: 140px; font-size: 13px; }
   .compare-table th, .compare-table td { padding: 8px 10px; }
   .group-bars li { grid-template-columns: 72px minmax(0, 1fr) 44px; }

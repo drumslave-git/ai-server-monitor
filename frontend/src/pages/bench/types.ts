@@ -180,6 +180,9 @@ export type ColdStart = {
   tries?: number;
 };
 
+/** A short plain-language reason for a scenario's score, built from the recorded checks. */
+export type Explanation = { ok: boolean; lines: string[]; attempts: number; errored: number; empty: number; limit: number };
+
 export type Run = {
   id: number;
   started: number;
@@ -225,6 +228,8 @@ export type Run = {
     levels?: { tested: Effort[]; applies_to: string; fixed: string };
   } | null;
   attempts?: AttemptRow[];
+  /** Per scenario id; detail view only. */
+  explanations?: Record<string, Explanation>;
 };
 
 export type AttemptRow = {
