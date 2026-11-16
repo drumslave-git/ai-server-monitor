@@ -1255,6 +1255,24 @@ export interface components {
              */
             shell: boolean;
             /**
+             * Tool Routing
+             * @description Send the model only the tool groups a question needs (host, media, metrics, containers,
+             *     actions, one per MCP server). A short model call picks the groups before the answer; the
+             *     model can load another group itself. auto = only when the full tool definitions are bigger
+             *     than the token limit below (strong models cope with all tools); always = every question;
+             *     off = every tool every time.
+             * @default auto
+             * @enum {string}
+             */
+            tool_routing: "auto" | "always" | "off";
+            /**
+             * Tool Routing Tokens
+             * @description With tool routing auto: the size of the tool definitions (about 4 characters per token)
+             *     above which routing is used.
+             * @default 2000
+             */
+            tool_routing_tokens: number;
+            /**
              * Tool Timeout
              * Format: duration
              * @description Longest one tool call (a disk scan, a command, an API call) may run before the chat
@@ -2811,6 +2829,8 @@ export interface components {
              *       "max_steps": 6,
              *       "max_tool_result_chars": 6000,
              *       "shell": true,
+             *       "tool_routing": "auto",
+             *       "tool_routing_tokens": 2000,
              *       "tool_timeout": "1h"
              *     }
              */

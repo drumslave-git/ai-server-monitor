@@ -253,6 +253,15 @@ class ChatSettings(_Model):
     nothing. Off = the chat only sees the collected data."""
     disk_cache_ttl: Duration = timedelta(minutes=10)
     """How long a finished disk scan of a path is reused."""
+    tool_routing: Literal["auto", "always", "off"] = "auto"
+    """Send the model only the tool groups a question needs (host, media, metrics, containers,
+    actions, one per MCP server). A short model call picks the groups before the answer; the
+    model can load another group itself. auto = only when the full tool definitions are bigger
+    than the token limit below (strong models cope with all tools); always = every question;
+    off = every tool every time."""
+    tool_routing_tokens: int = Field(default=2000, ge=200, le=100_000)
+    """With tool routing auto: the size of the tool definitions (about 4 characters per token)
+    above which routing is used."""
 
 
 class StorageSettings(_Model):

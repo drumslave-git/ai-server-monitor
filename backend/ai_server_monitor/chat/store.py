@@ -105,6 +105,15 @@ class ChatStore:
         )
         return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
+    async def used_tools(self, session_id: str, limit: int = 60) -> list[str]:
+        """Names of the tools called in this conversation (newest results first, distinct)."""
+        rows = await self.db.fetchall(
+            "SELECT name FROM chat_messages WHERE session_id = ? AND role = 'tool' "
+            "AND name IS NOT NULL ORDER BY id DESC LIMIT ?",
+            (session_id, limit),
+        )
+        return list(dict.fromkeys(r["name"] for r in rows))
+
     async def list_sessions(
         self, limit: int = 50, offset: int = 0
     ) -> tuple[list[dict[str, Any]], int]:

@@ -32,6 +32,7 @@ from ..llm.client import Usage, new_tool_call_id
 from ..llm.jsontools import json_tool_system_prompt, parse_tool_request
 from ..llm.text import strip_reasoning
 from ..tracing import scoped_iter, trace_scope
+from . import routing
 from .humanize import humanize
 from .prompts import STEP_LIMIT_NOTE, system_prompt
 from .safety import Scrubber, shrink, wrap_untrusted
@@ -74,6 +75,19 @@ class _Turn:
     """Text of the current model turn that was already sent to the client."""
     trace_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     """Ties this question's LLM calls and tool calls together on the Logs page."""
+    route: routing.Routing | None = None
+    """Tool routing of this question (None = every tool is sent)."""
+    build_system: Callable[[], str] = lambda: ""
+    """The system prompt for the tools the model has right now."""
+
+    def definitions(self) -> list[dict[str, Any]]:
+        """The tool definitions the model gets now (routing decides; `more_tools` widens it)."""
+        names = self.route.names() if self.route else None
+        return [t.definition() for n, t in self.tools.items() if names is None or n in names]
+
+    def visible(self) -> list[str]:
+        names = self.route.names() if self.route else None
+        return [n for n in self.tools if names is None or n in names]
 
 
 class ChatEngine:
@@ -193,6 +207,60 @@ class ChatEngine:
             log.info("chat: no LLM title (%s: %s)", type(exc).__name__, exc)
             return None
 
+    # ------------------------------------------------------------------ tool routing
+
+    async def _route(self, turn: _Turn, question: str, used_before: list[str]) -> None:
+        """Decide which tool groups this question gets (see routing.py). Sets `turn.route`;
+        leaves it None when routing is off, not needed (auto) or nothing is worth routing."""
+        settings = self.app.settings
+        chat = settings.chat
+        if chat.tool_routing == "off":
+            return
+        mcp_servers = self._mcp_servers()
+        groups = routing.catalog(turn.tools, mcp_servers)
+        if not groups:
+            return
+        definitions = [t.definition() for t in turn.tools.values()]
+        if not routing.wanted(chat.tool_routing, definitions, chat.tool_routing_tokens):
+            return
+        turn.tools[routing.MORE_TOOLS] = routing.more_tools(groups)
+        state = routing.Routing(groups)
+        turn.route = state
+        turn.ctx.routing = state
+        sticky = [
+            g
+            for g in dict.fromkeys(
+                g for name in used_before for g in routing.groups_of(name, mcp_servers)
+            )
+            if g in groups
+        ]
+        started = time.monotonic()
+        picked = await routing.classify(
+            self.app.llm,
+            question,
+            groups,
+            turn.tools,
+            sticky,
+            session_id=turn.session_id,
+            turn=turn.trace_id,
+        )
+        state.classifier_s = time.monotonic() - started
+        if picked is None:
+            state.fallback = "the classifier gave no usable answer: all tool groups loaded"
+            state.chosen = list(groups)
+        else:
+            state.chosen = list(dict.fromkeys([*sticky, *picked]))
+        state.active = set(state.chosen)
+
+    def _mcp_servers(self) -> list[str]:
+        """Names of the MCP servers whose tools are offered (for the MCP tool groups)."""
+        try:
+            from ..mcp_client.tools import pick_tools
+
+            return sorted({p.server for p in pick_tools(self.app.mcp)})
+        except Exception:
+            return []
+
     # ------------------------------------------------------------------ one question
 
     async def _answer(
@@ -208,25 +276,10 @@ class ChatEngine:
             await app.mcp.prepare()  # lazy connect; never blocks long, dead servers just stay out
         tools = self._tools_builder(settings, app.mcp) if mode != "none" else {}
         history = await self.store.history(session_id, settings.chat.history_messages)
+        used_before = await self.store.used_tools(session_id) if tools else []
         await self.store.add_message(session_id, "user", message)
 
         digest = (await app.reports.digest()).text if mode == "none" else None
-        system = system_prompt(
-            settings.report.language,
-            digest=digest,
-            tools=bool(tools),
-            tool_names=tools.keys(),
-            prom_queries=await self._prom_queries(tools),
-            notes=self._mcp_notes(tools) if mode != "none" else (),
-        )
-        definitions = [t.definition() for t in tools.values()]
-        if mode == "json" and tools:
-            system = json_tool_system_prompt(definitions, system)
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system},
-            *history,
-            {"role": "user", "content": message},
-        ]
         turn = _Turn(
             session_id=session_id,
             tools=tools,
@@ -235,6 +288,35 @@ class ChatEngine:
             limit_chars=settings.chat.max_tool_result_chars,
             timeout=settings.chat.tool_timeout.total_seconds(),
         )
+        if tools:
+            await self._route(turn, message, used_before)
+        prom_queries = await self._prom_queries(tools)
+        notes = self._mcp_notes(tools) if mode != "none" else ()
+
+        def build_system() -> str:
+            """The system prompt for the tools the model has right now."""
+            visible = turn.visible()
+            system = system_prompt(
+                settings.report.language,
+                digest=digest,
+                tools=bool(tools),
+                tool_names=visible,
+                prom_queries=prom_queries,
+                notes=notes,
+                routed=sorted(turn.route.groups) if turn.route else (),
+            )
+            if mode == "json" and tools:
+                system = json_tool_system_prompt(turn.definitions(), system)
+            return system
+
+        turn.build_system = build_system
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": build_system()},
+            *history,
+            {"role": "user", "content": message},
+        ]
+        if turn.route:
+            yield {"type": "route", **turn.route.summary()}
 
         final: str | None = None
         stopped: str | None = None
@@ -252,7 +334,7 @@ class ChatEngine:
                 break
             turn.steps += 1
             if mode == "native" and tools:
-                step = self._native_step(turn, messages, definitions)
+                step = self._native_step(turn, messages)
             else:
                 step = self._json_step(turn, messages, plain=not tools)
             async for event in step:
@@ -277,6 +359,7 @@ class ChatEngine:
             "stopped": stopped,
             "repairs": turn.repairs,
             "trace_turn": turn.trace_id,
+            **({"route": turn.route.summary()} if turn.route else {}),
         }
         message_id = await self.store.add_message(session_id, "assistant", final, meta=meta)
         yield {
@@ -336,10 +419,10 @@ class ChatEngine:
         yield {"type": "_end", "text": text, "tool_calls": tool_calls}
 
     async def _native_step(
-        self, turn: _Turn, messages: list[dict[str, Any]], definitions: list[dict[str, Any]]
+        self, turn: _Turn, messages: list[dict[str, Any]]
     ) -> AsyncIterator[Event]:
         text, tool_calls = "", []
-        async for event in self._llm_turn(turn, messages, defs=definitions):
+        async for event in self._llm_turn(turn, messages, defs=turn.definitions()):
             if event["type"] == "_end":
                 text, tool_calls = event["text"], event["tool_calls"]
             else:
@@ -404,7 +487,7 @@ class ChatEngine:
                         "role": "user",
                         "content": (
                             "That looked like a tool call but I could not use it (invalid JSON, "
-                            f"unknown tool or wrong shape). Tools: {', '.join(turn.tools)}. "
+                            f"unknown tool or wrong shape). Tools: {', '.join(turn.visible())}. "
                             'Reply again with ONLY {"tool": "<name>", "args": {...}}, or answer '
                             "in plain text if you need no tool."
                         ),
@@ -483,6 +566,8 @@ class ChatEngine:
             name=name,
             meta={"ok": ok, "truncated": truncated, "step": turn.steps},
         )
+        if turn.route and name == routing.MORE_TOOLS and messages[0]["role"] == "system":
+            messages[0]["content"] = turn.build_system()  # (json mode lists the tools in it)
         wrapped = wrap_untrusted(name, text)
         if native:
             messages.append({"role": "tool", "tool_call_id": call_id, "content": wrapped})
@@ -504,7 +589,17 @@ class ChatEngine:
         """Run one tool call → (ok, text for the model, trimmed?). Never raises: every
         failure becomes a message the model can react to."""
         if tool is None:
-            return False, f"unknown tool {name!r}; available: {', '.join(turn.tools)}", False
+            return False, f"unknown tool {name!r}; available: {', '.join(turn.visible())}", False
+        if turn.route and name not in turn.route.names():
+            group = next(iter(routing.groups_of(name, self._mcp_servers())), None)
+            return (
+                False,
+                (
+                    f"{name} is not loaded for this question: call {routing.MORE_TOOLS} with "
+                    f"group={group!r} first, then {name}."
+                ),
+                False,
+            )
         if problem:
             return False, f"{name}: {problem}", False
         try:

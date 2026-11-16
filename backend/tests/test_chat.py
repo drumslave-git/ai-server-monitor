@@ -50,8 +50,10 @@ class FakeLLM:
         self.requests: list[dict[str, Any]] = []
         self.title_requests: list[dict[str, Any]] = []
         self.route_requests: list[dict[str, Any]] = []
-        self.route_reply: str | Callable[[dict[str, Any]], httpx.Response] = '{"groups": []}'
-        """What the tool-routing classifier (chat/routing.py) gets: text or a whole response."""
+        self.route_reply: str | Callable[[dict[str, Any]], httpx.Response] = "all of them"
+        """What the tool-routing classifier (chat/routing.py) gets: text or a whole response. The
+        default is no usable answer, so every tool group is loaded (the old behavior: scripted
+        conversations call whichever tool they like)."""
         self.title_reply: str | Callable[[dict[str, Any]], httpx.Response] = ""
         """What the title request (chat/title.py) gets: text (an empty reply is unusable, so
         the fallback title stays) or a function returning a whole HTTP response."""
@@ -170,7 +172,8 @@ def make_app(
                 "api_key": SECRET,
                 "max_retries": 0,
             },
-            "chat": chat or {},
+            # (routing has its own tests; the scripted conversations here expect every tool)
+            "chat": {"tool_routing": "off", **(chat or {})},
             "arr": arr_settings(**arr) if world is not None else {},
         }
     )

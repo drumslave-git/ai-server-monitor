@@ -449,7 +449,13 @@ async def test_failed_tools_get_a_fallback_hint(tmp_path: Path) -> None:
     )
     engine = ChatEngine.__new__(ChatEngine)
     turn = SimpleNamespace(
-        scrub=Scrubber(Settings()), timeout=5.0, ctx=None, limit_chars=5000, tools={}
+        scrub=Scrubber(Settings()),
+        timeout=5.0,
+        ctx=None,
+        limit_chars=5000,
+        tools={},
+        route=None,
+        visible=list,
     )
     ok, text, _ = await engine._execute(turn, failing, "disk_usage", {"path": "/x"}, None)  # type: ignore[arg-type]
     assert ok is False and "scan failed" in text and "Do not stop here: try run_command" in text

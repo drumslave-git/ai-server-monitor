@@ -154,7 +154,8 @@ def test_chat_scenario_uses_real_tools_over_the_snapshot(bootstrap: Bootstrap) -
         run = run_bench(client, app, ids=["chat.smoke_failed_unit"], repeats=1)
         (attempt,) = run["attempts"]
         assert attempt["score"] == pytest.approx(1.0), attempt
-        assert attempt["tool_calls"] == 1 and attempt["llm_calls"] == 2
+        # (the tool-routing classifier call counts as an LLM call of the attempt)
+        assert attempt["tool_calls"] == 1 and attempt["llm_calls"] == 3
         assert attempt["tool_mode"] == "native"
         # the tool result the model got came from the frozen snapshot
         tool_msg = next(m for m in llm.requests[1]["messages"] if m["role"] == "tool")
