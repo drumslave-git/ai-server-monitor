@@ -2,12 +2,23 @@ name: Release
 
 # Publishes the version in backend/pyproject.toml if it hasn't been released yet, i.e.
 # when there is no vX.Y.Z tag for it. Bump with `python scripts/release.py
-# patch|minor|major`, commit, push: this workflow runs CI, tags vX.Y.Z and pushes
-# ghcr.io/<owner>/<repo>:X.Y.Z, :X.Y and :latest. Pushes without a bump do nothing.
-# A failed release (e.g. CI red) is retried by the next push to main, or manually via
-# Actions -> Release -> Run workflow.
+# patch|minor|major`, commit, push.
+#
+# Automatic path: this workflow is triggered by the CI workflow finishing (workflow_run)
+# for a push to main, and only continues when that very CI run concluded `success`. It
+# does not run its own tests, so a red CI can never be followed by a release, and a flaky
+# test can't pass here after failing there. Everything below checks out, builds and tags
+# the exact commit CI tested (workflow_run.head_sha), not whatever main points at now.
+# Then it tags vX.Y.Z and pushes ghcr.io/<owner>/<repo>:X.Y.Z, :X.Y and :latest.
+# Pushes without a bump do nothing.
+#
+# Manual path (Actions -> Release -> Run workflow, e.g. to retry a failed publish): there
+# is no CI run to wait for, so the `verify` job calls ci.yml as a gate (workflow_call) and
+# the release only proceeds if it passes. It releases the commit the run was started on.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -18,12 +29,18 @@ concurrency:
 jobs:
   version:
     name: Check for unreleased version
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.check.outputs.changed }}
       version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - id: check
         name: Is there a tag for the current version?
         shell: bash
@@ -41,21 +58,27 @@ jobs:
   verify:
     name: CI
     needs: version
-    if: needs.version.outputs.changed == 'true'
+    if: github.event_name == 'workflow_dispatch' && needs.version.outputs.changed == 'true'
     uses: ./.github/workflows/ci.yml
 
   release:
     name: Publish image and tag
     needs: [version, verify]
-    if: needs.version.outputs.changed == 'true'
+    # verify is skipped on the workflow_run path (CI already passed for this commit).
+    if: >-
+      always() && needs.version.outputs.changed == 'true' &&
+      (needs.verify.result == 'success' || needs.verify.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write   # push the release tag
       packages: write   # push to ghcr.io
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.SHA }}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -82,7 +105,7 @@ jobs:
           context: .
           file: docker/Dockerfile
           platforms: linux/amd64
-          build-args: BUILD_COMMIT=${{ github.sha }}
+          build-args: BUILD_COMMIT=${{ env.SHA }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -99,7 +122,7 @@ jobs:
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a "$tag" -m "Release $tag"
+            git tag -a "$tag" -m "Release $tag" "$SHA"
             git push origin "$tag"
           fi
 

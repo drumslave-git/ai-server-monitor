@@ -1,7 +1,7 @@
 name: CI
 
 # Lint + tests for the backend, type-check + build for the frontend.
-# Runs on every push/PR, and is reused by the Release workflow as its gate.
+# Runs on every push/PR. The Release workflow waits for the push run; manual releases call it as a gate.
 on:
   push:
     branches: [main]
