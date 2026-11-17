@@ -199,9 +199,13 @@ def test_approval_request_reaches_the_stream_and_the_metrics(bootstrap: Bootstra
             ).result(10)
 
         result: dict[str, Any] = {}
-        threading.Thread(target=lambda: result.update(request())).start()
+        requester = threading.Thread(target=lambda: result.update(request()))
+        requester.start()
         with client.stream("GET", "/api/stream", params={"types": "approval,action"}) as resp:
             frames = read_sse(resp, until="approval.pending")
+        # The event is published inside `request()`, before it returns its record: wait for it.
+        requester.join(10)
+        assert "batch_id" in result, "the request did not finish"
         pending = frames[-1]
         assert pending["event"] == "approval.pending"
         assert pending["data"]["action"] == "qbit_delete_torrent"
