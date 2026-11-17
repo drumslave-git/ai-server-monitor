@@ -5,7 +5,7 @@ import { ScenarioDetail } from "./Catalog";
 import { GROUP_SHORT, automationText, backendLabel, chars, effortLabel, coldStartText, elapsed, gb, ms, pct, routingLabel, samplingMissing, samplingText, score, scoreLevel, shortDate, sizeLabel, statusLevel, tps } from "./format";
 import { HardwareSection, hwScope, vramStat } from "./Hardware";
 import { LevelMatrix, LevelsPanel } from "./Levels";
-import type { Attempt, AttemptRow, Catalog, GpuInfo, HwNumbers, Run, ScenarioInfo } from "./types";
+import type { Attempt, AttemptRow, Catalog, GpuInfo, HwMeta, HwNumbers, Run, ScenarioInfo } from "./types";
 
 export function ScoreBar({ value }: { value: number | null | undefined }) {
   const level = scoreLevel(value);
@@ -16,8 +16,13 @@ export function ScoreBar({ value }: { value: number | null | undefined }) {
   );
 }
 
-function gpuText(gpu: GpuInfo | undefined): string {
-  if (!gpu?.gpus?.length) return "not available";
+/** The GPU line: the start-of-run snapshot when it has one, else the name and count the hardware recorder noted
+ * ("NVIDIA GeForce RTX 3090 ×2"), as the PDF does. */
+function gpuText(gpu: GpuInfo | undefined, hardware?: HwMeta): string {
+  if (!gpu?.gpus?.length) {
+    if (!hardware?.gpu_name) return "not available";
+    return hardware.gpu_count && hardware.gpu_count > 1 ? `${hardware.gpu_name} ×${hardware.gpu_count}` : hardware.gpu_name;
+  }
   return gpu.gpus
     .map((g) => `${g.name ?? "GPU"}${g.mem_total ? `, ${(g.mem_total / 1024 ** 3).toFixed(0)} GB` : ""}${g.mem_used !== undefined && g.mem_total ? `, ${((g.mem_used / g.mem_total) * 100).toFixed(0)}% used at start` : ""}${g.util_percent !== undefined ? `, ${g.util_percent}% busy` : ""}`)
     .join("; ");
@@ -114,7 +119,7 @@ export function RunDetail({ id, scenarioId, attemptId, catalog }: { id: number; 
                 {shortDate(run.started)} · took {run.finished ? elapsed(run.started, run.finished) : "—"}
               </dd>
               <dt>GPU</dt>
-              <dd>{gpuText(meta.gpu)}</dd>
+              <dd>{gpuText(meta.gpu, meta.hardware)}</dd>
               <dt>Automation</dt>
               <dd>{automationText(meta.automation)}</dd>
               {meta.judge && (
