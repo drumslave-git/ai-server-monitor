@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ai-server-monitor"
-version = "0.6.11"
+version = "0.6.12"
 description = "AI-powered read-only server monitor with *arr stack automation"
 readme = "README.md"
 requires-python = ">=3.12"
