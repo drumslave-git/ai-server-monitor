@@ -1,27 +1,43 @@
 """PDF export of benchmark results: one run (what the run page shows, plus an appendix of the failed
 attempts) or several runs side by side (what the Compare page shows).
 
-Built with fpdf2 (pure Python, so the image needs no system libraries). The text is real text, the
-load chart is drawn with vector lines, and the layout reads in black and white: the best value in a
-row is bold, chart lines differ by dash pattern, headers repeat on every page a table spans.
-`render_run` and `render_compare` are plain functions of the data; the API loads the data and runs
-them in a worker thread."""
+Built with fpdf2 (pure Python, so the image needs no system libraries). The text is real text and
+the load chart is drawn with vector lines. The look follows the web pages on a white page: scores
+in green / amber / red with the page's thresholds, the best value of a row on a light green fill
+(and bold), tinted section headings, a tinted heading row per thinking level, rows that alternate
+in tint, headers that repeat on every page a table spans. The drawing lives in `pdf_doc.py`;
+`render_run` and `render_compare` here are plain functions of the data, and the API loads the data
+and runs them in a worker thread."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
-
-from fpdf import FPDF
-from fpdf.fonts import FontFace
 
 from .. import __version__
 from .hardware import columnar, thin
+from .pdf_doc import (
+    BEST_FILL,
+    CRIT,
+    FAINT,
+    INK,
+    MUTED,
+    PALETTE,
+    RULE,
+    SUB_FILL,
+    Band,
+    Doc,
+    Gap,
+    S,
+    Sub,
+    TCell,
+    cell,
+    score_colour,
+)
 
-FONT_DIR = Path(__file__).parent / "fonts"
+__all__ = ["PALETTE", "Doc"]
 
 EFFORTS = ("auto", "none", "low", "medium", "high")
 EFFORT_HELP = {
@@ -38,8 +54,6 @@ ANSWER_LIMIT = 1200
 
 GIB = 1024**3
 DASH = "—"
-
-_CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 
 # --------------------------------------------------------------------------- number formats
@@ -265,279 +279,6 @@ def compare_filename(runs: Sequence[dict[str, Any]]) -> str:
     return f"bench-compare-{ids}-{day(max(r.get('started') or 0 for r in runs))}.pdf"
 
 
-# --------------------------------------------------------------------------- the document
-
-PALETTE = {
-    "gpu": ((20, 20, 20), None, "GPU busy"),
-    "vram": ((30, 90, 170), (6.0, 2.5), "VRAM"),
-    "cpu": ((110, 110, 110), (0.5, 1.3), "CPU"),
-    "ram": ((20, 130, 70), (2.5, 1.8), "RAM"),
-}
-
-_MD = re.compile(r"(\*\*|__|--)")
-
-
-class Doc(FPDF):
-    """A4 document with Unicode fonts, a footer with page numbers and the few building blocks the
-    two reports share."""
-
-    def __init__(self, *, landscape: bool, footer_left: str):
-        super().__init__(orientation="L" if landscape else "P", unit="mm", format="A4")
-        self.footer_left = footer_left
-        self.set_margins(14, 14, 14)
-        self.set_auto_page_break(True, margin=16)
-        self.alias_nb_pages()
-        self.add_font("body", "", str(FONT_DIR / "DejaVuSans.ttf"))
-        self.add_font("body", "B", str(FONT_DIR / "DejaVuSans-Bold.ttf"))
-        self.add_font("mono", "", str(FONT_DIR / "DejaVuSansMono.ttf"))
-        self.add_font("mono", "B", str(FONT_DIR / "DejaVuSansMono-Bold.ttf"))
-        self._cmaps = {
-            "body": set(self.fonts["body"].cmap),
-            "mono": set(self.fonts["mono"].cmap),
-        }
-        self.set_font("body", "", 9)
-        self.set_text_color(0)
-        self.set_title(footer_left)
-        self.set_author("AI Server Monitor")
-        self.set_creator(f"AI Server Monitor {__version__}")
-
-    # ---- text
-
-    def t(self, value: Any, *, mono: bool = False) -> str:
-        """Text the fonts can print: control characters go, glyphs the font lacks become "?"."""
-        text = _CTRL.sub("", str(value)).replace("\r", "").replace("\t", "    ")
-        have = self._cmaps["mono" if mono else "body"]
-        if all(ord(c) in have or c == "\n" for c in text):
-            return text
-        return "".join(c if ord(c) in have or c == "\n" else "?" for c in text)
-
-    def md(self, value: Any, *, bold: bool = False, mono: bool = False) -> str:
-        """Text for a table that reads **bold**: a literal ** __ -- in the data is defused."""
-        text = _MD.sub(lambda m: m.group(1)[0] + "​" + m.group(1)[1], self.t(value, mono=mono))
-        if "​" in text and "​" not in self._cmaps["body"]:
-            text = text.replace("​", " ")
-        return f"**{text}**" if bold and text else text
-
-    # ---- chrome
-
-    def footer(self) -> None:
-        self.set_y(-11)
-        self.set_font("body", "", 7)
-        self.set_text_color(90)
-        half = (self.w - self.l_margin - self.r_margin) / 2
-        self.cell(half, 4, self.t(self.footer_left))
-        self.cell(0, 4, f"Page {self.page_no()} of {{nb}}", align="R")
-        self.set_text_color(0)
-
-    def need(self, height: float) -> None:
-        if self.will_page_break(height):
-            self.add_page()
-
-    @property
-    def inner(self) -> float:
-        return self.w - self.l_margin - self.r_margin
-
-    def h1(self, text: str) -> None:
-        self.set_font("body", "B", 17)
-        self.multi_cell(0, 8, self.t(text), new_x="LMARGIN", new_y="NEXT")
-
-    def h2(self, text: str, aside: str = "") -> None:
-        self.ln(3)
-        self.need(30)
-        self.set_font("body", "B", 11.5)
-        self.cell(self.get_string_width(self.t(text)) + 1, 6, self.t(text))
-        if aside:
-            self.set_font("body", "", 8)
-            self.set_text_color(90)
-            self.cell(0, 6, "  " + self.t(aside))
-            self.set_text_color(0)
-        self.ln(6)
-        self.set_draw_color(120)
-        self.set_line_width(0.3)
-        self.line(self.l_margin, self.get_y(), self.l_margin + self.inner, self.get_y())
-        self.ln(1.6)
-
-    def para(self, text: str, *, size: float = 8, gray: bool = True, bold: bool = False) -> None:
-        self.set_font("body", "B" if bold else "", size)
-        self.set_text_color(70 if gray else 0)
-        self.multi_cell(0, size * 0.5 + 0.9, self.t(text), new_x="LMARGIN", new_y="NEXT")
-        self.set_text_color(0)
-        self.ln(0.8)
-
-    # ---- tables
-
-    def grid(
-        self,
-        header: Sequence[str] | None,
-        rows: Sequence[Sequence[str] | tuple[str, ...]],
-        widths: Sequence[float],
-        aligns: str,
-        *,
-        size: float = 8,
-        section: set[int] | None = None,
-        raw_header: bool = False,
-    ) -> None:
-        """A table: `widths` in mm, `aligns` one of L/R/C per column; text may hold **bold**; rows
-        in `section` are one grey band over all columns. The header repeats on every page; its cells
-        are made bold unless `raw_header` (the caller marked them up). A row is never split across
-        pages, so a cell's extra lines stay with the line above them."""
-        section = section or set()
-        self.set_font("body", "", size)
-        self.set_text_color(0)
-        self.set_draw_color(150)
-        align_map = {"L": "LEFT", "R": "RIGHT", "C": "CENTER"}
-        with self.table(
-            col_widths=tuple(widths),
-            text_align=tuple(align_map[a] for a in aligns),
-            line_height=size * 0.5 + 0.9,
-            borders_layout="HORIZONTAL_LINES",
-            first_row_as_headings=header is not None,
-            headings_style=FontFace(emphasis=None, fill_color=(228, 228, 228)),
-            markdown=True,
-            align="LEFT",
-            v_align="TOP",
-            padding=(0.9, 1.2),
-            width=sum(widths),
-        ) as table:
-            if header is not None:
-                head = table.row()
-                for h in header:
-                    head.cell(h if raw_header else self.md(h, bold=True))
-            for i, cells in enumerate(rows):
-                row = table.row()
-                if i in section:
-                    row.cell(
-                        self.md(cells[0], bold=True),
-                        colspan=len(widths),
-                        style=FontFace(fill_color=(240, 240, 240)),
-                    )
-                    continue
-                for cell in cells:
-                    row.cell(cell)
-        self.ln(1.5)
-
-    def facts(self, items: Sequence[tuple[str, str]], label_w: float = 34) -> None:
-        """Label / value pairs (the page's definition lists)."""
-        self.set_font("body", "", 8.5)
-        self.set_draw_color(190)
-        with self.table(
-            col_widths=(label_w, self.inner - label_w),
-            text_align=("LEFT", "LEFT"),
-            line_height=4.4,
-            borders_layout="HORIZONTAL_LINES",
-            first_row_as_headings=False,
-            markdown=True,
-            align="LEFT",
-            v_align="TOP",
-            padding=(0.8, 1.2),
-        ) as table:
-            for label, value in items:
-                row = table.row()
-                row.cell(self.md(label, bold=True))
-                row.cell(self.md(value))
-        self.ln(1.5)
-
-    # ---- chart
-
-    def load_chart(self, points: dict[str, list[Any]], attempt_starts: Sequence[float]) -> None:
-        """CPU, RAM, GPU and VRAM in percent over the run. Vector lines that differ by dash
-        pattern as well as colour."""
-        ts = points["ts"]
-        series: dict[str, list[float | None]] = {}
-
-        def ratio(used: list[Any], total: list[Any]) -> list[float | None]:
-            return [
-                None if u is None or not t else min(100.0, u / t * 100)
-                for u, t in zip(used, total, strict=True)
-            ]
-
-        series["gpu"] = points["gpu_util"]
-        series["vram"] = ratio(points["vram_used"], points["vram_total"])
-        series["cpu"] = points["cpu"]
-        series["ram"] = ratio(points["ram_used"], points["ram_total"])
-        keys = [k for k in PALETTE if any(v is not None for v in series[k])]
-        if not keys or len(ts) < 2:
-            return
-        height, label_h = 52.0, 10.0
-        self.need(height + label_h + 12)
-        self.set_font("body", "B", 9)
-        self.cell(0, 5, "Over the run (percent)", new_x="LMARGIN", new_y="NEXT")
-        left = self.l_margin + 9
-        width = self.inner - 9 - 2
-        top = self.get_y() + 2
-        t0 = ts[0]
-        span = max(ts[-1] - t0, 1)
-
-        def x(t: float) -> float:
-            return left + (t - t0) / span * width
-
-        def y(v: float) -> float:
-            return top + (1 - v / 100) * height
-
-        self.set_font("body", "", 7)
-        self.set_line_width(0.15)
-        for v in (0, 25, 50, 75, 100):
-            self.set_draw_color(205 if v not in (0, 100) else 120)
-            self.line(left, y(v), left + width, y(v))
-            self.set_xy(self.l_margin, y(v) - 1.6)
-            self.cell(7.5, 3.2, f"{v}%", align="R")
-        self.set_draw_color(120)
-        self.line(left, top, left, top + height)
-        ticks = 6
-        for i in range(ticks):
-            tick = t0 + span * i / (ticks - 1)
-            self.line(x(tick), top + height, x(tick), top + height + 1.2)
-            label = clock(tick - t0)
-            w = self.get_string_width(label)
-            lx = min(max(x(tick) - w / 2, left - 3), left + width - w)
-            self.set_xy(lx, top + height + 1.6)
-            self.cell(w + 0.5, 3.2, label)
-        self.set_draw_color(90)
-        for start in attempt_starts:
-            if t0 - 1 <= start <= t0 + span + 1:
-                self.line(x(start), top + height - 1.6, x(start), top + height)
-        for key in keys:
-            colour, dash, _ = PALETTE[key]
-            self.set_draw_color(*colour)
-            self.set_line_width(0.45)
-            if dash:
-                self.set_dash_pattern(dash=dash[0], gap=dash[1])
-            run: list[tuple[float, float]] = []
-            for t, v in zip(ts, series[key], strict=True):
-                if v is None:
-                    if len(run) > 1:
-                        self.polyline(run, style="D")
-                    run = []
-                else:
-                    run.append((x(t), y(v)))
-            if len(run) > 1:
-                self.polyline(run, style="D")
-            self.set_dash_pattern()
-        # legend
-        self.set_xy(left, top + height + 6.2)
-        for key in keys:
-            colour, dash, name = PALETTE[key]
-            gx, gy = self.get_x(), self.get_y() + 1.7
-            self.set_draw_color(*colour)
-            self.set_line_width(0.45)
-            if dash:
-                self.set_dash_pattern(dash=dash[0], gap=dash[1])
-            self.line(gx, gy, gx + 14, gy)
-            self.set_dash_pattern()
-            self.set_x(gx + 15.5)
-            self.set_font("body", "", 7.5)
-            self.cell(self.get_string_width(name) + 6, 3.6, name)
-        self.set_draw_color(90)
-        self.set_line_width(0.15)
-        gx, gy = self.get_x(), self.get_y() + 1.7
-        self.line(gx, gy - 0.6, gx, gy + 1.2)
-        self.set_x(gx + 1.5)
-        self.cell(40, 3.6, "an attempt starts")
-        self.set_draw_color(150)
-        self.set_line_width(0.2)
-        self.set_y(top + height + 12)
-
-
 # --------------------------------------------------------------------------- run report
 
 
@@ -610,29 +351,33 @@ def _facts(run: dict[str, Any]) -> list[tuple[str, str]]:
 
 def _results(doc: Doc, run: dict[str, Any]) -> None:
     summary = run.get("summary") or {}
-    tiles = [
-        ("Overall", score(run.get("overall"))),
-        ("Pass rate", score(summary.get("pass_rate"))),
-        ("Median first token", ms(summary.get("median_ttft_ms"))),
-        ("Median attempt", ms(summary.get("median_total_ms"))),
-        ("Speed", tps(summary.get("median_tokens_per_s"))),
-        ("Failed attempts", str(summary["failures"]) if "failures" in summary else DASH),
+    failures = summary.get("failures")
+    tiles: list[tuple[str, str, Any]] = [
+        ("Overall", score(run.get("overall")), score_colour(run.get("overall"))),
+        ("Pass rate", score(summary.get("pass_rate")), None),
+        ("Median first token", ms(summary.get("median_ttft_ms")), None),
+        ("Median attempt", ms(summary.get("median_total_ms")), None),
+        ("Speed", tps(summary.get("median_tokens_per_s")), None),
+        (
+            "Failed attempts",
+            str(failures) if failures is not None else DASH,
+            CRIT if failures else None,
+        ),
     ]
     if summary.get("empty_answers"):
-        tiles.append(("Empty answers", str(summary["empty_answers"])))
-    cols = 4
-    width = doc.inner / cols
-    rows = []
-    for i in range(0, len(tiles), cols):
-        chunk = tiles[i : i + cols]
-        chunk += [("", "")] * (cols - len(chunk))
-        rows.append([f"{label}\n**{value}**" if label else "" for label, value in chunk])
-    doc.grid(None, rows, [width] * cols, "L" * cols, size=10)
+        tiles.append(("Empty answers", str(summary["empty_answers"]), CRIT))
+    doc.tiles(tiles)
     groups = run.get("group_scores") or {}
     if groups:
         doc.grid(
             ["Group", "Score"],
-            [[GROUP_SHORT.get(g, g), score(s)] for g, s in groups.items()],
+            [
+                [
+                    GROUP_SHORT.get(g, g),
+                    cell(S(score(v), color=score_colour(v)), align="R"),
+                ]
+                for g, v in groups.items()
+            ],
             [60, 24],
             "LR",
         )
@@ -659,15 +404,18 @@ def _levels(doc: Doc, run: dict[str, Any]) -> None:
         top = len(levels) > 1 and (s.get("overall") or 0) == best
         rows.append(
             [
-                f"**{doc.t(effort_label(e))}**\n{EFFORT_HELP[e]} · {s['attempts']} attempts",
-                doc.md(score(s.get("overall")), bold=top),
+                cell(
+                    S(effort_label(e), bold=True, mono=True),
+                    S(f"{EFFORT_HELP[e]} · {s['attempts']} attempts", color=MUTED, size=7),
+                ),
+                _score_cell(s.get("overall"), best=top),
                 score(s.get("pass_rate")),
                 ms(s.get("median_total_ms")),
                 str(s.get("median_tokens_out") if s.get("median_tokens_out") is not None else DASH),
                 f"{chars(s['median_reasoning_chars'])} chars"
                 if s.get("median_reasoning_chars")
                 else DASH,
-                issues or "0",
+                cell(S(issues, color=CRIT)) if issues else "0",
                 f"{s.get('failed')}/{s['attempts']}",
                 gb(vram["peak"]) if vram else DASH,
             ]
@@ -695,11 +443,20 @@ def _levels(doc: Doc, run: dict[str, Any]) -> None:
         "Time, tokens out and reasoning are medians per attempt; an attempt that ended without an "
         "answer counts with the time and tokens it spent. Tokens out include the reasoning; the "
         "API "
-        "reports no split, so reasoning is counted in characters. Bold: the best accuracy."
+        "reports no split, so reasoning is counted in characters. Green fill: the best accuracy."
     )
     if note:
         text += f" The level changes {note.get('applies_to')}. {note.get('fixed')}"
     doc.para(text, size=7.5)
+
+
+def _score_cell(v: float | None, *, best: bool = False, align: str | None = None) -> TCell:
+    """A score in its colour; the best one of a row also bold on a light green fill."""
+    return cell(
+        S(score(v), bold=best, color=score_colour(v)),
+        fill=BEST_FILL if best else None,
+        align=align,
+    )
 
 
 def _avg_peak(stat: dict[str, Any] | None, fmt: Any) -> tuple[str, str]:
@@ -745,7 +502,7 @@ def _hardware(
                         "Model's VRAM",
                         p,
                         a,
-                        doc.md(f"held by {meta.get('llm_process') or 'the LLM server'}"),
+                        f"held by {meta.get('llm_process') or 'the LLM server'}",
                     ]
                 )
             else:
@@ -772,7 +529,7 @@ def _hardware(
                 f"{_rnd(loaded['context_length'] / 1024)}k context"
                 if loaded.get("context_length")
                 else None,
-                doc.md(f"from the backend ({loaded.get('source')})"),
+                f"from the backend ({loaded.get('source')})",
             ]
             rows.append(
                 [
@@ -782,7 +539,13 @@ def _hardware(
                     " · ".join(s for s in sub if s),
                 ]
             )
-        doc.grid(["", "Peak", "Average", "Note"], rows, [34, 30, 30, doc.inner - 94], "LRRL")
+        doc.grid(
+            ["", "Peak", "Average", "Note"],
+            [[cell(S(r[0], bold=True)), r[1], r[2], cell(S(r[3], color=MUTED))] for r in rows],
+            [34, 30, 30, doc.inner - 94],
+            "LRRL",
+            size=8,
+        )
         if scope == "unknown" and meta.get("gpu"):
             doc.para(
                 "The endpoint is this machine, but the GPU listed no process recognised as an LLM "
@@ -814,16 +577,21 @@ def _level_matrix(doc: Doc, run: dict[str, Any], titles: dict[str, str]) -> None
         return
     rows = []
     for sid in ids:
-        row = [doc.md(titles.get(sid, sid))]
+        row: list[TCell | str] = [titles.get(sid, sid)]
         for e in levels:
             s = (stats[sid]["levels"] or {}).get(e)
             if not s:
-                row.append(DASH)
+                row.append(cell(S(DASH, color=FAINT)))
                 continue
-            text = f"{score(s['score'])} · {ms(s.get('median_total_ms'))}"
+            lines: list[Any] = [
+                [
+                    S(score(s["score"]), color=score_colour(s["score"])),
+                    S(f" · {ms(s.get('median_total_ms'))}", color=MUTED),
+                ]
+            ]
             if s.get("empty"):
-                text += f"\n{s['empty']} empty"
-            row.append(text)
+                lines.append(S(f"{s['empty']} empty", color=CRIT, size=7))
+            row.append(cell(*lines))
         rows.append(row)
     first = 62.0
     each = (doc.inner - first) / len(levels)
@@ -847,7 +615,7 @@ def _scenario_table(doc: Doc, run: dict[str, Any], titles: dict[str, str]) -> No
     show_hw = scope != "old"
     host = "Host " if scope == "elsewhere" else ""
     header = ["Scenario", "Group", "Score", "Passed", "Time", "TTFT"]
-    widths = [56.0, 14, 12, 18, 15, 15]
+    widths = [56.0, 17, 14, 17, 15, 15]
     aligns = "LLRRRR"
     if show_hw:
         header += [f"{host}VRAM peak", f"{host}GPU avg", f"{host}CPU avg"]
@@ -856,14 +624,14 @@ def _scenario_table(doc: Doc, run: dict[str, Any], titles: dict[str, str]) -> No
     widths[0] += doc.inner - sum(widths)
     rows = []
     for sid, s in stats.items():
-        passed = f"{s['passed']}/{s['attempts']}"
+        passed = [f"{s['passed']}/{s['attempts']}"]
         if s.get("failed"):
-            passed += f"\n{s['failed']} failed"
+            passed.append(S(f"{s['failed']} failed", color=CRIT, size=7))
         row = [
-            f"{doc.md(titles.get(sid, sid))}\n{doc.md(sid, mono=True)}",
+            _scenario_label(titles.get(sid, sid), sid),
             GROUP_SHORT.get(s.get("group"), s.get("group") or DASH),
-            score(s.get("score")),
-            passed,
+            _score_cell(s.get("score")),
+            cell(*passed),
             ms(s.get("median_total_ms")),
             ms(s.get("median_ttft_ms")),
         ]
@@ -876,7 +644,12 @@ def _scenario_table(doc: Doc, run: dict[str, Any], titles: dict[str, str]) -> No
                 pct(hw["cpu"]["avg"]) if hw and hw.get("cpu") else DASH,
             ]
         rows.append(row)
-    doc.grid(header, rows, widths, aligns, size=7.5)
+    doc.grid(header, rows, widths, aligns, size=7.8)
+
+
+def _scenario_label(title: str, sid: str) -> TCell:
+    """A scenario's name with its id under it in small grey mono."""
+    return cell(S(title), S(sid, color=FAINT, size=7, mono=True))
 
 
 def _appendix(
@@ -895,81 +668,122 @@ def _appendix(
         return
     for a in failed:
         doc.need(34)
-        doc.ln(1.5)
+        doc.ln(2)
         title = titles.get(a["scenario_id"], a["scenario_id"])
-        head = f"{title}"
-        meta = [
-            a["scenario_id"],
+        flags = [
             f"level {effort_label(a.get('effort'))}" if a.get("effort") else None,
             f"attempt #{a['attempt']}",
-            f"score {score(a.get('score'))}",
             a["status"] if a["status"] != "ok" else None,
             {"empty": "no answer", "limit": "cut off"}.get(a.get("answer_issue") or ""),
         ]
-        doc.set_fill_color(235)
-        doc.set_font("body", "B", 8.5)
-        doc.set_text_color(0)
-        doc.multi_cell(0, 4.8, doc.t(head), fill=True, new_x="LMARGIN", new_y="NEXT")
-        doc.set_font("mono", "", 7)
-        doc.set_text_color(70)
+        # the heading strip: the scenario, and its score in the score's colour
+        top = doc.get_y()
+        doc.set_fill_color(*SUB_FILL)
+        doc.rect(doc.l_margin, top, doc.inner, 5.2, style="F")
+        doc.set_fill_color(*CRIT)
+        doc.rect(doc.l_margin, top, 1.2, 5.2, style="F")
+        doc.ink(True, 8.5)
+        doc.set_xy(doc.l_margin + 3, top)
+        doc.cell(doc.inner - 22, 5.2, doc.t(title))
+        doc.ink(True, 8.5, score_colour(a.get("score")))
+        doc.cell(0, 5.2, doc.t(f"score {score(a.get('score'))}"), align="R")
+        doc.set_y(top + 5.2)
+        doc.ink(False, 7, MUTED, mono=True)
+        doc.set_x(doc.l_margin + 3)
         doc.multi_cell(
-            0,
+            doc.inner - 3,
             3.8,
-            doc.t(" · ".join(m for m in meta if m), mono=True),
+            doc.t(" · ".join(m for m in (a["scenario_id"], *flags) if m), mono=True),
+            align="L",
             new_x="LMARGIN",
             new_y="NEXT",
         )
-        doc.set_text_color(0)
+        doc.ink()
         if a.get("error"):
-            doc.set_font("body", "B", 8)
-            doc.multi_cell(0, 4.2, doc.t(f"Error: {a['error']}"), new_x="LMARGIN", new_y="NEXT")
+            doc.ink(True, 8, CRIT)
+            doc.set_x(doc.l_margin + 3)
+            doc.multi_cell(
+                doc.inner - 3,
+                4.2,
+                doc.t(f"Error: {a['error']}"),
+                align="L",
+                new_x="LMARGIN",
+                new_y="NEXT",
+            )
+            doc.ink()
         checks = [c for c in (a.get("checks") or []) if not c.get("passed")]
         if not a.get("checks"):
-            doc.set_font("body", "", 8)
-            doc.multi_cell(0, 4.2, "No checks were recorded.", new_x="LMARGIN", new_y="NEXT")
+            doc.ink(False, 8, MUTED)
+            doc.set_x(doc.l_margin + 3)
+            doc.multi_cell(
+                doc.inner - 3,
+                4.2,
+                "No checks were recorded.",
+                align="L",
+                new_x="LMARGIN",
+                new_y="NEXT",
+            )
+            doc.ink()
         for c in checks:
-            doc.set_x(doc.l_margin + 2)
-            doc.set_font("body", "B", 8)
-            line = f"✗ {c.get('describe')}"
+            line = f"{c.get('describe')}"
             if c.get("weight") not in (None, 1):
                 line += f" (weight {c['weight']})"
-            doc.multi_cell(doc.inner - 2, 4.2, doc.t(line), new_x="LMARGIN", new_y="NEXT")
+            doc.ink(True, 8, CRIT)
+            doc.set_x(doc.l_margin + 3)
+            doc.cell(4, 4.2, "✗")
+            doc.ink(True, 8)
+            doc.multi_cell(
+                doc.inner - 7, 4.2, doc.t(line), align="L", new_x="LMARGIN", new_y="NEXT"
+            )
             if c.get("reason"):
-                doc.set_x(doc.l_margin + 6)
-                doc.set_font("body", "", 7.5)
-                doc.set_text_color(60)
+                doc.ink(False, 7.5, MUTED)
+                doc.set_x(doc.l_margin + 7)
                 doc.multi_cell(
-                    doc.inner - 6, 3.9, doc.t(c["reason"]), new_x="LMARGIN", new_y="NEXT"
+                    doc.inner - 7, 3.9, doc.t(c["reason"]), align="L", new_x="LMARGIN", new_y="NEXT"
                 )
-                doc.set_text_color(0)
         answer = a.get("answer")
-        doc.set_font("body", "B", 8)
-        doc.set_x(doc.l_margin + 2)
+        doc.ink(True, 8, MUTED)
+        doc.set_x(doc.l_margin + 3)
         if not answer:
             doc.multi_cell(
-                doc.inner - 2, 4.2, "Answer: none was produced.", new_x="LMARGIN", new_y="NEXT"
+                doc.inner - 3,
+                4.2,
+                "Answer: none was produced.",
+                align="L",
+                new_x="LMARGIN",
+                new_y="NEXT",
             )
             continue
         text = str(answer).strip()
         cut = len(text) - ANSWER_LIMIT
         if cut > 0:
             text = text[:ANSWER_LIMIT]
-        doc.multi_cell(doc.inner - 2, 4.2, "Answer:", new_x="LMARGIN", new_y="NEXT")
-        doc.set_font("mono", "", 7)
-        doc.set_x(doc.l_margin + 4)
+        doc.multi_cell(doc.inner - 3, 4.2, "Answer:", align="L", new_x="LMARGIN", new_y="NEXT")
+        doc.ink(False, 7, INK, mono=True)
+        doc.set_x(doc.l_margin + 5)
+        doc.set_draw_color(*RULE)
+        doc.set_line_width(0.5)
         doc.multi_cell(
-            doc.inner - 4, 3.5, doc.t(text, mono=True), border="L", new_x="LMARGIN", new_y="NEXT"
+            doc.inner - 5,
+            3.5,
+            doc.t(text, mono=True),
+            border="L",
+            align="L",
+            new_x="LMARGIN",
+            new_y="NEXT",
         )
         if cut > 0:
-            doc.set_font("body", "", 7.5)
-            doc.set_x(doc.l_margin + 4)
+            doc.ink(False, 7.5, MUTED)
+            doc.set_x(doc.l_margin + 5)
             doc.multi_cell(
-                doc.inner - 4,
+                doc.inner - 5,
                 3.9,
                 f"… trimmed: {cut} more characters",
+                align="L",
                 new_x="LMARGIN",
                 new_y="NEXT",
             )
+        doc.ink()
 
 
 def render_run(
@@ -1058,7 +872,113 @@ def _best(
     return set() if len(winners) == len(real) else winners
 
 
+# A comparison cell: the text it shows and the number behind it (None: not comparable).
 Cell = tuple[str, float | None]
+
+_QUIET = {"not recorded", DASH, "no GPU"}
+
+
+class _Rows:
+    """The rows of the comparison table, built the way the Compare page builds them."""
+
+    def __init__(self, doc: Doc, runs: list[dict[str, Any]]):
+        self.doc = doc
+        self.runs = runs
+        self.rows: list[Any] = []
+        self._last = ""
+
+    def _add(self, kind: str, row: Any) -> None:
+        self.rows.append(row)
+        self._last = kind
+
+    def band(self, label: str) -> None:
+        if self._last:
+            self.rows.append(Gap(7.0))
+        self._add("band", Band(label))
+
+    def sub(self, label: str, aside: str = "") -> None:
+        if self._last == "row":
+            self.rows.append(Gap(3.5))
+        self._add("sub", Sub(label, aside))
+
+    def plain(self, text: str) -> Cell:
+        return text, None
+
+    def row(
+        self,
+        label: str,
+        cells: Sequence[Cell],
+        high: bool | None,
+        sub: str = "",
+        *,
+        scored: bool = False,
+        strong: bool = False,
+    ) -> None:
+        """One row. `high`: True when the biggest value is the best, False the smallest, None when
+        the row is only shown. `scored` colours the numbers as scores."""
+        winners = (
+            _best([c[1] for c in cells], high, [c[0] for c in cells]) if high is not None else set()
+        )
+        head = cell(S(label, bold=strong), *([S(sub, color=FAINT, size=7)] if sub else []))
+        out: list[TCell | str] = [head]
+        for i, (text, raw) in enumerate(cells):
+            best = i in winners
+            colour = score_colour(raw) if scored and raw is not None else None
+            if colour is None and text in _QUIET:
+                colour = FAINT
+            out.append(
+                cell(
+                    S(text, bold=best, color=colour),
+                    fill=BEST_FILL if best else None,
+                )
+            )
+        self._add("row", out)
+
+
+def _scenario_cells(
+    stats: Sequence[dict[str, Any] | None],
+    runs: list[dict[str, Any]],
+    sid: str,
+    notes: dict[int, dict[str, Any]],
+) -> list[TCell | str]:
+    """The cells of one scenario row: the score in its colour and the median time on one line,
+    the explanation under them in small grey text, all in the same cell. The best score, and the
+    best time among the runs that tie on the best score, sit on a light green fill."""
+    scores = [s["score"] if s else None for s in stats]
+    times = [s.get("median_total_ms") if s else None for s in stats]
+    best_score = _best(scores, True, [score(v) for v in scores])
+    real = [s for s in scores if s is not None]
+    top = max(real) if real else None
+    # among the runs that tie on the best score as shown, the fastest one wins the time
+    eligible = [
+        t if scores[i] is not None and top is not None and score(scores[i]) == score(top) else None
+        for i, t in enumerate(times)
+    ]
+    best_time = _best(eligible, False, [ms(v) for v in eligible])
+    cells: list[TCell | str] = []
+    for i, s in enumerate(stats):
+        if not s:
+            cells.append(cell(S("not run", color=FAINT)))
+            continue
+        line = [
+            S(
+                score(s["score"]),
+                bold=i in best_score,
+                color=score_colour(s["score"]),
+                hl=BEST_FILL if i in best_score else None,
+            ),
+            S(" · ", color=MUTED),
+            S(
+                ms(s.get("median_total_ms")),
+                bold=i in best_time,
+                color=INK if i in best_time else MUTED,
+                hl=BEST_FILL if i in best_time else None,
+            ),
+        ]
+        why = (notes.get(runs[i]["id"]) or {}).get(sid) or {}
+        grey = FAINT if why.get("ok") else MUTED
+        cells.append(cell(line, *(S(text, color=grey, size=7) for text in why.get("lines") or [])))
+    return cells
 
 
 def render_compare(
@@ -1067,7 +987,7 @@ def render_compare(
     titles: dict[str, str],
     explanations: dict[int, dict[str, Any]] | None = None,
 ) -> bytes:
-    """The PDF of the Compare page: the same rows, the best value of each in bold."""
+    """The PDF of the Compare page: the same rows, the best value of each on a green fill."""
     ids = ", ".join(f"#{r['id']}" for r in runs)
     doc = Doc(
         landscape=len(runs) > 3,
@@ -1088,32 +1008,16 @@ def render_compare(
             gray=False,
             bold=True,
         )
+    doc.ln(1.5)
 
-    rows: list[list[str]] = []
-    section: set[int] = set()
-
-    def band(label: str) -> None:
-        section.add(len(rows))
-        rows.append([label])
-
-    def row(label: str, cells: Sequence[Cell], high: bool | None, sub: str = "") -> None:
-        winners = (
-            _best([c[1] for c in cells], high, [c[0] for c in cells]) if high is not None else set()
-        )
-        head = doc.md(label) + (f"\n{doc.md(sub)}" if sub else "")
-        rows.append([head, *(doc.md(t, bold=i in winners) for i, (t, _) in enumerate(cells))])
-
-    def num(v: float | None) -> float | None:
-        return v
+    b = _Rows(doc, runs)
+    plain, row, band = b.plain, b.row, b.band
 
     def pct_cell(v: float | None) -> Cell:
-        return score(v), num(v)
+        return score(v), v
 
     def ms_cell(v: float | None) -> Cell:
-        return ms(v), num(v)
-
-    def plain(text: str) -> Cell:
-        return text, None
+        return ms(v), v
 
     def summary(r: dict[str, Any]) -> dict[str, Any]:
         return r.get("summary") or {}
@@ -1127,13 +1031,14 @@ def render_compare(
     row("Automation", [plain(automation_text(_meta(r).get("automation"))) for r in runs], None)
     row("Scenario set", [plain(str(r.get("scenario_hash") or DASH)) for r in runs], None)
     band("Accuracy")
-    row("Overall", [pct_cell(r.get("overall")) for r in runs], True)
+    row("Overall", [pct_cell(r.get("overall")) for r in runs], True, scored=True, strong=True)
     groups = list(dict.fromkeys(g for r in runs for g in (r.get("group_scores") or {})))
     for g in groups:
         row(
             GROUP_SHORT.get(g, g),
             [pct_cell((r.get("group_scores") or {}).get(g)) for r in runs],
             True,
+            scored=True,
         )
     row("Pass rate", [pct_cell(summary(r).get("pass_rate")) for r in runs], True)
     row(
@@ -1162,66 +1067,42 @@ def render_compare(
         ],
         True,
     )
-    _compare_hardware(runs, band, row, plain)
-    _compare_levels(runs, band, row, plain)
+    _compare_hardware(runs, b)
+    _compare_levels(runs, b)
     band("Per scenario: score · median time")
     ids_all = sorted({sid for r in runs for sid in (summary(r).get("scenarios") or {})})
     notes = explanations or {}
     for sid in ids_all:
         stats = [(summary(r).get("scenarios") or {}).get(sid) for r in runs]
-        scores = [s["score"] if s else None for s in stats]
-        times = [s.get("median_total_ms") if s else None for s in stats]
-        best_score = _best(scores, True, [score(v) for v in scores])
-        real = [s for s in scores if s is not None]
-        top = max(real) if real else None
-        # among the runs that tie on the best score as shown, the fastest one wins the time
-        eligible = [
-            t
-            if scores[i] is not None and top is not None and score(scores[i]) == score(top)
-            else None
-            for i, t in enumerate(times)
-        ]
-        best_time = _best(eligible, False, [ms(v) for v in eligible])
-        cells = []
-        for i, s in enumerate(stats):
-            if not s:
-                cells.append("not run")
-                continue
-            when = doc.md(ms(s.get("median_total_ms")), bold=i in best_time)
-            text = f"{doc.md(score(s['score']), bold=i in best_score)} · {when}"
-            # the explanation sits in the same cell, right under the score
-            why = ((notes.get(runs[i]["id"]) or {}).get(sid) or {}).get("lines") or []
-            cells.append("\n".join([text, *(doc.md(line) for line in why)]))
-        rows.append([f"{doc.md(titles.get(sid, sid))}\n{doc.md(sid, mono=True)}", *cells])
+        label = _scenario_label(titles.get(sid, sid), sid)
+        b._add("row", [label, *_scenario_cells(stats, runs, sid, notes)])
 
     first = 58.0 if len(runs) <= 3 else 66.0
     each = (doc.inner - first) / len(runs)
-    header = [" "]
+    header: list[TCell | str] = [" "]
     for r in runs:
         header.append(
-            f"{doc.md(run_label(r), bold=True)}\n#{r['id']} · {stamp(r.get('started'))}\n"
-            f"{doc.md(backend_label(r))}\n{doc.md(size_label(r))}"
+            cell(
+                S(run_label(r), bold=True, size=8.4),
+                S(f"#{r['id']} · {stamp(r.get('started'))}", color=MUTED, size=7),
+                S(backend_label(r), color=MUTED, size=7),
+                S(size_label(r), color=MUTED, size=7),
+            )
         )
-    doc.grid(
-        header,
-        rows,
-        [first, *[each] * len(runs)],
-        "L" + "C" * len(runs),
-        size=7.5,
-        section=section,
-        raw_header=True,
-    )
+    doc.grid(header, b.rows, [first, *[each] * len(runs)], "L" * (len(runs) + 1), size=8)
     doc.para(
-        "The best value in each row is bold. Time, failures and hardware load: lower is better; "
-        "scores, speed and the share of the model on the GPU: higher is better. Hardware numbers "
-        "of a model "
-        'served from another machine are the host\'s, labelled "(host)" and never marked.'
+        "The best value in each row is bold on a green fill. Scores: green is 90% and up, amber "
+        "50% to 89%, red under 50%. Time, failures and hardware load: lower is better; scores, "
+        "speed and the share of the model on the GPU: higher is better. Hardware numbers of a "
+        'model served from another machine are the host\'s, labelled "(host)" and never marked.'
     )
     return bytes(doc.output())
 
 
-def _compare_hardware(runs: list[dict[str, Any]], band: Any, row: Any, plain: Any) -> None:
-    def cell(r: dict[str, Any], pick: Any, *, gpu: bool = False) -> Cell:
+def _compare_hardware(runs: list[dict[str, Any]], b: _Rows) -> None:
+    plain, row = b.plain, b.row
+
+    def cell_of(r: dict[str, Any], pick: Any, *, gpu: bool = False) -> Cell:
         meta = _meta(r).get("hardware") or {}
         if gpu and meta.get("recorded") and not meta.get("gpu"):
             return plain("no GPU")
@@ -1254,7 +1135,7 @@ def _compare_hardware(runs: list[dict[str, Any]], band: Any, row: Any, plain: An
         return plain(DASH) if g is None else (f"{g}%", g)
 
     own = any(((r.get("summary") or {}).get("hardware") or {}).get("llm_vram") for r in runs)
-    band("Hardware")
+    b.band("Hardware")
     row(
         "Measured from",
         [plain(hardware_label(_meta(r).get("hardware"), r.get("backend_kind"))) for r in runs],
@@ -1263,25 +1144,25 @@ def _compare_hardware(runs: list[dict[str, Any]], band: Any, row: Any, plain: An
     )
     row(
         "VRAM, peak",
-        [cell(r, vram, gpu=True) for r in runs],
+        [cell_of(r, vram, gpu=True) for r in runs],
         False,
         "model's own process when seen" if own else "whole GPU",
     )
     row(
         "GPU busy, average",
-        [cell(r, stat("gpu_util", "avg", lambda v, h: pct(v)), gpu=True) for r in runs],
+        [cell_of(r, stat("gpu_util", "avg", lambda v, h: pct(v)), gpu=True) for r in runs],
         None,
     )
     row(
         "GPU power, average",
-        [cell(r, stat("power_w", "avg", lambda v, h: watts(v)), gpu=True) for r in runs],
+        [cell_of(r, stat("power_w", "avg", lambda v, h: watts(v)), gpu=True) for r in runs],
         False,
     )
-    row("CPU, average", [cell(r, stat("cpu", "avg", lambda v, h: pct(v))) for r in runs], False)
+    row("CPU, average", [cell_of(r, stat("cpu", "avg", lambda v, h: pct(v))) for r in runs], False)
     row(
         "RAM, peak",
         [
-            cell(r, stat("ram_used", "peak", lambda v, h: gb_of(v, h.get("ram_total"))))
+            cell_of(r, stat("ram_used", "peak", lambda v, h: gb_of(v, h.get("ram_total"))))
             for r in runs
         ],
         False,
@@ -1289,11 +1170,12 @@ def _compare_hardware(runs: list[dict[str, Any]], band: Any, row: Any, plain: An
     row("Model on GPU", [loaded(r) for r in runs], True, "rest runs on the CPU")
 
 
-def _compare_levels(runs: list[dict[str, Any]], band: Any, row: Any, plain: Any) -> None:
+def _compare_levels(runs: list[dict[str, Any]], b: _Rows) -> None:
     levels = [e for e in EFFORTS if any(e in levels_of(r) for r in runs)]
     if not levels:
         return
-    band("Per thinking level")
+    plain, row = b.plain, b.row
+    b.band("Per thinking level")
     none: Cell = plain(DASH)
 
     def cells(level: str, make: Callable[[dict[str, Any], dict[str, Any]], Cell]) -> list[Cell]:
@@ -1314,20 +1196,22 @@ def _compare_levels(runs: list[dict[str, Any]], band: Any, row: Any, plain: Any)
         return lambda r, st: plain(str(DASH if st.get(key) is None else st[key]))
 
     for e in levels:
-        name = effort_label(e)
+        b.sub(effort_label(e), EFFORT_HELP[e])
         row(
-            f"{name} · accuracy",
+            "Accuracy",
             cells(e, lambda r, st: (score(st["overall"]), st["overall"])),
             True,
+            scored=True,
+            strong=True,
         )
         row(
-            f"{name} · time per answer",
+            "Time per answer",
             cells(e, lambda r, st: (ms(st.get("median_total_ms")), st.get("median_total_ms"))),
             False,
         )
-        row(f"{name} · tokens out", cells(e, median("median_tokens_out")), None)
+        row("Tokens out", cells(e, median("median_tokens_out")), None)
         row(
-            f"{name} · reasoning",
+            "Reasoning",
             cells(
                 e,
                 lambda r, st: plain(
@@ -1339,7 +1223,7 @@ def _compare_levels(runs: list[dict[str, Any]], band: Any, row: Any, plain: Any)
             None,
         )
         row(
-            f"{name} · empty / cut off",
+            "Empty / cut off",
             cells(
                 e,
                 lambda r, st: (
@@ -1349,4 +1233,4 @@ def _compare_levels(runs: list[dict[str, Any]], band: Any, row: Any, plain: Any)
             ),
             False,
         )
-        row(f"{name} · VRAM peak", cells(e, vram), None)
+        row("VRAM peak", cells(e, vram), None)

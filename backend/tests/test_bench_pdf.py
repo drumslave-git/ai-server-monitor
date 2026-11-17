@@ -7,13 +7,14 @@ import io
 import random
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
 
-from ai_server_monitor.bench import pdf
+from ai_server_monitor.bench import pdf, pdf_doc
 from ai_server_monitor.bench.hardware import COLUMNS, FIELDS
 from ai_server_monitor.bench.runner import summarize, summarize_levels
 from ai_server_monitor.bench.schema import load_scenarios
@@ -443,7 +444,6 @@ def test_missing_glyphs_and_control_characters_do_not_crash() -> None:
     assert doc.t("a\x00b\tc\r\nd") == "ab    c\nd"
     assert doc.t("→ ≥ · é") == "→ ≥ · é"
     assert doc.t("日本語 \U00020000") == "??? ?"  # not in DejaVu: "?" instead of an empty box
-    assert doc.md("a**b") != "a**b" and "**" not in doc.md("a**b").replace("​", "")
 
 
 def test_filenames_are_safe() -> None:
@@ -451,3 +451,93 @@ def test_filenames_are_safe() -> None:
     name = pdf.run_filename(run)
     assert re.fullmatch(r"bench-run-12-[A-Za-z0-9._-]+-2023-11-14\.pdf", name), name
     assert pdf.run_filename({"id": 1, "model": None, "started": 0}).startswith("bench-run-1-model-")
+
+
+# --------------------------------------------------------------------------- the look
+
+
+def _colours(data: bytes) -> set[str]:
+    """The fill and text colours the pages use, as the "r g b" operands of rg operators."""
+    found: set[str] = set()
+    for page in PdfReader(io.BytesIO(data)).pages:
+        stream = page.get_contents().get_data().decode("latin-1")
+        found.update(m.group(1) for m in re.finditer(r"([\d.]+ [\d.]+ [\d.]+) rg", stream))
+    return found
+
+
+def _rgb(colour: tuple[int, int, int]) -> str:
+    return " ".join(f"{c / 255:.4f}".rstrip("0").rstrip(".") for c in colour)
+
+
+def test_score_colours_use_the_pages_thresholds() -> None:
+    level = pdf_doc.score_level
+    assert [level(v) for v in (None, 1.0, 0.9, 0.8999, 0.5, 0.4999, 0.0)] == [
+        "off", "ok", "ok", "warn", "warn", "crit", "crit",
+    ]  # fmt: skip
+    # the same cut-offs as the web page's scoreLevel (frontend/src/pages/bench/format.ts)
+    page = Path(__file__).parents[2] / "frontend" / "src" / "pages" / "bench" / "format.ts"
+    if page.exists():
+        assert re.search(
+            r's >= 0\.9 \? "ok" : s >= 0\.5 \? "warn" : "crit"', page.read_text("utf-8")
+        )
+
+
+def test_compare_pdf_is_in_colour(client: TestClient) -> None:
+    first = _seed(client, model="small-model", quality=0.8, failures=False)
+    second = _seed(client, model="big-model", quality=1.0, failures=False)
+    data = client.get(f"/api/bench/compare.pdf?ids={first},{second}").content
+    colours = _colours(data)
+    for name in ("OK", "WARN", "BEST_FILL", "ACCENT_TINT", "ZEBRA"):
+        assert _rgb(getattr(pdf_doc, name)) in colours, name
+    # a chart line per series, each in its own colour
+    assert len({_rgb(c) for c, _, _ in pdf_doc.PALETTE.values()}) == 4
+
+
+def test_run_pdf_is_in_colour_with_a_coloured_chart(client: TestClient) -> None:
+    run_id = _seed(client, quality=0.8)
+    data = client.get(f"/api/bench/runs/{run_id}/export.pdf").content
+    colours = _colours(data)
+    for name in ("WARN", "CRIT", "SUB_FILL", "ACCENT_TINT"):
+        assert _rgb(getattr(pdf_doc, name)) in colours, name
+
+
+def _tail_doc(fillers: int, lines: int = 1) -> bytes:
+    """A table of `fillers` rows, then a heading with three rows; every row has `lines` lines."""
+    doc = pdf.Doc(landscape=False, footer_left="t")
+    doc.add_page()
+    rows: list[Any] = []
+    for i in range(fillers):
+        rows.append([pdf_doc.cell(*[f"fill{i}-{n}" for n in range(lines)]), "x"])
+    rows += [pdf_doc.Gap(7), pdf_doc.Band("HEADING"), *[[f"tail{i}", "y"] for i in range(3)]]
+    doc.grid(["a", "b"], rows, [90, 92], "LL")
+    return bytes(doc.output())
+
+
+def test_a_heading_is_never_the_last_thing_on_a_page() -> None:
+    for fillers in range(0, 60):
+        pages = _pages(_tail_doc(fillers))
+        for n, text in enumerate(pages):
+            if "HEADING" in text:
+                after = text.split("HEADING", 1)[1]
+                assert "tail0" in after and "tail1" in after, (fillers, n)
+
+
+def test_a_row_is_never_split_across_pages() -> None:
+    for fillers in range(25, 45):
+        pages = _pages(_tail_doc(fillers, lines=3))
+        for i in range(fillers):
+            home = [n for n, t in enumerate(pages) if f"fill{i}-0" in t]
+            assert home and all(f"fill{i}-{k}" in pages[home[0]] for k in range(3)), (fillers, i)
+
+
+def test_a_section_heading_travels_with_its_table() -> None:
+    for before in range(0, 70):
+        doc = pdf.Doc(landscape=False, footer_left="t")
+        doc.add_page()
+        for i in range(before):
+            doc.para(f"filler {i}")
+        doc.h2("HEADING", "aside")
+        doc.grid(["colA", "colB"], [[f"tail{i}", "y"] for i in range(4)], [90, 92], "LL")
+        pages = _pages(bytes(doc.output()))
+        home = [n for n, text in enumerate(pages) if "HEADING" in text]
+        assert len(home) == 1 and "colA" in pages[home[0]] and "tail1" in pages[home[0]], before
