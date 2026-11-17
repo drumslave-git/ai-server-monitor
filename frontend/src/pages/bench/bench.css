@@ -54,6 +54,12 @@
 .runs-table .chip-grid { display: grid; grid-template-columns: auto auto; justify-content: start; justify-items: start; gap: 4px; }
 .runs-table .chip-grid.chip-col { grid-template-columns: auto; }
 .runs-table .chip-grid .chip { margin: 0; }
+/* Every column but Model takes only what its content needs; Model gets the rest. The backend sits under the model name
+   (the Backend cell stays for the phone card). */
+.runs-table th.col-fit { width: 1px; white-space: nowrap; }
+.runs-table td.num, .runs-table td.nowrap { white-space: nowrap; }
+.runs-table td.backend-cell { display: none; }
+.runs-table .run-backend { display: block; }
 .runs-table .stack { display: block; white-space: nowrap; }
 .runs-table .stack-sep { display: none; }
 .runs-table .bp::before { content: "\200b"; }
@@ -184,6 +190,8 @@ span.cmp-best { padding: 0 4px; }
   .runs-table .chip-grid, .runs-table .chip-grid.chip-col { display: block; }
   .runs-table .chip-grid .chip { margin: 0 4px 2px 0; }
   .runs-table .stack { display: inline; white-space: normal; }
+  .runs-table td.backend-cell { display: block; }
+  .runs-table .run-backend { display: none; }
   .runs-table .stack-sep { display: inline; }
   .runs-table .bp::before { content: none; }
   .runs-table .run-model { min-width: 0; }

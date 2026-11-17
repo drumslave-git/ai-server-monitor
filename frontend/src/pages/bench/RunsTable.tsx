@@ -124,18 +124,17 @@ export function RunsTable({ runs, selected, onSelect }: { runs: Run[]; selected:
             <thead>
               <tr>
                 <th className="check-col"><span className="sr-only">Compare</span></th>
-                {head("started", "Date")}
+                {head("started", "Date", "col-fit")}
                 {head("model", "Model")}
-                <th>Backend</th>
-                <th>Size</th>
-                {head("overall", "Score", "num")}
-                <th>Groups</th>
-                {head("hardware", "Hardware")}
-                {head("ttft", "TTFT", "num")}
-                {head("total", "Time", "num")}
-                {head("tps", "Speed", "num")}
-                {head("pass", "Pass", "num")}
-                {head("failures", "Fail", "num")}
+                <th className="col-fit">Size</th>
+                {head("overall", "Score", "num col-fit")}
+                <th className="col-fit">Groups</th>
+                {head("hardware", "Hardware", "col-fit")}
+                {head("ttft", "TTFT", "num col-fit")}
+                {head("total", "Time", "num col-fit")}
+                {head("tps", "Speed", "num col-fit")}
+                {head("pass", "Pass", "num col-fit")}
+                {head("failures", "Fail", "num col-fit")}
               </tr>
             </thead>
             <tbody>
@@ -154,8 +153,9 @@ export function RunsTable({ runs, selected, onSelect }: { runs: Run[]; selected:
                       {r.scope === "all" ? "all scenarios" : r.scope.replace("group:", "")} · ×{r.repeats}
                       {r.temperature !== null && r.temperature !== undefined ? ` · temp ${r.temperature}` : ""}
                     </span>
+                    <span className="block muted small run-backend">{backendLabel(r)}</span>
                   </td>
-                  <td data-label="Backend" className="muted small"><Lines parts={backendLabel(r).split(" · ")} /></td>
+                  <td data-label="Backend" className="muted small backend-cell"><Lines parts={backendLabel(r).split(" · ")} /></td>
                   <td data-label="Size" className="muted small"><Lines parts={sizeParts(r)} /></td>
                   <td data-label="Score" className="num"><span className={`score score-${scoreLevel(r.overall)}`}>{score(r.overall)}</span></td>
                   <td data-label="Groups" className="group-chips">
