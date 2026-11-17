@@ -194,10 +194,16 @@ def automation_text(a: dict[str, Any] | None) -> str:
     return "paused for the run" if a.get("by_run") else "paused (already paused before the run)"
 
 
-def gpu_text(gpu: dict[str, Any] | None) -> str:
+def gpu_text(gpu: dict[str, Any] | None, hardware: dict[str, Any] | None = None) -> str:
+    """The GPU line of the run's facts: from the start-of-run GPU snapshot when it has one, else
+    the name and count the hardware recorder noted ("NVIDIA GeForce RTX 3090 ×2")."""
     gpus = (gpu or {}).get("gpus") or []
     if not gpus:
-        return "not available"
+        name = (hardware or {}).get("gpu_name")
+        if not name:
+            return "not available"
+        count = (hardware or {}).get("gpu_count") or 0
+        return f"{name} ×{count}" if count > 1 else str(name)
     out = []
     for g in gpus:
         text = str(g.get("name") or "GPU")
@@ -341,7 +347,7 @@ def _facts(run: dict[str, Any]) -> list[tuple[str, str]]:
             f"{stamp(run.get('started'))} · took "
             f"{elapsed(run['started'], run['finished']) if run.get('finished') else DASH}",
         ),
-        ("GPU", gpu_text(meta.get("gpu"))),
+        ("GPU", gpu_text(meta.get("gpu"), meta.get("hardware"))),
         ("Automation", automation_text(meta.get("automation"))),
     ]
     if meta.get("judge"):
@@ -406,7 +412,7 @@ def _levels(doc: Doc, run: dict[str, Any]) -> None:
             [
                 cell(
                     S(effort_label(e), bold=True, mono=True),
-                    S(f"{EFFORT_HELP[e]} · {s['attempts']} attempts", color=MUTED, size=7),
+                    S(f"{EFFORT_HELP[e]} · {s['attempts']} attempts", color=MUTED, size=8),
                 ),
                 _score_cell(s.get("overall"), best=top),
                 score(s.get("pass_rate")),
@@ -590,7 +596,7 @@ def _level_matrix(doc: Doc, run: dict[str, Any], titles: dict[str, str]) -> None
                 ]
             ]
             if s.get("empty"):
-                lines.append(S(f"{s['empty']} empty", color=CRIT, size=7))
+                lines.append(S(f"{s['empty']} empty", color=CRIT, size=8))
             row.append(cell(*lines))
         rows.append(row)
     first = 62.0
@@ -626,7 +632,7 @@ def _scenario_table(doc: Doc, run: dict[str, Any], titles: dict[str, str]) -> No
     for sid, s in stats.items():
         passed = [f"{s['passed']}/{s['attempts']}"]
         if s.get("failed"):
-            passed.append(S(f"{s['failed']} failed", color=CRIT, size=7))
+            passed.append(S(f"{s['failed']} failed", color=CRIT, size=8))
         row = [
             _scenario_label(titles.get(sid, sid), sid),
             GROUP_SHORT.get(s.get("group"), s.get("group") or DASH),
@@ -649,7 +655,7 @@ def _scenario_table(doc: Doc, run: dict[str, Any], titles: dict[str, str]) -> No
 
 def _scenario_label(title: str, sid: str) -> TCell:
     """A scenario's name with its id under it in small grey mono."""
-    return cell(S(title), S(sid, color=FAINT, size=7, mono=True))
+    return cell(S(title), S(sid, color=FAINT, size=8, mono=True))
 
 
 def _appendix(
@@ -919,7 +925,7 @@ class _Rows:
         winners = (
             _best([c[1] for c in cells], high, [c[0] for c in cells]) if high is not None else set()
         )
-        head = cell(S(label, bold=strong), *([S(sub, color=FAINT, size=7)] if sub else []))
+        head = cell(S(label, bold=strong), *([S(sub, color=FAINT, size=8)] if sub else []))
         out: list[TCell | str] = [head]
         for i, (text, raw) in enumerate(cells):
             best = i in winners
@@ -977,7 +983,7 @@ def _scenario_cells(
         ]
         why = (notes.get(runs[i]["id"]) or {}).get(sid) or {}
         grey = FAINT if why.get("ok") else MUTED
-        cells.append(cell(line, *(S(text, color=grey, size=7) for text in why.get("lines") or [])))
+        cells.append(cell(line, *(S(text, color=grey, size=8) for text in why.get("lines") or [])))
     return cells
 
 
@@ -1084,9 +1090,9 @@ def render_compare(
         header.append(
             cell(
                 S(run_label(r), bold=True, size=8.4),
-                S(f"#{r['id']} · {stamp(r.get('started'))}", color=MUTED, size=7),
-                S(backend_label(r), color=MUTED, size=7),
-                S(size_label(r), color=MUTED, size=7),
+                S(f"#{r['id']} · {stamp(r.get('started'))}", color=MUTED, size=7.5),
+                S(backend_label(r), color=MUTED, size=8),
+                S(size_label(r), color=MUTED, size=8),
             )
         )
     doc.grid(header, b.rows, [first, *[each] * len(runs)], "L" * (len(runs) + 1), size=8)

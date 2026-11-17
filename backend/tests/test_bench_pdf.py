@@ -541,3 +541,30 @@ def test_a_section_heading_travels_with_its_table() -> None:
         pages = _pages(bytes(doc.output()))
         home = [n for n, text in enumerate(pages) if "HEADING" in text]
         assert len(home) == 1 and "colA" in pages[home[0]] and "tail1" in pages[home[0]], before
+
+
+def test_gpu_line_falls_back_to_the_recorded_gpu_name() -> None:
+    hardware = {
+        "recorded": True,
+        "gpu": True,
+        "gpu_name": "NVIDIA GeForce RTX 3090",
+        "gpu_count": 1,
+    }
+    assert pdf.gpu_text(None, hardware) == "NVIDIA GeForce RTX 3090"
+    assert pdf.gpu_text({}, {**hardware, "gpu_count": 2}) == "NVIDIA GeForce RTX 3090 ×2"
+    assert pdf.gpu_text(None, None) == "not available" == pdf.gpu_text(None, {"recorded": True})
+    snapshot = {"gpus": [{"name": "RTX 4090", "mem_total": 24 * 1024**3}]}
+    assert pdf.gpu_text(snapshot, hardware) == "RTX 4090, 24 GB"  # the start-of-run snapshot wins
+    run = {"id": 3, "started": 1_700_000_000.0, "finished": None, "meta": {"hardware": hardware}}
+    assert ("GPU", "NVIDIA GeForce RTX 3090") in pdf._facts(run)
+
+
+def test_a_level_group_that_goes_on_over_a_page_says_so() -> None:
+    doc = pdf.Doc(landscape=False, footer_left="t")
+    doc.add_page()
+    rows: list[Any] = [pdf_doc.Sub("LEVELONE", "help")]
+    rows += [[f"row{i}", "y"] for i in range(70)]
+    doc.grid(["a", "b"], rows, [90, 92], "LL")
+    pages = _pages(bytes(doc.output()))
+    assert len(pages) >= 2 and "LEVELONE" in pages[0] and "(continued)" not in pages[0]
+    assert "LEVELONE" in pages[1] and "(continued)" in pages[1]

@@ -439,6 +439,7 @@ class Doc(FPDF):
         if head:
             y = draw_head(y)
         stripe = 0
+        group: Sub | None = None
         for i, (kind, payload, h) in enumerate(plan):
             if kind == "gap":
                 if fresh:
@@ -456,13 +457,20 @@ class Doc(FPDF):
                 y = new_page()
                 if head:
                     y = draw_head(y)
+                if kind == "row" and group is not None:
+                    # a group that goes on over the page says which one it is
+                    self._sub(y, x0, total, f"{group.text} (continued)", group.aside)
+                    y += 6.4
+                    stripe = 0
             fresh = False
             if kind == "band":
                 self._band(y, x0, total, payload.text, payload.aside)
                 stripe = 0
+                group = None
             elif kind == "sub":
                 self._sub(y, x0, total, payload.text, payload.aside)
                 stripe = 0
+                group = payload
             else:
                 cells, laid, _ = payload
                 if zebra and stripe % 2 == 1:
