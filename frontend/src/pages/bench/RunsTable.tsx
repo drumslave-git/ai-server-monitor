@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Badge, Empty, Panel } from "../../ui";
 import { vramStat, hwScopeOf } from "./Hardware";
 import { GROUP_SHORT, backendLabel, gbOf, ms, score, scoreLevel, shortDate, sizeLabel, statusLevel, tps, watts } from "./format";
@@ -33,6 +33,39 @@ const value = (r: Run, key: SortKey): number | string | null => {
   }
 };
 
+/** Text that may wrap (in the table, not on a phone) after "/", ".", ":" and "-" (a long model name would otherwise fix the column width). */
+const breakable = (text: string) =>
+  text.split(/(?<=[/.:-])/).map((part, i) => (
+    <Fragment key={i}>
+      {i > 0 && <span className="bp" />}
+      {part}
+    </Fragment>
+  ));
+
+/** Parts that sit on one line on a phone and one above the other in the table (it keeps the columns narrow). */
+const Lines = ({ parts, sep = " · " }: { parts: string[]; sep?: string }) => (
+  <>
+    {parts.map((p, i) => (
+      <Fragment key={i}>
+        {i > 0 && <span className="stack-sep">{sep}</span>}
+        <span className="stack">{p}</span>
+      </Fragment>
+    ))}
+  </>
+);
+
+/** "Nov 17, 05:00 AM" as day over time. */
+const dateParts = (ts: number): string[] => {
+  const [day, ...time] = shortDate(ts).split(", ");
+  return time.length ? [day, time.join(", ")] : [day];
+};
+
+/** "8.95B · Q4_K_M · 256k ctx" as two lines: the model's make, then its context. */
+const sizeParts = (r: Run): string[] => {
+  const parts = sizeLabel(r).split(" · ");
+  return parts.length > 2 ? [parts.slice(0, 2).join(" · "), parts.slice(2).join(" · ")] : parts;
+};
+
 function HardwareCell({ run }: { run: Run }) {
   const c = hardwareCost(run);
   if (!c) {
@@ -41,10 +74,10 @@ function HardwareCell({ run }: { run: Run }) {
     return <td data-label="Hardware" className="group-chips hw-cell"><span className="muted" title={why}>—</span></td>;
   }
   return (
-    <td data-label="Hardware" className="group-chips hw-cell">
+    <td data-label="Hardware" className="group-chips hw-cell"><div className="chip-grid chip-col">
       {c.vram && <span className="chip" title={c.whole ? "VRAM, peak (whole GPU: no model process was recognised)" : "VRAM held by the model's process, peak · share of the card"}>{c.vram.text}</span>}
       {c.power && <span className="chip" title="GPU power draw, average over the run">{c.power}</span>}
-    </td>
+    </div></td>
   );
 }
 
@@ -112,25 +145,27 @@ export function RunsTable({ runs, selected, onSelect }: { runs: Run[]; selected:
                     <input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggle(r.id)} aria-label={`Compare run ${r.id}`} />
                   </td>
                   <td data-label="Date" className="nowrap">
-                    <a href={`#/bench/run/${r.id}`}>{shortDate(r.started)}</a>
+                    <a href={`#/bench/run/${r.id}`}><Lines parts={dateParts(r.started)} sep=", " /></a>
                     {r.status !== "done" && <span className="block"><Badge level={statusLevel(r.status)}>{r.status}</Badge></span>}
                   </td>
                   <td data-label="Model" className="run-model">
-                    <a href={`#/bench/run/${r.id}`} className="mono">{r.model ?? "—"}</a>
+                    <a href={`#/bench/run/${r.id}`} className="mono">{breakable(r.model ?? "—")}</a>
                     <span className="block muted small">
                       {r.scope === "all" ? "all scenarios" : r.scope.replace("group:", "")} · ×{r.repeats}
                       {r.temperature !== null && r.temperature !== undefined ? ` · temp ${r.temperature}` : ""}
                     </span>
                   </td>
-                  <td data-label="Backend" className="muted small">{backendLabel(r)}</td>
-                  <td data-label="Size" className="muted small nowrap">{sizeLabel(r)}</td>
+                  <td data-label="Backend" className="muted small"><Lines parts={backendLabel(r).split(" · ")} /></td>
+                  <td data-label="Size" className="muted small"><Lines parts={sizeParts(r)} /></td>
                   <td data-label="Score" className="num"><span className={`score score-${scoreLevel(r.overall)}`}>{score(r.overall)}</span></td>
                   <td data-label="Groups" className="group-chips">
-                    {Object.entries(r.group_scores ?? {}).map(([g, s]) => (
-                      <span key={g} className={`chip chip-${scoreLevel(s)}`} title={`${GROUP_SHORT[g] ?? g}: ${score(s)}`}>
-                        {GROUP_SHORT[g] ?? g} {score(s)}
-                      </span>
-                    ))}
+                    <div className="chip-grid">
+                      {Object.entries(r.group_scores ?? {}).map(([g, s]) => (
+                        <span key={g} className={`chip chip-${scoreLevel(s)}`} title={`${GROUP_SHORT[g] ?? g}: ${score(s)}`}>
+                          {GROUP_SHORT[g] ?? g} {score(s)}
+                        </span>
+                      ))}
+                    </div>
                   </td>
                   <HardwareCell run={r} />
                   <td data-label="TTFT" className="num">{ms(r.summary?.median_ttft_ms)}</td>

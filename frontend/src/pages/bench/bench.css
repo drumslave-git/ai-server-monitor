@@ -45,9 +45,18 @@
 .run-model { min-width: 160px; }
 .group-chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 150px; border-bottom: 0 !important; }
 .runs-table td.group-chips { display: table-cell; }
-/* Hardware cell: neutral chips (lower is better, no pass/fail line), one above the other to keep the column narrow */
-.runs-table td.hw-cell { min-width: 0; }
-.runs-table td.hw-cell .chip { display: block; width: fit-content; }
+/* The runs list has to fit next to the sidebar at 1280: tight cell padding, chips in a grid (Groups two by two,
+   Hardware one above the other), and cells that stack their parts. The phone layout turns all of it back. */
+.runs-table th, .runs-table td { padding-right: 8px; }
+.runs-table .num { padding-right: 8px; }
+.runs-table td.group-chips { min-width: 0; }
+.runs-table .run-model { min-width: 130px; }
+.runs-table .chip-grid { display: grid; grid-template-columns: auto auto; justify-content: start; justify-items: start; gap: 4px; }
+.runs-table .chip-grid.chip-col { grid-template-columns: auto; }
+.runs-table .chip-grid .chip { margin: 0; }
+.runs-table .stack { display: block; white-space: nowrap; }
+.runs-table .stack-sep { display: none; }
+.runs-table .bp::before { content: "\200b"; }
 .chip { display: inline-block; padding: 0 6px; margin: 0 4px 2px 0; border-radius: 10px; font-size: 11px; line-height: 18px; background: var(--hover); white-space: nowrap; }
 .chip-ok { color: var(--ok); }
 .chip-warn { color: var(--warn); }
@@ -172,7 +181,12 @@ span.cmp-best { padding: 0 4px; }
     content: attr(data-label); display: block; font-size: 11px; color: var(--muted); margin-bottom: 1px;
   }
   .runs-table td.group-chips { min-width: 0; }
-  .runs-table td.hw-cell .chip { display: inline-block; }
+  .runs-table .chip-grid, .runs-table .chip-grid.chip-col { display: block; }
+  .runs-table .chip-grid .chip { margin: 0 4px 2px 0; }
+  .runs-table .stack { display: inline; white-space: normal; }
+  .runs-table .stack-sep { display: inline; }
+  .runs-table .bp::before { content: none; }
+  .runs-table .run-model { min-width: 0; }
   .bench-detail .bench-table:not(.compare-table) td:first-child, .attempts-table td:first-child { grid-column: 1 / -1; }
   .bench-detail .bench-table:not(.compare-table) .num, .bench-table .num { text-align: left; padding-right: 0; }
   .bench-detail .score-bar { width: 100%; }
