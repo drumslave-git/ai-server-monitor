@@ -224,6 +224,12 @@ def test_run_records_samples_and_numbers_per_attempt_scenario_and_run(
         assert total["ram_used"]["peak"] > 0 and total["vram_total"] == 24 * GB
         assert done["summary"]["scenarios"]["report.smoke_disk"]["hw"]["n"] == total["n"]
 
+        # the runs list carries what the Hardware column needs: the recording's own description
+        # (without the rest of the meta) next to the run-wide numbers
+        (listed,) = client.get("/api/bench/runs").json()["items"]
+        assert listed["hardware_meta"] == meta and "meta" not in listed
+        assert listed["summary"]["hardware"] == total
+
         series = client.get(f"/api/bench/runs/{done['id']}/hardware").json()
         assert series["recorded"] and series["count"] == meta["samples"]
         pts = series["points"]

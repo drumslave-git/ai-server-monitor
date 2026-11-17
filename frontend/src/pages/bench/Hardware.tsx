@@ -5,12 +5,13 @@ import { clock, gb, gbOf, pct, providerName, watts } from "./format";
 import type { AttemptRow, HwMeta, HwNumbers, HwSeries, HwStat, Run } from "./types";
 
 /** Does this host's load stand for the model's? "elsewhere" = no, the LLM server is on another machine. */
-export const hwScope = (run: Pick<Run, "meta">): "none" | "old" | "here" | "elsewhere" | "unknown" => {
-  const hw = run.meta?.hardware;
+export const hwScopeOf = (hw: HwMeta | null | undefined): "none" | "old" | "here" | "elsewhere" | "unknown" => {
   if (!hw || !hw.recorded) return "old";
   if (hw.llm_here === "elsewhere") return "elsewhere";
   return hw.llm_here === "here" ? "here" : "unknown";
 };
+
+export const hwScope = (run: Pick<Run, "meta">) => hwScopeOf(run.meta?.hardware);
 
 /** The VRAM figure that stands for the model: its own process when the GPU lists it, else the whole GPU. */
 export const vramStat = (hw: HwNumbers | undefined): HwStat => (hw ? hw.llm_vram ?? hw.vram_used : null);

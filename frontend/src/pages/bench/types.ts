@@ -208,6 +208,8 @@ export type Run = {
   cold_start?: ColdStart | null;
   tool_mode?: string | null;
   temperature?: number | string | null;
+  /** What the hardware recording says about itself (the numbers are in `summary.hardware`). */
+  hardware_meta?: HwMeta | null;
   // detail view
   meta?: {
     cold_start?: ColdStart | null;

@@ -45,6 +45,9 @@
 .run-model { min-width: 160px; }
 .group-chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 150px; border-bottom: 0 !important; }
 .runs-table td.group-chips { display: table-cell; }
+/* Hardware cell: neutral chips (lower is better, no pass/fail line), one above the other to keep the column narrow */
+.runs-table td.hw-cell { min-width: 0; }
+.runs-table td.hw-cell .chip { display: block; width: fit-content; }
 .chip { display: inline-block; padding: 0 6px; margin: 0 4px 2px 0; border-radius: 10px; font-size: 11px; line-height: 18px; background: var(--hover); white-space: nowrap; }
 .chip-ok { color: var(--ok); }
 .chip-warn { color: var(--warn); }
@@ -163,12 +166,13 @@ span.cmp-best { padding: 0 4px; }
   .runs-table td { flex: 1 1 56px; min-width: 0; }
   .runs-table td.num { white-space: nowrap; }
   .runs-table td[data-label="Date"], .runs-table td[data-label="Model"], .runs-table td[data-label="Backend"],
-  .runs-table td[data-label="Size"], .runs-table td[data-label="Groups"] { flex-basis: 100%; }
+  .runs-table td[data-label="Size"], .runs-table td[data-label="Groups"], .runs-table td[data-label="Hardware"] { flex-basis: 100%; }
   .runs-table td.check-col { position: absolute; left: 0; top: 14px; flex: none; }
   .runs-table td[data-label]::before, .attempts-table td[data-label]::before, .bench-detail .bench-table:not(.compare-table) td[data-label]::before {
     content: attr(data-label); display: block; font-size: 11px; color: var(--muted); margin-bottom: 1px;
   }
   .runs-table td.group-chips { min-width: 0; }
+  .runs-table td.hw-cell .chip { display: inline-block; }
   .bench-detail .bench-table:not(.compare-table) td:first-child, .attempts-table td:first-child { grid-column: 1 / -1; }
   .bench-detail .bench-table:not(.compare-table) .num, .bench-table .num { text-align: left; padding-right: 0; }
   .bench-detail .score-bar { width: 100%; }

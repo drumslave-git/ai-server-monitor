@@ -41,6 +41,9 @@ def _run(row: Any, *, full: bool) -> dict[str, Any]:
         out["tool_mode"] = meta.get("tool_mode")
         out["temperature"] = (meta.get("llm") or {}).get("temperature")
         out["cold_start"] = meta.get("cold_start")
+        # what the recording says about itself (recorded / GPU / where the LLM server ran); the
+        # numbers are in `summary.hardware`
+        out["hardware_meta"] = meta.get("hardware")
     return out
 
 
