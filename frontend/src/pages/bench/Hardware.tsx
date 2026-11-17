@@ -197,7 +197,7 @@ function HwChart({ run, series }: { run: Run; series: HwSeries }) {
     });
     setHover(best);
   };
-  const current = (i: number): AttemptRow | undefined => [...attempts].reverse().find((a) => a.started <= ts[i]);
+  const current = (i: number): AttemptRow | undefined => attempts.findLast((a) => a.started <= ts[i]);
   const hv = hover === null ? null : hover;
   const at = hv === null ? undefined : current(hv);
   const p = series.points;

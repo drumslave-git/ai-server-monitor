@@ -266,7 +266,7 @@ export function ChatPage() {
                     {ago(s.updated, now)} · {s.messages} messages
                   </span>
                 </a>
-                <button className="btn btn-quiet session-delete" onClick={() => remove(s.id)} aria-label="Delete conversation">
+                <button className="btn btn-quiet session-delete" onClick={() => remove(s.id)} aria-label={`Delete conversation: ${s.title || "Untitled"}`}>
                   Delete
                 </button>
               </li>
@@ -300,7 +300,10 @@ export function ChatPage() {
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  void send();
+                  // Enter that confirms an IME candidate (Japanese, Chinese, Korean) is not a send.
+                  // keyCode 229: Safari reports the composition as ended before this keydown.
+                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                  e.currentTarget.form?.requestSubmit();
                 }
               }}
               aria-label="Message"

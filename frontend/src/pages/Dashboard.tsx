@@ -257,7 +257,7 @@ function LivePanel({ system, gpu }: { system: Data; gpu: Data }) {
 // --------------------------------------------------------------------------- disks
 
 function DisksPanel({ system }: { system: Data }) {
-  const fs = [...((system.filesystems ?? []) as Data[])].sort((a, b) => b.percent - a.percent);
+  const fs = ((system.filesystems ?? []) as Data[]).toSorted((a, b) => b.percent - a.percent);
   return (
     <Panel title="Disks">
       {fs.length === 0 ? (
@@ -309,8 +309,8 @@ function TopList({ title, rows }: { title: string; rows: { name: string; value: 
 function ContainersPanel({ docker, system }: { docker: Data; system: Data }) {
   const containers = ((docker.containers ?? []) as Data[]).filter((c) => c.state === "running");
   const summary = docker.summary ?? {};
-  const byCpu = [...containers].sort((a, b) => b.cpu_percent - a.cpu_percent).slice(0, 5);
-  const byMem = [...containers].sort((a, b) => b.mem_usage - a.mem_usage).slice(0, 5);
+  const byCpu = containers.toSorted((a, b) => b.cpu_percent - a.cpu_percent).slice(0, 5);
+  const byMem = containers.toSorted((a, b) => b.mem_usage - a.mem_usage).slice(0, 5);
   const names = Object.fromEntries(((docker.containers ?? []) as Data[]).map((c) => [c.id, c.name]));
   const procs = (system.processes?.top_cpu ?? []) as Data[];
   const procLabel = (p: Data) => (p.container_id ? `${p.name} · ${names[p.container_id] ?? p.container_id}` : p.name);

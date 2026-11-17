@@ -81,7 +81,7 @@ export function AppLogView() {
     es.addEventListener("log", (raw) => {
       try {
         const data = JSON.parse((raw as MessageEvent<string>).data) as { records: AppLogRecord[]; skipped: number };
-        setRows((old) => [...data.records.slice().reverse(), ...old].slice(0, MAX_ROWS));
+        setRows((old) => [...data.records.toReversed(), ...old].slice(0, MAX_ROWS));
         if (data.skipped) setSkipped((n) => n + data.skipped);
       } catch {
         /* ignore a malformed frame */

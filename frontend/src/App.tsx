@@ -70,6 +70,11 @@ export function App() {
 
   const page = route[0] || "dashboard";
   const params = route.slice(1);
+  // Tabs, history and screen readers tell pages apart by the title.
+  const title = PAGES.find((p) => p.key === page)?.title ?? "Dashboard";
+  useEffect(() => {
+    document.title = `${title} · AI Server Monitor`;
+  }, [title]);
 
   return (
     <AutomationProvider>
