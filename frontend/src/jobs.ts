@@ -91,35 +91,19 @@ export function errorText(e: unknown): string {
 export const logsHref = (run: Pick<JobRun, "job_slug" | "trace_turn">) =>
   `#/logs/llm/for/job/${encodeURIComponent(run.job_slug)}${run.trace_turn ? `/${encodeURIComponent(run.trace_turn)}` : ""}`;
 
-/** Slugs of the jobs that are running now: their newest runs on load, then the job.* events. */
-export function useRunning(slugs: string[]): Set<string> {
-  const [running, setRunning] = useState<Set<string>>(new Set());
-  const key = slugs.join(",");
-  useEffect(() => {
-    if (!key) return;
-    let alive = true;
-    Promise.all(
-      key.split(",").map((slug) =>
-        api.get<{ items: JobRun[] }>(`/api/jobs/${encodeURIComponent(slug)}/runs?limit=1`).then(
-          (r) => (r.items[0]?.status === "running" ? slug : null),
-          () => null,
-        ),
-      ),
-    ).then((found) => alive && setRunning(new Set(found.filter((s): s is string => Boolean(s)))));
-    return () => {
-      alive = false;
-    };
-  }, [key]);
+/** Slugs of the jobs that are running now: `running_run_id` of the last load, corrected by the
+ *  job.* events that came after it. */
+export function useRunning(jobs: Pick<Job, "slug" | "running_run_id">[] | undefined): Set<string> {
+  const [overlay, setOverlay] = useState<Record<string, boolean>>({});
+  // a fresh load is the truth again
+  useEffect(() => setOverlay({}), [jobs]);
   useStream(["job"], (event) => {
     const slug = event.data.slug as string | undefined;
-    if (!slug) return;
-    setRunning((prev) => {
-      const next = new Set(prev);
-      if (event.type === "job.started") next.add(slug);
-      else if (event.type === "job.finished") next.delete(slug);
-      return next;
-    });
+    if (!slug || (event.type !== "job.started" && event.type !== "job.finished")) return;
+    setOverlay((prev) => ({ ...prev, [slug]: event.type === "job.started" }));
   });
+  const running = new Set<string>();
+  for (const j of jobs ?? []) if (overlay[j.slug] ?? j.running_run_id != null) running.add(j.slug);
   return running;
 }
 

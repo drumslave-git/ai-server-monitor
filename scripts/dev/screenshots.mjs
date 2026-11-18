@@ -12,6 +12,10 @@ const chrome = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Applic
 mkdirSync(out, { recursive: true });
 
 const shots = [
+  { name: "dashboard-desktop", route: "dashboard", width: 1440, height: 900 },
+  { name: "dashboard-375", route: "dashboard", width: 375, height: 1500, mobile: true },
+  { name: "jobs-desktop", route: "jobs", width: 1440, height: 900 },
+  { name: "jobs-375", route: "jobs", width: 375, height: 1200, mobile: true },
   { name: "approvals-desktop", route: "approvals", width: 1440, height: 900 },
   { name: "settings-desktop", route: "settings/llm", width: 1440, height: 900 },
   { name: "chat-desktop", route: "chat/new", width: 1440, height: 1000, chat: true },

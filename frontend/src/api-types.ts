@@ -913,6 +913,13 @@ export interface components {
              * @enum {string}
              */
             log_level: "debug" | "info" | "warning" | "error";
+            /**
+             * Timezone
+             * @description Time zone of cron schedules, e.g. Europe/Berlin. Empty = the host's own time zone (its
+             *     /etc/timezone or /etc/localtime), UTC when that cannot be read.
+             * @default
+             */
+            timezone: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -957,6 +964,8 @@ export interface components {
             next_run?: number | null;
             /** Prompt */
             prompt: string;
+            /** Running Run Id */
+            running_run_id?: number | null;
             /** Slug */
             slug: string;
             /** Timeout S */
@@ -1059,6 +1068,8 @@ export interface components {
             name: string;
             /** Run Id */
             run_id: number | null;
+            /** Running Run Id */
+            running_run_id?: number | null;
             /** Slug */
             slug: string;
             /** Status */
@@ -1652,6 +1663,7 @@ export interface components {
              *       "api_url": "",
              *       "enabled": false,
              *       "new_session_after": "6h",
+             *       "send_summary": "changed",
              *       "token": "",
              *       "web_url": ""
              *     }
@@ -1713,7 +1725,8 @@ export interface components {
              * @default {
              *       "docker_url": "",
              *       "language": "en",
-             *       "log_level": "info"
+             *       "log_level": "info",
+             *       "timezone": ""
              *     }
              */
             general: components["schemas"]["GeneralSettings"];
@@ -1770,6 +1783,7 @@ export interface components {
              *         "api_url": "",
              *         "enabled": false,
              *         "new_session_after": "6h",
+             *         "send_summary": "changed",
              *         "token": "",
              *         "web_url": ""
              *       }
@@ -1900,6 +1914,15 @@ export interface components {
              * @example 30d
              */
             new_session_after: string;
+            /**
+             * Send Summary
+             * @description When to send the result of the Summary job to the allowed chats (status, headline and
+             *     the warnings). changed = when the overall status or the list of warnings differs from the
+             *     last summary; every = after every summary run; never = only on request (/summary).
+             * @default changed
+             * @enum {string}
+             */
+            send_summary: "changed" | "every" | "never";
             /**
              * Token
              * Format: password

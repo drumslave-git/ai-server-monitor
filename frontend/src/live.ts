@@ -53,6 +53,23 @@ function ensureSource() {
   }
 }
 
+// A page kept in the back-forward cache would hold its stream open, and browsers allow only ~6
+// connections per host over HTTP/1.1: a few reloads then stall every request. Close on the way
+// out, reopen when the page comes back.
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    source?.close();
+    source = null;
+    connected = false;
+  });
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted) {
+      ensureSource();
+      notifyState();
+    }
+  });
+}
+
 function subscribeState(cb: () => void) {
   ensureSource();
   stateListeners.add(cb);

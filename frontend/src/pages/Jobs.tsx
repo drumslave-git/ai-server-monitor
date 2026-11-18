@@ -46,7 +46,7 @@ export function JobsPage({ params }: { params: string[] }) {
 function JobList() {
   const jobs = usePoll(() => api.get<{ items: Job[] }>("/api/jobs"), 30_000);
   const items = jobs.data?.items ?? [];
-  const running = useRunning(items.map((j) => j.slug));
+  const running = useRunning(jobs.data?.items);
   const { state: auto } = useAutomation();
   const now = useNow();
   const [error, setError] = useState<string | null>(null);
@@ -93,6 +93,14 @@ function JobList() {
               {items.map((job) => {
                 const run = job.last_run;
                 const isRunning = running.has(job.slug);
+                const status = isRunning ? (
+                  <Badge level="info">Running</Badge>
+                ) : run ? (
+                  <Badge level={STATUS_LEVEL[run.status]}>{STATUS_TEXT[run.status]}</Badge>
+                ) : (
+                  <Badge level="off">Never run</Badge>
+                );
+                const next = !job.enabled ? null : auto?.paused ? "paused" : job.next_run ? until(job.next_run, now) : null;
                 return (
                   <tr key={job.slug} className={job.enabled ? undefined : "off"}>
                     <td>
@@ -103,22 +111,23 @@ function JobList() {
                     </td>
                     <td data-label="Job">
                       <a href={`#/jobs/${job.slug}`} className="job-name">{job.name}</a>
-                      <span className="muted small block">
-                        {originText(job)}
+                      <span className="muted small block hide-sm">{originText(job)}</span>
+                    </td>
+                    {/* phone: one line instead of the four columns that follow */}
+                    <td className="jobs-sm small">
+                      {status}
+                      <span className="muted">
+                        {next && <> · next {next}</>}
+                        {" · "}
+                        {scheduleText(job).replace(/^Every/, "every")}
                       </span>
                     </td>
                     <td data-label="Model">{MODEL_TEXT[job.model]}</td>
                     <td data-label="Schedule">{scheduleText(job)}</td>
                     <td data-label="Last result">
-                      {isRunning ? (
-                        <Badge level="info">Running</Badge>
-                      ) : run ? (
-                        <>
-                          <Badge level={STATUS_LEVEL[run.status]}>{STATUS_TEXT[run.status]}</Badge>
-                          <span className="muted small block" title={run.finished ? clock(run.finished) : undefined}>{ago(run.finished, now)}</span>
-                        </>
-                      ) : (
-                        <Badge level="off">Never run</Badge>
+                      {status}
+                      {run && !isRunning && (
+                        <span className="muted small block" title={run.finished ? clock(run.finished) : undefined}>{ago(run.finished, now)}</span>
                       )}
                     </td>
                     <td data-label="Next run">
@@ -133,8 +142,8 @@ function JobList() {
                       )}
                     </td>
                     <td className="jobs-actions">
-                      <button className="btn btn-sm" onClick={() => void start(job)} disabled={isRunning}>
-                        <Play size={14} strokeWidth={1.5} aria-hidden /> Run now
+                      <button className="btn btn-sm" onClick={() => void start(job)} disabled={isRunning} aria-label={`Run ${job.name} now`}>
+                        <Play size={14} strokeWidth={1.5} aria-hidden /> <span className="hide-sm">Run now</span>
                       </button>
                     </td>
                   </tr>
@@ -317,7 +326,7 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
         <div className="field">
           <div className="field-label">
             <span className="label">Schedule</span>
-            <p className="help">Cron times are in the server's time zone.</p>
+            <p className="help">Cron times use the time zone set in Settings → General (the host's by default).</p>
           </div>
           <div className="field-control schedule">
             <div className="segmented" role="radiogroup" aria-label="Schedule type">
@@ -334,7 +343,7 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
                 <input type="number" min={1} step={1} className="input-num" value={n} onChange={(e) => setN(e.target.value)} required aria-label="Interval" />
                 <select value={unit} onChange={(e) => setUnit(e.target.value as Unit)} aria-label="Unit">
                   {[...UNITS].reverse().map((u) => (
-                    <option key={u.key} value={u.key}>{u.key}</option>
+                    <option key={u.key} value={u.key}>{Number(n) === 1 ? u.key.slice(0, -1) : u.key}</option>
                   ))}
                 </select>
               </div>

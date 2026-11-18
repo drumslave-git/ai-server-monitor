@@ -28,7 +28,7 @@ export function DashboardPage() {
   const { state: auto } = useAutomation();
   const now = useNow();
   const items = jobs.data?.items ?? [];
-  const running = useRunning(items.map((j) => j.slug));
+  const running = useRunning(jobs.data?.items);
   useStream(["job.finished", "automation"], () => {
     status.reload();
     jobs.reload();
@@ -157,7 +157,7 @@ function Overall({
         )}
       </div>
       {error && <p className="error">{error}</p>}
-      {shown?.status === "error" && shown.error && <pre className="run-error">{shown.error}</pre>}
+      {shown?.status === "error" && shown.error && shown.error.trim() !== overall?.headline && <pre className="run-error">{shown.error}</pre>}
       {/* the headline above is the summary's first line */}
       {shown?.summary && withoutFirstLine(shown.summary) && <Markdown text={withoutFirstLine(shown.summary)} />}
       {shown && shown.findings.length > 0 && <Findings findings={shown.findings} />}
@@ -165,7 +165,9 @@ function Overall({
   );
 }
 
-const withoutFirstLine = (md: string) => md.trim().split("\n").slice(1).join("\n").trim();
+const SEVERITY_WORD = { crit: "critical", warn: "warning", info: "info" } as const;
+
+const withoutFirstLine =(md: string) => md.trim().split("\n").slice(1).join("\n").trim();
 
 function JobCard({ job, running, paused, now }: { job: Job; running: boolean; paused: boolean; now: number }) {
   const run = job.last_run ?? null;
@@ -187,20 +189,21 @@ function JobCard({ job, running, paused, now }: { job: Job; running: boolean; pa
         )}
       </div>
       <p className={`job-card-line${run?.status === "error" ? " error" : ""}`}>{line || <span className="muted">{run ? "No summary" : running ? "First run in progress" : job.enabled ? "Waiting for its first run" : "Turned off"}</span>}</p>
-      <div className="job-card-foot">
-        {run?.finished && <span title={clock(run.finished)}>Ran {ago(run.finished, now)}</span>}
-        {next && <span title={job.next_run && !paused ? clock(job.next_run) : undefined}>{next}</span>}
-        <span className="job-card-counts" title={`Findings: ${counts.crit} critical, ${counts.warn} warning, ${counts.info} info`}>
+      {counts.crit + counts.warn + counts.info > 0 && (
+        <div className="job-card-counts" aria-label="Findings">
           {(["crit", "warn", "info"] as const).map(
             (sev) =>
               counts[sev] > 0 && (
                 <Badge key={sev} level={SEVERITY_LEVEL[sev]}>
-                  {counts[sev]}
-                  <span className="sr-only"> {sev} findings</span>
+                  {counts[sev]} {SEVERITY_WORD[sev]}
                 </Badge>
               ),
           )}
-        </span>
+        </div>
+      )}
+      <div className="job-card-foot">
+        {run?.finished && <span title={clock(run.finished)}>Ran {ago(run.finished, now)}</span>}
+        {next && <span title={job.next_run && !paused ? clock(job.next_run) : undefined}>{next}</span>}
       </div>
     </a>
   );
