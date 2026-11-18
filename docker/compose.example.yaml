@@ -8,6 +8,8 @@ services:
     pid: host                            # see the host's processes
     security_opt:
       - apparmor=unconfined              # else Ubuntu's AppArmor blocks D-Bus + /proc reads
+    cap_add:
+      - DAC_READ_SEARCH                  # the chat's read-only shell may read root-only files
     ports:
       - "8080:8080"
     environment:

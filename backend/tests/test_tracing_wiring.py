@@ -25,7 +25,7 @@ from ai_server_monitor.tracing import Tracing
 
 from .conftest import LLM_URL, chat_response
 from .fake_llm import stream_response
-from .test_chat import FakeLLM, StubSystem, ask, call, make_app, prepare, say
+from .test_chat import FakeLLM, StubSystem, ask, call, make_app, say
 from .test_digest import healthy_system
 from .test_report_engine import StubSystem as ReportStubSystem
 
@@ -39,16 +39,17 @@ def calls(client: TestClient, **params: Any) -> list[dict[str, Any]]:
     return sorted(body["items"], key=lambda c: c["id"])
 
 
-def test_a_chat_turn_with_a_tool_call_is_one_timeline(bootstrap: Bootstrap) -> None:
+def test_a_chat_turn_with_a_tool_call_is_one_timeline(
+    bootstrap: Bootstrap, shell: list[str]
+) -> None:
     llm = FakeLLM(
-        call("get_collector_data", {"collector": "system", "section": "processes.top_memory"}),
-        say("Ollama uses the most memory."),
+        call("bash", {"command": "df -h /"}),
+        say("The root disk is 40% full."),
     )
     llm.title_reply = "Memory hogs"
     app = make_app(bootstrap, llm)
     with TestClient(app) as client:
-        prepare(client, app)
-        events = ask(client, "what is using the most memory?")
+        events = ask(client, "how full is the disk?")
         done = next(e for e in events if e["type"] == "done")
         assert done["trace_turn"]
         flush(client, app)
@@ -68,29 +69,31 @@ def test_a_chat_turn_with_a_tool_call_is_one_timeline(bootstrap: Bootstrap) -> N
         assert detail["messages"][0]["role"] == "system"
         assert detail["messages"][-1] == {
             "role": "user",
-            "content": "what is using the most memory?",
+            "content": "how full is the disk?",
         }
-        assert {t["function"]["name"] for t in detail["tools"]} >= {"get_collector_data"}
-        assert detail["tool_calls"][0]["name"] == "get_collector_data"
+        assert {t["function"]["name"] for t in detail["tools"]} == {"bash", "delegate"}
+        assert detail["tool_calls"][0]["name"] == "bash"
         assert detail["stream"] is True and detail["ttft_ms"] is not None
         assert detail["prompt_tokens"] == 10 and detail["completion_tokens"] == 5
 
         timeline = client.get(f"/api/logs/llm/{first['id']}/timeline").json()["entries"]
         kinds = [(e["type"], e.get("tool") or e["link_step"]) for e in timeline]
-        assert kinds[:3] == [("llm", 1), ("tool", "get_collector_data"), ("llm", 2)]
+        assert kinds[:3] == [("llm", 1), ("tool", "bash"), ("llm", 2)]
         tool = next(e for e in timeline if e["type"] == "tool")
         assert tool["ok"] is True and tool["result_size"] > 50 and tool["duration_ms"] is not None
         tool_detail = client.get(f"/api/logs/tools/{tool['id']}").json()
-        assert tool_detail["args"] == {"collector": "system", "section": "processes.top_memory"}
-        assert "ollama" in json.dumps(tool_detail["result"])
+        assert tool_detail["args"] == {"command": "df -h /"}
+        assert "/dev/sda1" in json.dumps(tool_detail["result"])
 
         # The chat answer carries the turn id, for the "trace" link of the chat page.
         session = client.get(f"/api/chat/sessions/{done['session_id']}").json()
         assert session["messages"][-1]["meta"]["trace_turn"] == done["trace_turn"]
 
 
-def test_a_failing_tool_shows_up_failed_in_the_timeline(bootstrap: Bootstrap) -> None:
-    llm = FakeLLM(call("no_such_tool", {}), say("I could not do that."))
+def test_a_failing_tool_shows_up_failed_in_the_timeline(
+    bootstrap: Bootstrap, shell: list[str]
+) -> None:
+    llm = FakeLLM(call("bash", {"command": ""}), say("I could not do that."))
     app = make_app(bootstrap, llm)
     with TestClient(app) as client:
         events = ask(client, "do the impossible")
@@ -98,11 +101,8 @@ def test_a_failing_tool_shows_up_failed_in_the_timeline(bootstrap: Bootstrap) ->
         first = calls(client, purpose="chat")[0]
         timeline = client.get(f"/api/logs/llm/{first['id']}/timeline").json()["entries"]
         tool = next(e for e in timeline if e["type"] == "tool")
-        assert (
-            tool["tool"] == "no_such_tool"
-            and tool["ok"] is False
-            and "unknown tool" in tool["error"]
-        )
+        assert tool["tool"] == "bash" and tool["ok"] is False
+        assert "needs `command`" in tool["error"]
         assert events[-1]["type"] == "done"
 
 

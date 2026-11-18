@@ -86,7 +86,7 @@ export function SettingsPage() {
   const ctx: FormContext = {
     defs,
     errors,
-    suggestions: { "llm.model": models },
+    suggestions: { "llm.model": models, "worker.model": models },
     notes: modelInfo?.available ? { "llm.temperature": modelDefaultsLine(modelInfo) } : {},
     // a model that does not report "thinking" has no reasoning to set
     hidden: modelInfo?.available && !modelInfo.capabilities.includes("thinking") ? ["llm.reasoning_effort"] : [],
@@ -147,7 +147,9 @@ export function SettingsPage() {
           path={section}
           ctx={ctx}
         />
-        {section === "llm" && <LlmTest llm={values.llm as JsonObject} onModels={setModels} />}
+        {(section === "llm" || section === "worker") && (
+          <LlmTest key={section} profile={section} llm={values[section] as JsonObject} onModels={setModels} />
+        )}
         {section === "collectors" && <PromAuto />}
 
         <div className={`savebar${dirty || status ? " visible" : ""}`}>
@@ -169,7 +171,7 @@ export function SettingsPage() {
 /** Same look and behaviour as the connection tests in SchemaForm: a "Test" button with a
     spinner in the group head, a ✓/✕ line under it, and a result that goes away as soon as
     the values it was run with are edited. */
-function LlmTest({ llm, onModels }: { llm: JsonObject; onModels: (m: string[]) => void }) {
+function LlmTest({ profile, llm, onModels }: { profile: string; llm: JsonObject; onModels: (m: string[]) => void }) {
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [running, setRunning] = useState(false);
   const requestId = useRef(0);
@@ -185,7 +187,7 @@ function LlmTest({ llm, onModels }: { llm: JsonObject; onModels: (m: string[]) =
     setResult(null);
     let outcome: { ok: boolean; text: string };
     try {
-      const r = await api.post<LlmTestResult>("/api/settings/test-llm", llm);
+      const r = await api.post<LlmTestResult>(`/api/settings/test-llm?profile=${profile}`, llm);
       if (mine !== requestId.current) return;
       if (r.models?.length) onModels(r.models);
       outcome = r.ok

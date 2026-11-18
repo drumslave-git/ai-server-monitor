@@ -101,7 +101,7 @@ class ToolModeResolver:
         """Scheduler job: like resolve(), but an unreachable/misconfigured LLM is an
         expected condition — log one line and retry next interval, no traceback."""
         if not self.client.cfg.configured:
-            self.last_error = "LLM not configured (Settings → LLM)"
+            self.last_error = "LLM not configured (Settings → Main model)"
             return
         try:
             await self.resolve()

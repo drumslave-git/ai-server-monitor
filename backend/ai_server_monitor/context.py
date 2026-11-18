@@ -16,11 +16,12 @@ from typing import Any
 import httpx
 
 from .actions import ActionService, Notifier
+from .agent.models import ModelHub
+from .agent.safety import Scrubber
 from .automation import KV_KEY as AUTOMATION_KEY
 from .automation import AutomationState
 from .chat import ChatEngine
 from .chat.audit import audit_hook
-from .chat.safety import Scrubber
 from .collectors import Collector, CollectorManager, HostEnv
 from .collectors.base import CollectorResult
 from .config import Bootstrap, Settings
@@ -92,6 +93,8 @@ class AppContext:
         """The global pause switch (persisted); a new scheduler is built to match it."""
         self.scheduler = Scheduler()
         self.llm = LLMClient(self.settings.llm, transport=llm_transport, tracing=self.tracing)
+        self.models = ModelHub(self.settings, tracing=self.tracing, transport=llm_transport)
+        """The agents' models (main, worker), rebuilt with every settings change."""
         self.tool_mode = ToolModeResolver(self.llm, self.db, self.settings.llm.tool_mode)
         self.collectors = CollectorManager(
             self.settings,
@@ -162,6 +165,7 @@ class AppContext:
             self.scheduler.hold(self.automation.since)
         self.tracing.apply_settings(s.logs)
         self.llm = LLMClient(s.llm, transport=self._llm_transport, tracing=self.tracing)
+        self.models = ModelHub(s, tracing=self.tracing, transport=self._llm_transport)
         self.tool_mode = ToolModeResolver(self.llm, self.db, s.llm.tool_mode)
         self.collectors = CollectorManager(
             s,
@@ -286,6 +290,7 @@ class AppContext:
         await self.collectors.close()
         await self.mcp.close()
         await self.llm.aclose()
+        await self.models.aclose()
 
     # ------------------------------------------------------------------ automation switch
 

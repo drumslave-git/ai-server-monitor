@@ -8,13 +8,12 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from ai_server_monitor.chat.safety import REDACTED, Scrubber, shrink, wrap_untrusted
+from ai_server_monitor.agent.safety import REDACTED, Scrubber, shrink, wrap_untrusted
 from ai_server_monitor.chat.store import make_title
 from ai_server_monitor.collectors.base import Collector
 from ai_server_monitor.config import Bootstrap, Settings
 from ai_server_monitor.main import create_app
 
-from .actionfakes import NAME, FakeAction
 from .conftest import LLM_URL
 
 SECRET = "sk-live-0123456789abcdef"
@@ -27,63 +26,31 @@ class StubSystem(Collector):
         return {
             "hostname": "box",
             "memory": {"total": 1000, "used": 600, "percent": 60.0},
-            "filesystems": [
-                {"mount": "/", "used_percent": 40.0, "size": 100},
-                {"mount": "/data", "used_percent": 91.5, "size": 4000},
-            ],
-            "processes": {
-                "top_memory": [
-                    {"name": "ollama", "rss": 9_000_000, "cmdline": f"ollama serve --key {SECRET}"},
-                    {"name": "postgres", "rss": 2_000_000},
-                ],
-                "top_cpu": [],
-            },
+            "filesystems": [{"mount": "/", "used_percent": 40.0, "size": 100}],
         }
 
 
 class FakeLLM:
     """Plays a script of replies: each entry is a dict (a chat completion `message`) or a
-    callable(request_json) -> dict. Records every request."""
+    callable(request_json) -> dict. Records every request (title requests separately)."""
 
     def __init__(self, *script: dict[str, Any] | Callable[[dict[str, Any]], dict[str, Any]]):
         self.script = list(script)
         self.requests: list[dict[str, Any]] = []
         self.title_requests: list[dict[str, Any]] = []
-        self.route_requests: list[dict[str, Any]] = []
-        self.route_reply: str | Callable[[dict[str, Any]], httpx.Response] = "all of them"
-        """What the tool-routing classifier (chat/routing.py) gets: text or a whole response. The
-        default is no usable answer, so every tool group is loaded (the old behavior: scripted
-        conversations call whichever tool they like)."""
         self.title_reply: str | Callable[[dict[str, Any]], httpx.Response] = ""
         """What the title request (chat/title.py) gets: text (an empty reply is unusable, so
         the fallback title stays) or a function returning a whole HTTP response."""
 
     def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":  # the model list: not offered
+            return httpx.Response(404, json={"error": "not found"})
         body = json.loads(request.content)
         if str(body["messages"][0]["content"]).startswith("You name chat conversations"):
             self.title_requests.append(body)  # not part of the script of the conversation
             if callable(self.title_reply):
                 return self.title_reply(body)
-            return httpx.Response(
-                200,
-                json={
-                    "model": "fake",
-                    "choices": [{"index": 0, "message": {"content": self.title_reply}}],
-                    "usage": {"prompt_tokens": 5, "completion_tokens": 3},
-                },
-            )
-        if str(body["messages"][0]["content"]).startswith("You route questions"):
-            self.route_requests.append(body)  # not part of the script of the conversation
-            if callable(self.route_reply):
-                return self.route_reply(body)
-            return httpx.Response(
-                200,
-                json={
-                    "model": "fake",
-                    "choices": [{"index": 0, "message": {"content": self.route_reply}}],
-                    "usage": {"prompt_tokens": 5, "completion_tokens": 3},
-                },
-            )
+            return completion({"content": self.title_reply}, 5, 3)
         self.requests.append(body)
         step = self.script.pop(0) if self.script else {"content": "(script ended)"}
         message = step(body) if callable(step) else step
@@ -93,14 +60,34 @@ class FakeLLM:
                 content=sse_body(message),
                 headers={"content-type": "text/event-stream"},
             )
-        return httpx.Response(
-            200,
-            json={
-                "model": "fake",
-                "choices": [{"index": 0, "message": {"role": "assistant", **message}}],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        return completion(message)
+
+
+def completion(
+    message: dict[str, Any], prompt: int = 10, completion_tokens: int = 5
+) -> httpx.Response:
+    """A whole (non-streamed) chat completion in the shape the OpenAI SDK validates."""
+    return httpx.Response(
+        200,
+        json={
+            "id": "chatcmpl-fake",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "fake",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", **message},
+                    "finish_reason": "tool_calls" if message.get("tool_calls") else "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt + completion_tokens,
             },
-        )
+        },
+    )
 
 
 def sse_body(message: dict[str, Any]) -> bytes:
@@ -160,6 +147,7 @@ def make_app(
     *,
     mode: str = "native",
     chat: dict[str, Any] | None = None,
+    worker: dict[str, Any] | None = None,
 ) -> Any:
     settings = Settings.model_validate(
         {
@@ -170,8 +158,8 @@ def make_app(
                 "api_key": SECRET,
                 "max_retries": 0,
             },
-            # (routing has its own tests; the scripted conversations here expect every tool)
-            "chat": {"tool_routing": "off", **(chat or {})},
+            "worker": worker or {},
+            "chat": chat or {},
         }
     )
     return create_app(
@@ -205,283 +193,212 @@ def answer(events: list[dict[str, Any]]) -> str:
     return "".join(e["text"] for e in events if e["type"] == "token")
 
 
-def prepare(client: TestClient, app: Any) -> None:
+def llm_rows(app: Any, table: str) -> list[dict[str, Any]]:
     ctx = app.state.ctx
-    client.portal.call(ctx.collectors.run, "system")  # type: ignore[union-attr]
+
+    async def rows() -> list[dict[str, Any]]:
+        await ctx.tracing.flush()  # trace rows are written by background tasks
+        return [dict(r) for r in await ctx.db.fetchall(f"SELECT * FROM {table} ORDER BY id")]
+
+    return rows
 
 
 # --------------------------------------------------------------------------- native mode
 
 
-def test_native_tool_loop_answers_from_tool_data_and_persists(bootstrap: Bootstrap) -> None:
-    llm = FakeLLM(
-        call("get_collector_data", {"collector": "system", "section": "processes.top_memory"}),
-        say("Ollama uses the most memory (9 MB), then postgres."),
-    )
+def test_bash_answers_the_question_and_everything_is_persisted(
+    bootstrap: Bootstrap, shell: list[str]
+) -> None:
+    llm = FakeLLM(call("bash", {"command": "df -h /"}), say("The root disk is 40% full."))
     app = make_app(bootstrap, llm)
     with TestClient(app) as client:
-        prepare(client, app)
         published: list[str] = []
         original = app.state.ctx.events.publish
         app.state.ctx.events.publish = lambda t, d=None: (published.append(t), original(t, d))[1]
-        events = ask(client, "what is using the most memory?")
+        events = ask(client, "how full is the disk?")
 
         assert types(events) == ["session", "tool_call", "tool_result", "token", "done"]
         tool_call = next(e for e in events if e["type"] == "tool_call")
-        assert tool_call["name"] == "get_collector_data" and tool_call["kind"] == "read"
+        assert tool_call["name"] == "bash" and tool_call["kind"] == "read"
+        assert tool_call["args"] == {"command": "df -h /"} and shell == ["df -h /"]
         result = next(e for e in events if e["type"] == "tool_result")
-        assert result["ok"] and "ollama" in result["preview"]
+        assert result["ok"] and "/dev/sda1" in result["preview"] and SECRET not in result["preview"]
         done = events[-1]
         assert done["tool_mode"] == "native" and done["steps"] == 2 and done["stopped"] is None
         assert done["usage"] == {"prompt_tokens": 20, "completion_tokens": 10}
-        assert answer(events) == "Ollama uses the most memory (9 MB), then postgres."
+        assert answer(events) == "The root disk is 40% full."
 
-        # What the model saw: tools offered natively, the result delimited as untrusted data,
-        # and the secret in the process command line scrubbed.
+        # What the model saw: bash, delegate (and nothing else) offered natively, the result
+        # delimited as untrusted data with the exit code, the secret scrubbed.
         first, second = llm.requests
-        assert {t["function"]["name"] for t in first["tools"]} >= {
-            "get_status",
-            "get_collector_data",
-        }
+        assert {t["function"]["name"] for t in first["tools"]} == {"bash", "delegate"}
         assert first["messages"][0]["role"] == "system"
+        assert "read-only shell" in first["messages"][0]["content"]
         tool_message = second["messages"][-1]
         assert tool_message["role"] == "tool" and tool_message["tool_call_id"] == "c1"
         assert 'trust="untrusted"' in tool_message["content"]
+        assert "exit code 0" in tool_message["content"]
         assert SECRET not in json.dumps(second) and REDACTED in tool_message["content"]
-        assert second["messages"][-2]["tool_calls"][0]["function"]["name"] == "get_collector_data"
 
         # Persisted: the whole exchange, tool traffic included.
         sessions = client.get("/api/chat/sessions").json()
         assert sessions["total"] == 1 and sessions["items"][0]["messages"] == 2
         detail = client.get(f"/api/chat/sessions/{done['session_id']}").json()
         assert [m["role"] for m in detail["messages"]] == ["user", "assistant", "tool", "assistant"]
-        assert detail["messages"][1]["tool_calls"][0]["name"] == "get_collector_data"
+        assert detail["messages"][1]["tool_calls"][0]["name"] == "bash"
         assert detail["messages"][2]["tool_call_id"] == "c1" and SECRET not in json.dumps(detail)
-        assert detail["messages"][3]["meta"]["tool_mode"] == "native"
+
+        # The command is in the audit trail; the LLM and tool calls are in the trace.
+        audit = client.get("/api/chat/audit", params={"kind": "shell"}).json()["items"]
+        assert audit[0]["cmd"] == "df -h /" and audit[0]["exit"] == 0
+        calls = client.portal.call(llm_rows(app, "llm_calls"))  # type: ignore[union-attr]
+        chat_calls = [c for c in calls if c["purpose"] == "chat"]
+        assert len(chat_calls) == 2 and {c["turn"] for c in chat_calls} == {done["trace_turn"]}
+        assert all(c["prompt_tokens"] == 10 for c in chat_calls)
+        tools = client.portal.call(llm_rows(app, "llm_tool_calls"))  # type: ignore[union-attr]
+        assert [(t["tool"], t["turn"], t["ok"]) for t in tools] == [("bash", done["trace_turn"], 1)]
 
         # A follow-up in the same session replays the earlier question and answer only.
-        llm.script.append(say("Ten percent less."))
-        ask(client, "and the disks?", done["session_id"])
+        llm.script.append(say("Still 40%."))
+        ask(client, "and now?", done["session_id"])
         replay = [m["content"] for m in llm.requests[-1]["messages"] if m["role"] != "system"]
-        assert replay == [
-            "what is using the most memory?",
-            "Ollama uses the most memory (9 MB), then postgres.",
-            "and the disks?",
-        ]
+        assert replay == ["how full is the disk?", "The root disk is 40% full.", "and now?"]
         # Chat-private traffic never goes on the global bus.
         assert not [t for t in published if t.startswith(("chat", "tool", "action"))]
 
         assert client.delete(f"/api/chat/sessions/{done['session_id']}").status_code == 204
-        assert client.get(f"/api/chat/sessions/{done['session_id']}").status_code == 404
         assert client.get("/api/chat/sessions").json()["total"] == 0
 
 
-def test_bad_tool_arguments_and_unknown_tools_are_reported_back_to_the_model(
-    bootstrap: Bootstrap,
+def test_bad_tool_calls_are_reported_back_to_the_model(
+    bootstrap: Bootstrap, shell: list[str]
 ) -> None:
     llm = FakeLLM(
-        call("get_collector_data", {"collector": "nope"}, "a"),
-        call("get_collector_data", "{not json", "b"),
+        call("bash", {"command": ""}, "a"),
+        call("bash", {"command": "ls", "timeout_s": "soon"}, "b"),
         call("rm_rf", {}, "c"),
-        call("get_collector_data", {"collector": "system", "limit": 0}, "d"),
         say("Sorry, I could not look that up."),
     )
     app = make_app(bootstrap, llm)
     with TestClient(app) as client:
-        prepare(client, app)
         events = ask(client, "check")
     results = [e for e in events if e["type"] == "tool_result"]
-    assert [r["ok"] for r in results] == [False] * 4
-    assert "unknown collector" in results[0]["preview"]
-    assert "not a valid JSON object" in results[1]["preview"]
-    assert "unknown tool 'rm_rf'" in results[2]["preview"]
-    assert "invalid arguments" in results[3]["preview"] and "limit" in results[3]["preview"]
-    assert events[-1]["type"] == "done"
+    assert [r["ok"] for r in results][:2] == [False, False]
+    assert "needs `command`" in results[0]["preview"]
+    assert "timeout_s must be a number" in results[1]["preview"]
+    assert shell == []  # nothing ran
+    # the unknown tool went back to the model as an error it could react to
+    assert "rm_rf" in json.dumps(llm.requests[3]["messages"][-1])
+    assert events[-1]["type"] == "done" and "could not" in events[-1]["text"]
 
 
-def test_a_slow_tool_is_waited_for_and_reports_progress(
-    bootstrap: Bootstrap, monkeypatch: pytest.MonkeyPatch
+def test_a_slow_command_is_waited_for_and_reports_progress(
+    bootstrap: Bootstrap, shell: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import asyncio
-
-    from ai_server_monitor.chat import engine as engine_module
-    from ai_server_monitor.chat.tools import NoArgs, Tool
-
-    async def slow(ctx: Any, args: Any) -> Any:
-        await asyncio.sleep(0.4)
-        return {"done": True}
-
-    monkeypatch.setattr(engine_module, "PROGRESS_EVERY_S", 0.1)
-    llm = FakeLLM(call("slow_scan", {}), say("The scan is finished: done."))
+    monkeypatch.setattr("ai_server_monitor.agent.runtime.PROGRESS_EVERY_S", 0.1)
+    llm = FakeLLM(call("bash", {"command": "sleep 1; df"}), say("Finished: 40%."))
     app = make_app(bootstrap, llm)
     with TestClient(app) as client:
-        app.state.ctx.chat._tools_builder = lambda s, m: {
-            "slow_scan": Tool("slow_scan", "A slow tool.", NoArgs, "read", slow)
-        }
         events = ask(client, "scan it")
     progress = [e for e in events if e["type"] == "tool_progress"]
-    assert progress and progress[0]["name"] == "slow_scan" and "elapsed_s" in progress[0]
+    assert progress and progress[0]["name"] == "bash" and "elapsed_s" in progress[0]
     order = [e["type"] for e in events]
     assert order.index("tool_progress") < order.index("tool_result")
-    assert next(e for e in events if e["type"] == "tool_result")["ok"] is True
-    assert events[-1]["type"] == "done" and "finished" in events[-1]["text"]
+    assert events[-1]["type"] == "done" and "Finished" in events[-1]["text"]
 
 
-def test_step_limit_stops_the_loop_and_forces_an_answer(bootstrap: Bootstrap) -> None:
+def test_step_limit_takes_the_tools_away_and_asks_for_an_answer(
+    bootstrap: Bootstrap, shell: list[str]
+) -> None:
     llm = FakeLLM(
-        *[call("get_collector_data", {"collector": "system"}, f"c{i}") for i in range(2)],
-        say("Here is what I have: the system data."),
+        *[call("bash", {"command": f"echo {i}"}, f"c{i}") for i in range(2)],
+        say("Here is what I have: 40%."),
     )
     app = make_app(bootstrap, llm, chat={"max_steps": 2})
     with TestClient(app) as client:
-        prepare(client, app)
         events = ask(client, "loop forever")
     done = events[-1]
-    assert done["stopped"] == "step_limit" and done["steps"] == 2
+    assert done["stopped"] == "step_limit" and done["steps"] == 3
     assert len([e for e in events if e["type"] == "tool_call"]) == 2
     assert len(llm.requests) == 3  # two tool rounds, then a final answer without tools
     last = llm.requests[-1]
-    assert "tools" not in last and "tool calls" in last["messages"][-1]["content"]
-    assert answer(events) == "Here is what I have: the system data."
+    assert not last.get("tools")
+    assert "Do not call any more tools" in json.dumps(last["messages"])
+    assert answer(events) == "Here is what I have: 40%."
 
 
-def test_write_tool_only_yields_a_pending_approval(
-    bootstrap: Bootstrap, fake_action: FakeAction
+def test_delegate_runs_the_worker_model_with_only_bash_and_it_is_traced(
+    bootstrap: Bootstrap, shell: list[str]
 ) -> None:
     llm = FakeLLM(
-        call(NAME, {"target": "alpha", "title": "Alpha"}, "w"),
-        say("I asked for approval to change alpha; nothing happens until you approve."),
+        call("delegate", {"task": "Find what fills /var."}, "d1"),
+        call("bash", {"command": "du -xh /var | sort -h | tail"}, "w1"),
+        say("/var/lib/docker holds 30G."),
+        say("Docker data fills /var: 30G."),
     )
-    app = make_app(bootstrap, llm)
+    app = make_app(bootstrap, llm, worker={"model": "small"})
     with TestClient(app) as client:
-        events = ask(client, "change alpha")
-        session_id = events[-1]["session_id"]
-        write = json.loads(next(e for e in events if e["type"] == "tool_result")["preview"])
-        assert write["status"] == "pending" and "NOT been done" in write["note"]
-        write_call = next(e for e in events if e["type"] == "tool_call" and e["name"] == NAME)
-        assert write_call["kind"] == "write"
-
-        assert fake_action.calls == []  # chat executed nothing
-        approvals = client.get("/api/approvals").json()["items"]
-        assert [a["action"] for a in approvals] == [NAME]
-        assert (
-            approvals[0]["source"] == f"chat:{session_id}" and approvals[0]["status"] == "pending"
-        )
-        assert approvals[0]["args"]["target"] == "alpha"
-
-        # Only the owner's approval makes it happen.
-        done = client.post(
-            f"/api/approvals/{approvals[0]['batch_id']}", json={"decision": "approve"}
-        )
-        assert done.json()["counts"] == {"executed": 1} and fake_action.calls == ["alpha"]
-
-
-def test_write_tool_with_bad_arguments_files_nothing(
-    bootstrap: Bootstrap, fake_action: FakeAction
-) -> None:
-    llm = FakeLLM(call(NAME, {"target": ""}), say("That did not work."))
-    app = make_app(bootstrap, llm)
-    with TestClient(app) as client:
-        events = ask(client, "change nothing")
-        result = next(e for e in events if e["type"] == "tool_result")
-        assert result["ok"] is False
-        assert client.get("/api/approvals").json()["items"] == []
-        assert fake_action.calls == []
+        events = ask(client, "what fills /var?")
+        main1, worker1, worker2, main2 = llm.requests
+        assert main1["model"] == "fake" and worker1["model"] == worker2["model"] == "small"
+        assert {t["function"]["name"] for t in worker1["tools"]} == {"bash"}
+        assert worker1["messages"][-1]["content"] == "Find what fills /var."
+        assert "Do not ask questions" in worker1["messages"][0]["content"]
+        delegated = json.dumps(main2["messages"][-1])
+        assert "/var/lib/docker holds 30G." in delegated and "worker model small" in delegated
+        # The UI sees one tool call (delegate); the worker's own calls are in the trace.
+        assert [e["name"] for e in events if e["type"] == "tool_call"] == ["delegate"]
+        assert shell == ["du -xh /var | sort -h | tail"]
+        calls = client.portal.call(llm_rows(app, "llm_calls"))  # type: ignore[union-attr]
+        turn = events[-1]["trace_turn"]
+        assert [
+            (c["purpose"], c["model"])
+            for c in calls
+            if c["turn"] == turn and c["purpose"] != "chat_title"
+        ] == [
+            ("chat", "fake"),
+            ("subagent", "small"),
+            ("subagent", "small"),
+            ("chat", "fake"),
+        ]
+        tools = client.portal.call(llm_rows(app, "llm_tool_calls"))  # type: ignore[union-attr]
+        assert [t["tool"] for t in tools] == ["worker:bash", "delegate"]
+        assert {t["turn"] for t in tools} == {turn}
+    assert answer(events) == "Docker data fills /var: 30G."
 
 
-def test_write_tools_follow_policy_and_configuration(
-    bootstrap: Bootstrap, fake_action: FakeAction
-) -> None:
-    llm = FakeLLM(say("ok"), say("ok"))
-    app = make_app(bootstrap, llm)
-    with TestClient(app) as client:
-        ask(client, "hi")
-        fake_action.policy = "off"
-        ask(client, "hi again")
-    on = {t["function"]["name"]: t for t in llm.requests[0]["tools"]}
-    assert NAME in on
-    description = on[NAME]["function"]["description"]
-    assert "do not ask first" in description and "approval card" in description
-    offered = {t["function"]["name"] for t in llm.requests[1]["tools"]}
-    assert NAME not in offered  # policy off: not offered at all
-    assert "promql_query" not in offered  # Prometheus not configured
+def test_worker_falls_back_to_the_main_model() -> None:
+    from ai_server_monitor.agent.models import worker_config
 
-
-def test_an_action_without_chat_tool_is_not_offered(
-    bootstrap: Bootstrap, fake_action: FakeAction, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from ai_server_monitor.actions import REGISTRY
-
-    fake_action.chat_tool = False
-    monkeypatch.setitem(REGISTRY, NAME, fake_action.definition())
-    llm = FakeLLM(say("ok"))
-    app = make_app(bootstrap, llm)
-    with TestClient(app) as client:
-        ask(client, "hi")
-    assert NAME not in {t["function"]["name"] for t in llm.requests[0]["tools"]}
-
-
-# --------------------------------------------------------------------------- JSON fallback
-
-
-def test_json_mode_repairs_malformed_tool_json_then_answers(bootstrap: Bootstrap) -> None:
-    llm = FakeLLM(
-        say('{"tool": "get_collector_data", "args": {"collector": "system", '),  # cut off
-        say(
-            "Sure:\n```json\n"
-            '{"tool": "get_collector_data", "args": {"collector": "system", "section": "memory"}}'
-            "\n```"
-        ),
-        say("Memory is 60% used."),
+    settings = Settings.model_validate(
+        {"llm": {"base_url": LLM_URL, "model": "big", "api_key": SECRET}}
     )
-    app = make_app(bootstrap, llm, mode="json")
-    with TestClient(app) as client:
-        prepare(client, app)
-        events = ask(client, "how much memory is used?")
-    # Streaming: only the prose before the tool JSON ("Sure:") was sent; none of the JSON.
-    assert types(events) == ["session", "token", "tool_call", "tool_result", "token", "done"]
-    assert events[-1]["tool_mode"] == "json" and events[-1]["steps"] == 3
-    tokens = [e for e in events if e["type"] == "token"]
-    assert [e["text"] for e in tokens if e["step"] == 2] == ["Sure:"]
-    assert not any("{" in e["text"] or "tool" in e["text"] for e in tokens)
-    assert "".join(e["text"] for e in tokens if e["step"] == 3) == "Memory is 60% used."
-    # JSON protocol: no native tools in the request, the tool list is in the system prompt.
-    first = llm.requests[0]
-    assert "tools" not in first
-    assert '{"tool": "<tool name>"' in first["messages"][0]["content"]
-    # The malformed reply got a repair prompt; the result came back as an untrusted-data block.
-    repair = llm.requests[1]["messages"][-1]
-    assert repair["role"] == "user" and "could not use it" in repair["content"]
-    result = llm.requests[2]["messages"][-1]
-    assert result["role"] == "user" and result["content"].startswith("Result of get_collector_data")
-    assert 'trust="untrusted"' in result["content"] and "60.0" in result["content"]
+    assert worker_config(settings) is settings.llm
+    settings.worker.model = "small"
+    cfg = worker_config(settings)
+    assert (cfg.model, cfg.base_url, cfg.api_key.get_secret_value()) == ("small", LLM_URL, SECRET)
+    settings.worker.base_url = "http://other:8080/v1"
+    assert worker_config(settings).base_url == "http://other:8080/v1"
+    assert worker_config(settings).api_key.get_secret_value() == ""
 
 
-def test_json_mode_gives_up_repairing_and_unknown_tool_names_count_as_malformed(
-    bootstrap: Bootstrap,
+# --------------------------------------------------------------------------- without tools
+
+
+@pytest.mark.parametrize("mode", ["none", "json"])
+def test_without_native_tools_the_digest_goes_into_the_prompt(
+    bootstrap: Bootstrap, mode: str
 ) -> None:
-    bad = say('{"tool": "does_not_exist", "args": {}}')
-    llm = FakeLLM(bad, bad, bad, say("never reached"))
-    app = make_app(bootstrap, llm, mode="json")
-    with TestClient(app) as client:
-        events = ask(client, "do something")
-    # Two repairs, then the third reply is taken as the (plain) answer.
-    assert len(llm.requests) == 3
-    assert answer(events) == '{"tool": "does_not_exist", "args": {}}'
-    assert not [e for e in events if e["type"] == "tool_call"]
-
-
-def test_no_tools_mode_puts_the_digest_in_the_prompt(bootstrap: Bootstrap) -> None:
     llm = FakeLLM(say("The server looks fine."))
-    app = make_app(bootstrap, llm, mode="none")
+    app = make_app(bootstrap, llm, mode=mode)
     with TestClient(app) as client:
-        prepare(client, app)
+        client.portal.call(app.state.ctx.collectors.run, "system")  # type: ignore[union-attr]
         events = ask(client, "how is the server?")
     request = llm.requests[0]
-    assert "tools" not in request
+    assert not request.get("tools")
     system = request["messages"][0]["content"]
     assert "<digest>" in system and "no tools" in system
-    assert events[-1]["tool_mode"] == "none"
+    assert events[-1]["tool_mode"] == mode and answer(events) == "The server looks fine."
 
 
 # --------------------------------------------------------------------------- API edges
@@ -560,31 +477,6 @@ def test_untrusted_wrapper_cannot_be_closed_from_the_inside() -> None:
     assert wrapped.startswith('<tool_result name="t" trust="untrusted">')
 
 
-def test_sorting_by_a_field_that_does_not_exist_tells_the_model_the_real_fields(
-    bootstrap: Bootstrap,
-) -> None:
-    llm = FakeLLM(
-        call(
-            "get_collector_data",
-            {"collector": "system", "section": "filesystems", "sort_by": "percent_used"},
-        ),
-        call(
-            "get_collector_data",
-            {"collector": "system", "section": "filesystems", "sort_by": "size"},
-        ),
-        say("done"),
-    )
-    app = make_app(bootstrap, llm)
-    with TestClient(app) as client:
-        prepare(client, app)
-        events = ask(client, "biggest disk?")
-    first, second = [e for e in events if e["type"] == "tool_result"]
-    assert not first["ok"] and "numeric fields: size, used_percent" in first["preview"]
-    assert second["ok"] and second["preview"].index('"/data"') < second["preview"].index('"/"')
-    # a ranked list says so: the order is numbered and final
-    assert '"rank":1' in second["preview"] and "rank 1 = largest" in second["preview"]
-
-
 def test_session_titles_are_cut_at_a_word_boundary() -> None:
     assert make_title("  what is" + chr(10) + "using   the disk? ") == "what is using the disk?"
     long = "why is the download of my favourite series still waiting for my approval in the queue"
@@ -594,3 +486,16 @@ def test_session_titles_are_cut_at_a_word_boundary() -> None:
     assert long.startswith(title[:-1])
     assert not title[:-1].endswith(("approva", "approv"))
     assert make_title("x" * 100) == "x" * 59 + "…"
+
+
+def test_the_worker_model_test_uses_the_main_endpoint_when_its_own_is_empty(
+    bootstrap: Bootstrap,
+) -> None:
+    llm = FakeLLM()
+    app = make_app(bootstrap, llm)
+    with TestClient(app) as client:
+        none = client.post("/api/settings/test-llm?profile=worker", json={"model": ""}).json()
+        assert not none["ok"] and "use the main model" in none["error"]
+        tested = client.post("/api/settings/test-llm?profile=worker", json={"model": "small"})
+        assert tested.json()["ok"], tested.json()
+    assert llm.requests[-1]["model"] == "small"

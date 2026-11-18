@@ -218,7 +218,7 @@ def _generated_summary(health: str, flags: list[Flag] | list[dict[str, Any]]) ->
 _KEY = r'"{}"\s*:\s*'
 _TRUNCATED_NOTE = (
     "_The model's answer was cut off (output token limit). "
-    "Raise Settings → LLM → maximum output tokens._"
+    "Raise Settings → Main model → maximum output tokens._"
 )
 
 

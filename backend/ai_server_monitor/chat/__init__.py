@@ -1,7 +1,7 @@
-"""Chat: tool registry, safety filters, persistence and the tool-using answer loop."""
+"""Chat: conversations with the main agent, their persistence and the SSE stream."""
 
 from .engine import ChatEngine
 from .store import ChatStore
-from .tools import Tool, ToolContext, ToolError, build_tools
+from .tools import Tool, ToolContext, ToolError
 
-__all__ = ["ChatEngine", "ChatStore", "Tool", "ToolContext", "ToolError", "build_tools"]
+__all__ = ["ChatEngine", "ChatStore", "Tool", "ToolContext", "ToolError"]

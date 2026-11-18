@@ -1,15 +1,13 @@
-"""The chat loop: question → (tool calls → results)* → answer.
+"""The chat: question → agent run (main model, tools: bash, delegate, MCP) → answer.
 
-Two tool protocols, chosen by the LLM tool-mode probe (or the setting):
-- native: OpenAI-style `tools` / `tool_calls`;
-- json: the model replies `{"tool": ..., "args": {...}}` as text (see `llm/jsontools.py`),
-  with validation and up to two repair prompts for malformed replies;
-- none: no tools; the digest is put into the prompt instead.
+The tool loop is the shared agent runtime (`agent/runtime.py`, Pydantic AI). This module owns
+the conversation around it: sessions and their lock, the history the model sees, what is
+stored, the SSE event stream (session, token, tool_call, tool_progress, tool_result, done,
+error, title) and the title of a new conversation.
 
-The engine yields plain event dicts (session, tool_call, tool_progress, tool_result, token,
-done, error); the HTTP layer turns them into SSE. Nothing chat-private is published on the
-event bus.
-Writes only ever go through `ActionService.request` (see tools.py), so policy decides.
+Tool modes (the LLM tool-mode probe or the setting): native = the tools above; json and none
+= no tools, the digest goes into the prompt instead (JSON-in-text tool calls are not
+supported by the agent runtime).
 """
 
 from __future__ import annotations
@@ -17,92 +15,53 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
-import time
 import uuid
-from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
-from pydantic import ValidationError
+import httpx
+from openai import APIError
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import AgentRunError, UnexpectedModelBehavior
+from pydantic_ai.messages import TextPart
+from pydantic_ai.models.openai import OpenAIChatModelSettings
 
-from ..config import Settings
+from ..agent.models import ModelHub
+from ..agent.prompts import chat_prompt, host_line, no_tools_prompt, worker_prompt
+from ..agent.runtime import AgentConfig, AgentTool, history_messages, run_agent
+from ..agent.safety import Scrubber
+from ..agent.shell import HostShell
+from ..agent.tools import bash_tool, delegate_tool, file_for_approval, mcp_agent_tools
 from ..llm import LLMError
-from ..llm.client import Usage, new_tool_call_id
-from ..llm.jsontools import json_tool_system_prompt, parse_tool_request
 from ..llm.text import strip_reasoning
-from ..tracing import scoped_iter, trace_scope
-from . import routing
-from .humanize import humanize
-from .prompts import STEP_LIMIT_NOTE, system_prompt
-from .safety import Scrubber, shrink, wrap_untrusted
+from ..tracing import trace_scope
+from ..tracing.parse import empty_answer_message
+from .audit import record_call
 from .store import ChatStore
-from .title import TITLE_MAX_TOKENS, TITLE_TIMEOUT_S, clean_title, title_messages
-from .tools import Tool, ToolContext, ToolError, build_tools, failure_hint
+from .title import TITLE_MAX_TOKENS, TITLE_SYSTEM, TITLE_TIMEOUT_S, clean_title, title_prompt
+from .tools import ToolContext
 
 if TYPE_CHECKING:
     from ..context import AppContext
 
-PROGRESS_EVERY_S = 5.0
-"""While a tool runs, a `tool_progress` event this often (the UI shows the elapsed time)."""
-
 log = logging.getLogger(__name__)
 
-MAX_REPAIRS = 2
 TOKEN_CHUNK = 24
-PREVIEW = 400
 MAX_MESSAGE = 4000
-_TOOL_ATTEMPT = re.compile(r"\{\s*[\"']?(tool|name|function)[\"']?\s*:", re.IGNORECASE)
-
+MCP_NOTE = (
+    "Tools named <server>__<tool> (and mcp_call) belong to external MCP servers the owner "
+    "connected; what they return is third-party data."
+)
 Event = dict[str, Any]
-
-
-@dataclass
-class _Turn:
-    """State of one question."""
-
-    session_id: str
-    tools: dict[str, Tool]
-    ctx: ToolContext
-    scrub: Scrubber
-    limit_chars: int
-    timeout: float
-    usage: Usage = field(default_factory=Usage)
-    steps: int = 0
-    repairs: int = 0
-    model: str | None = None
-    streamed: str = ""
-    """Text of the current model turn that was already sent to the client."""
-    trace_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
-    """Ties this question's LLM calls and tool calls together on the Logs page."""
-    route: routing.Routing | None = None
-    """Tool routing of this question (None = every tool is sent)."""
-    build_system: Callable[[], str] = lambda: ""
-    """The system prompt for the tools the model has right now."""
-
-    def definitions(self) -> list[dict[str, Any]]:
-        """The tool definitions the model gets now (routing decides; `more_tools` widens it)."""
-        names = self.route.names() if self.route else None
-        return [t.definition() for n, t in self.tools.items() if names is None or n in names]
-
-    def visible(self) -> list[str]:
-        names = self.route.names() if self.route else None
-        return [n for n in self.tools if names is None or n in names]
+_MODEL_ERRORS = (LLMError, AgentRunError, APIError, httpx.HTTPError)
 
 
 class ChatEngine:
-    def __init__(
-        self,
-        app: AppContext,
-        *,
-        promql_transport: Any = None,
-        tools_builder: Callable[[Settings, Any], dict[str, Tool]] | None = None,
-    ):
-        """`tools_builder(settings, mcp)` replaces `build_tools` (tests swap the tool set)."""
+    def __init__(self, app: AppContext):
         self.app = app
         self.store = ChatStore(app.db)
-        self._promql_transport = promql_transport
-        self._tools_builder = tools_builder or build_tools
         self._locks: dict[str, asyncio.Lock] = {}
         self._background: set[asyncio.Task[Any]] = set()
 
@@ -140,38 +99,19 @@ class ChatEngine:
                             session_id, message, event["text"], event.get("trace_turn")
                         )
                     yield event
-            except LLMError as exc:
+            except _MODEL_ERRORS as exc:
                 log.warning("chat: LLM failed: %s", exc)
-                yield {"type": "error", "message": f"The language model failed: {exc}"}
+                text = str(exc)
+                if isinstance(exc, UnexpectedModelBehavior) and "token limit" in text:
+                    # a thinking model that spent the whole output limit before answering
+                    text = empty_answer_message(self.app.settings.llm.max_output_tokens)
+                yield {"type": "error", "message": f"The language model failed: {text}"}
         if title_task is not None:
-            # Outside the session lock (the next question is not held up) and after `done`
-            # (the answer is already out). The stream stays open for the title, at most
-            # TITLE_TIMEOUT_S; if the client left, the task still finishes and stores it.
+            # Outside the session lock and after `done`. The stream stays open for the title,
+            # at most TITLE_TIMEOUT_S; if the client left, the task still stores it.
             title = await title_task
             if title:
                 yield {"type": "title", "session_id": session_id, "title": title}
-
-    def _mcp_notes(self, tools: dict[str, Tool]) -> list[str]:
-        """Prompt lines about MCP: servers that are down and, with the generic list/call
-        pair, which servers and tools exist."""
-        from ..mcp_client.tools import overview_lines
-
-        notes = self.app.mcp.unavailable()
-        if "mcp_call" in tools:
-            notes = [*overview_lines(self.app.mcp), *notes]
-        return notes
-
-    async def _prom_queries(self, tools: dict[str, Tool]) -> list[dict[str, Any]]:
-        """The auto-planned Prometheus queries, so the model knows what already exists."""
-        if "promql_query" not in tools:
-            return []
-        from ..promauto.store import list_enabled_queries
-
-        try:
-            return await list_enabled_queries(self.app.db)
-        except Exception:
-            log.exception("chat: could not list the auto Prometheus queries")
-            return []
 
     # ------------------------------------------------------------------ titles
 
@@ -186,22 +126,28 @@ class ChatEngine:
     async def _make_title(
         self, session_id: str, question: str, answer: str, trace_turn: str | None = None
     ) -> str | None:
-        """Ask the LLM for a short title and store it. Any failure, timeout or unusable reply
-        leaves the title cut from the first message in place (returns None)."""
+        """Ask the main model for a short title and store it. Any failure, timeout or unusable
+        reply leaves the title cut from the first message in place (returns None)."""
+        hub: ModelHub = self.app.models
         try:
+            agent: Agent[None, str] = Agent(hub.model("main"), instructions=TITLE_SYSTEM)
             async with asyncio.timeout(TITLE_TIMEOUT_S):
                 with trace_scope(
                     "chat_title", link_kind="chat", link_id=session_id, turn=trace_turn
                 ):
-                    completion = await self.app.llm.complete(
-                        title_messages(question, answer),
-                        temperature=0.2,
-                        max_tokens=TITLE_MAX_TOKENS,
-                        reasoning_effort="none",
+                    result = await agent.run(
+                        title_prompt(question, answer),
+                        model_settings=OpenAIChatModelSettings(
+                            temperature=0.2,
+                            max_tokens=TITLE_MAX_TOKENS,
+                            openai_reasoning_effort="none",
+                        ),
                     )
-            title = clean_title(completion.content)
+            # Only the answer text counts: a reply that is all (or cut-off) reasoning has none.
+            text = "".join(p.content for p in result.response.parts if isinstance(p, TextPart))
+            title = clean_title(text)
             if title is None:
-                log.info("chat: unusable title reply %r", completion.content[:80])
+                log.info("chat: unusable title reply %r", text[:80])
                 return None
             await self.store.set_title(session_id, title)
             return title
@@ -209,59 +155,55 @@ class ChatEngine:
             log.info("chat: no LLM title (%s: %s)", type(exc).__name__, exc)
             return None
 
-    # ------------------------------------------------------------------ tool routing
+    # ------------------------------------------------------------------ tools
 
-    async def _route(self, turn: _Turn, question: str, used_before: list[str]) -> None:
-        """Decide which tool groups this question gets (see routing.py). Sets `turn.route`;
-        leaves it None when routing is off, not needed (auto) or nothing is worth routing."""
+    def _shell(self) -> HostShell:
         settings = self.app.settings
-        chat = settings.chat
-        if chat.tool_routing == "off":
-            return
-        mcp_servers = self._mcp_servers()
-        groups = routing.catalog(turn.tools, mcp_servers)
-        if not groups:
-            return
-        definitions = [t.definition() for t in turn.tools.values()]
-        if not routing.wanted(chat.tool_routing, definitions, chat.tool_routing_tokens):
-            return
-        turn.tools[routing.MORE_TOOLS] = routing.more_tools(groups)
-        state = routing.Routing(groups)
-        turn.route = state
-        turn.ctx.routing = state
-        sticky = [
-            g
-            for g in dict.fromkeys(
-                g for name in used_before for g in routing.groups_of(name, mcp_servers)
-            )
-            if g in groups
-        ]
-        started = time.monotonic()
-        picked = await routing.classify(
-            self.app.llm,
-            question,
-            groups,
-            turn.tools,
-            sticky,
-            session_id=turn.session_id,
-            turn=turn.trace_id,
+        docker = settings.collectors.docker.url.strip() or os.environ.get("DOCKER_HOST")
+        return HostShell(self.app.host_env.root, docker_host=docker or None)
+
+    def _bash(self, session_id: str, shell: HostShell) -> AgentTool:
+        chat = self.app.settings.chat
+
+        async def audit(**fields: Any) -> None:
+            await record_call(self.app.db, "shell", session_id, **fields)
+
+        return bash_tool(
+            shell,
+            default_timeout_s=min(
+                chat.command_timeout.total_seconds(), chat.tool_timeout.total_seconds()
+            ),
+            max_timeout_s=chat.tool_timeout.total_seconds(),
+            max_chars=max(chat.max_tool_result_chars - 400, 400),
+            audit=audit,
         )
-        state.classifier_s = time.monotonic() - started
-        if picked is None:
-            state.fallback = "the classifier gave no usable answer: all tool groups loaded"
-            state.chosen = list(groups)
-        else:
-            state.chosen = list(dict.fromkeys([*sticky, *picked]))
-        state.active = set(state.chosen)
 
-    def _mcp_servers(self) -> list[str]:
-        """Names of the MCP servers whose tools are offered (for the MCP tool groups)."""
-        try:
-            from ..mcp_client.tools import pick_tools
+    def _worker(self, session_id: str, shell: HostShell, scrub: Scrubber, host: str) -> AgentTool:
+        app = self.app
+        settings = app.settings
 
-            return sorted({p.server for p in pick_tools(self.app.mcp)})
-        except Exception:
-            return []
+        async def run_worker(task: str) -> str:
+            cfg = AgentConfig(
+                model=app.models.model("worker"),
+                instructions=worker_prompt(host, settings.report.language),
+                tools=[self._bash(session_id, shell)],
+                max_steps=settings.chat.worker_max_steps,
+                tool_timeout_s=settings.chat.tool_timeout.total_seconds(),
+                result_chars=settings.chat.max_tool_result_chars,
+                scrub=scrub,
+                tracing=app.tracing,
+                trace={"purpose": "subagent"},
+                trace_tool_prefix="worker:",
+            )
+            output, steps, stopped = "", 0, None
+            async for event in run_agent(cfg, task):
+                if event["type"] == "end":
+                    output, steps, stopped = event["output"], event["steps"], event["stopped"]
+            text = strip_reasoning(str(output)) or "(the worker gave no answer)"
+            limit = ", stopped at its step limit" if stopped else ""
+            return f"{text}\n[worker model {app.models.name('worker')}: {steps} steps{limit}]"
+
+        return delegate_tool(run_worker)
 
     # ------------------------------------------------------------------ one question
 
@@ -270,98 +212,125 @@ class ChatEngine:
     ) -> AsyncIterator[Event]:
         app = self.app
         settings = app.settings
-        if not settings.llm.configured:
-            yield {"type": "error", "message": "The LLM is not configured (Settings → LLM)."}
+        hub: ModelHub = app.models
+        if not hub.configured("main"):
+            yield {"type": "error", "message": "The LLM is not configured (Settings → Main model)."}
             return
         mode = await app.tool_mode.resolve()
-        if mode != "none":
-            await app.mcp.prepare()  # lazy connect; never blocks long, dead servers just stay out
-        tools = self._tools_builder(settings, app.mcp) if mode != "none" else {}
         history = await self.store.history(session_id, settings.chat.history_messages)
-        used_before = await self.store.used_tools(session_id) if tools else []
         await self.store.add_message(session_id, "user", message)
+        trace_turn = uuid.uuid4().hex[:12]
+        host = host_line(app.host_env.root)
+        language = settings.report.language
+        scrub = Scrubber(settings)
+        tools: list[AgentTool] = []
+        kinds: dict[str, str] = {}
+        if mode == "native":
+            await app.mcp.prepare()  # lazy connect; never blocks long, dead servers stay out
+            from ..mcp_client import build_mcp_tools
 
-        digest = (await app.reports.digest()).text if mode == "none" else None
-        turn = _Turn(
-            session_id=session_id,
+            ctx = ToolContext(app, session_id, source)
+            shell = self._shell()
+            mcp = build_mcp_tools(app.mcp)
+            kinds = {t.name: t.kind for t in mcp}
+            tools = [
+                self._bash(session_id, shell),
+                self._worker(session_id, shell, scrub, host),
+                *mcp_agent_tools(mcp, ctx),
+            ]
+            instructions = chat_prompt(host, language)
+            notes = list(app.mcp.unavailable())
+            if mcp:
+                from ..mcp_client.tools import overview_lines
+
+                notes = [MCP_NOTE, *overview_lines(app.mcp), *notes]
+            if notes:
+                instructions += "\n" + "\n".join(notes)
+        else:
+            digest = (await app.reports.digest()).text
+            instructions = no_tools_prompt(host, language, digest)
+        cfg = AgentConfig(
+            model=hub.model("main"),
+            instructions=instructions,
             tools=tools,
-            ctx=ToolContext(app, session_id, self._promql_transport, source),
-            scrub=Scrubber(settings),
-            limit_chars=settings.chat.max_tool_result_chars,
-            timeout=settings.chat.tool_timeout.total_seconds(),
+            max_steps=settings.chat.max_steps,
+            tool_timeout_s=settings.chat.tool_timeout.total_seconds(),
+            result_chars=settings.chat.max_tool_result_chars,
+            scrub=scrub,
+            tracing=app.tracing,
+            trace={
+                "purpose": "chat",
+                "link_kind": "chat",
+                "link_id": session_id,
+                "turn": trace_turn,
+            },
+            on_approval=file_for_approval,
         )
-        if tools:
-            await self._route(turn, message, used_before)
-        prom_queries = await self._prom_queries(tools)
-        notes = self._mcp_notes(tools) if mode != "none" else ()
-
-        def build_system() -> str:
-            """The system prompt for the tools the model has right now."""
-            visible = turn.visible()
-            system = system_prompt(
-                settings.report.language,
-                digest=digest,
-                tools=bool(tools),
-                tool_names=visible,
-                prom_queries=prom_queries,
-                notes=notes,
-                routed=sorted(turn.route.groups) if turn.route else (),
-            )
-            if mode == "json" and tools:
-                system = json_tool_system_prompt(turn.definitions(), system)
-            return system
-
-        turn.build_system = build_system
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": build_system()},
-            *history,
-            {"role": "user", "content": message},
-        ]
-        if turn.route:
-            yield {"type": "route", **turn.route.summary()}
-
-        final: str | None = None
-        stopped: str | None = None
-        while final is None:
-            if turn.steps >= settings.chat.max_steps and tools:
-                stopped = "step_limit"
-                messages.append({"role": "user", "content": STEP_LIMIT_NOTE})
-                async for event in self._llm_turn(turn, messages):
-                    if event["type"] == "_end":
-                        final = strip_reasoning(event["text"]) or (
-                            "I could not finish: the tool-call limit was reached."
-                        )
-                    else:
-                        yield event
-                break
-            turn.steps += 1
-            if mode == "native" and tools:
-                step = self._native_step(turn, messages)
-            else:
-                step = self._json_step(turn, messages, plain=not tools)
-            async for event in step:
-                if event["type"] == "_final":
-                    final = event["text"]
-                else:
-                    yield event
-
-        # Whatever of the answer was not streamed already (text held back as possible tool
-        # JSON, an empty-answer fallback) goes out now.
-        rest = final[len(turn.streamed) :] if final.startswith(turn.streamed) else ""
+        streamed = ""
+        """Text of the current model turn already sent (reset by tool calls)."""
+        end: Event = {}
+        async for event in run_agent(cfg, message, history=history_messages(history)):
+            kind = event["type"]
+            if kind == "token":
+                streamed += event["text"]
+                yield event
+            elif kind == "tool_call":
+                streamed = ""
+                await self.store.add_message(
+                    session_id,
+                    "assistant",
+                    None,
+                    tool_calls=[
+                        {
+                            "id": event["id"],
+                            "name": event["name"],
+                            "arguments": json.dumps(event["args"], ensure_ascii=False),
+                        }
+                    ],
+                    meta={"step": event["step"]},
+                )
+                yield {
+                    "type": "tool_call",
+                    "id": event["id"],
+                    "name": event["name"],
+                    "args": event["args"],
+                    "kind": kinds.get(event["name"], "read"),
+                }
+            elif kind == "tool_result":
+                streamed = ""
+                await self.store.add_message(
+                    session_id,
+                    "tool",
+                    event["text"],
+                    tool_call_id=event["id"],
+                    name=event["name"],
+                    meta={
+                        "ok": event["ok"],
+                        "truncated": event["truncated"],
+                        "step": event["step"],
+                    },
+                )
+                yield {k: v for k, v in event.items() if k not in ("text", "step")}
+            elif kind == "tool_progress":
+                yield event
+            elif kind == "end":
+                end = event
+        final = strip_reasoning(str(end.get("output") or "")) or "(no answer)"
+        # Whatever of the answer was not streamed already (the step-limit fallback text, an
+        # empty-answer placeholder) goes out now.
+        rest = final[len(streamed) :] if final.startswith(streamed) else ""
         for piece in _chunks(rest) if rest else []:
-            yield {"type": "token", "text": piece, "step": turn.steps}
+            yield {"type": "token", "text": piece, "step": end.get("steps", 0)}
         meta = {
             "tool_mode": mode,
-            "steps": turn.steps,
-            "model": turn.model,
+            "steps": end.get("steps", 0),
+            "model": hub.name("main"),
             "usage": {
-                "prompt_tokens": turn.usage.prompt_tokens,
-                "completion_tokens": turn.usage.completion_tokens,
+                "prompt_tokens": end.get("usage", {}).get("prompt_tokens", 0),
+                "completion_tokens": end.get("usage", {}).get("completion_tokens", 0),
             },
-            "stopped": stopped,
-            "repairs": turn.repairs,
-            "trace_turn": turn.trace_id,
-            **({"route": turn.route.summary()} if turn.route else {}),
+            "stopped": end.get("stopped"),
+            "trace_turn": trace_turn,
         }
         message_id = await self.store.add_message(session_id, "assistant", final, meta=meta)
         yield {
@@ -372,273 +341,9 @@ class ChatEngine:
             "text": final,
         }
 
-    # ------------------------------------------------------------------ protocols
-
-    async def _llm_turn(
-        self,
-        turn: _Turn,
-        messages: list[dict[str, Any]],
-        *,
-        defs: list[dict[str, Any]] | None = None,
-        hold_json: bool = False,
-    ) -> AsyncIterator[Event]:
-        """One streamed model call. Yields `token` events as text arrives, then a final
-        internal `_end` event with the full text and the assembled tool calls.
-
-        With `hold_json` (JSON-in-text protocol) text from the first `{` or code fence on is
-        not sent: it is probably a tool request, and the caller decides at the end whether it
-        was (nothing of it leaks) or not (the rest is flushed as the answer).
-        Reasoning blocks (<think>…</think>) are never sent."""
-        turn.streamed = ""
-        text = ""
-        tool_calls: list[Any] = []
-        calls = self.app.llm.stream(messages, tools=defs, tool_choice="auto" if defs else None)
-        async for chunk in scoped_iter(
-            calls,
-            "chat",
-            link_kind="chat",
-            link_id=turn.session_id,
-            turn=turn.trace_id,
-            step=turn.steps,
-        ):
-            if chunk.done:
-                if chunk.usage:
-                    turn.usage.prompt_tokens += chunk.usage.prompt_tokens
-                    turn.usage.completion_tokens += chunk.usage.completion_tokens
-                tool_calls = chunk.tool_calls
-                continue
-            text += chunk.text
-            shown = _visible(text)
-            if hold_json:
-                starts = [i for i in (shown.find("{"), shown.find("```")) if i != -1]
-                # (an incomplete fence at the end, "`" or "``", is held back too)
-                shown = (shown[: min(starts)] if starts else shown.rstrip("`")).rstrip()
-            if len(shown) > len(turn.streamed) and shown.startswith(turn.streamed):
-                piece = shown[len(turn.streamed) :]
-                turn.streamed = shown
-                yield {"type": "token", "text": piece, "step": turn.steps}
-        turn.model = self.app.llm.model
-        yield {"type": "_end", "text": text, "tool_calls": tool_calls}
-
-    async def _native_step(
-        self, turn: _Turn, messages: list[dict[str, Any]]
-    ) -> AsyncIterator[Event]:
-        text, tool_calls = "", []
-        async for event in self._llm_turn(turn, messages, defs=turn.definitions()):
-            if event["type"] == "_end":
-                text, tool_calls = event["text"], event["tool_calls"]
-            else:
-                yield event
-        if not tool_calls:
-            yield {"type": "_final", "text": strip_reasoning(text) or "(no answer)"}
-            return
-        calls = [
-            {
-                "id": c.id or new_tool_call_id(),
-                "type": "function",
-                "function": {"name": c.name, "arguments": c.arguments or "{}"},
-            }
-            for c in tool_calls
-        ]
-        messages.append({"role": "assistant", "content": text or None, "tool_calls": calls})
-        await self.store.add_message(
-            turn.session_id,
-            "assistant",
-            text or None,
-            tool_calls=[
-                {
-                    "id": c["id"],
-                    "name": c["function"]["name"],
-                    "arguments": c["function"]["arguments"],
-                }
-                for c in calls
-            ],
-            meta={"step": turn.steps},
-        )
-        for call, raw in zip(calls, tool_calls, strict=True):
-            try:
-                args = raw.parsed_arguments()
-            except ValueError as exc:
-                args, problem = {}, f"arguments are not a valid JSON object ({exc})"
-            else:
-                problem = None
-            async for event in self._run_tool(
-                turn, call["id"], raw.name, args, problem, messages, native=True
-            ):
-                yield event
-
-    async def _json_step(
-        self, turn: _Turn, messages: list[dict[str, Any]], *, plain: bool
-    ) -> AsyncIterator[Event]:
-        text = ""
-        async for event in self._llm_turn(turn, messages, hold_json=not plain):
-            if event["type"] == "_end":
-                text = event["text"]
-            else:
-                yield event
-        if plain:
-            yield {"type": "_final", "text": strip_reasoning(text) or "(no answer)"}
-            return
-        parsed = parse_tool_request(text, set(turn.tools))
-        if parsed is None:
-            if _TOOL_ATTEMPT.search(strip_reasoning(text)) and turn.repairs < MAX_REPAIRS:
-                turn.repairs += 1
-                messages.append({"role": "assistant", "content": text})
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "That looked like a tool call but I could not use it (invalid JSON, "
-                            f"unknown tool or wrong shape). Tools: {', '.join(turn.visible())}. "
-                            'Reply again with ONLY {"tool": "<name>", "args": {...}}, or answer '
-                            "in plain text if you need no tool."
-                        ),
-                    }
-                )
-                return
-            yield {"type": "_final", "text": strip_reasoning(text) or "(no answer)"}
-            return
-        name, args = parsed
-        call_id = new_tool_call_id()
-        messages.append({"role": "assistant", "content": text})
-        await self.store.add_message(
-            turn.session_id,
-            "assistant",
-            None,
-            tool_calls=[{"id": call_id, "name": name, "arguments": json.dumps(args)}],
-            meta={"step": turn.steps, "protocol": "json"},
-        )
-        async for event in self._run_tool(turn, call_id, name, args, None, messages, native=False):
-            yield event
-
-    # ------------------------------------------------------------------ tools
-
-    async def _run_tool(
-        self,
-        turn: _Turn,
-        call_id: str,
-        name: str,
-        args: dict[str, Any],
-        problem: str | None,
-        messages: list[dict[str, Any]],
-        *,
-        native: bool,
-    ) -> AsyncIterator[Event]:
-        tool = turn.tools.get(name)
-        yield {
-            "type": "tool_call",
-            "id": call_id,
-            "name": name,
-            "args": turn.scrub.clean(args),
-            "kind": tool.call_kind(args) if tool else None,
-        }
-        with trace_scope(
-            "chat",
-            link_kind="chat",
-            link_id=turn.session_id,
-            turn=turn.trace_id,
-            step=turn.steps,
-        ):
-            timer = self.app.tracing.start_tool(name, args)
-            # The tool may run for a long time (a disk scan): run it as a task and say every few
-            # seconds that it is still going, which also keeps the browser connection busy.
-            job = asyncio.ensure_future(self._execute(turn, tool, name, args, problem))
-            started = time.monotonic()
-            try:
-                while True:
-                    done, _ = await asyncio.wait({job}, timeout=PROGRESS_EVERY_S)
-                    if done:
-                        break
-                    yield {
-                        "type": "tool_progress",
-                        "id": call_id,
-                        "name": name,
-                        "elapsed_s": int(time.monotonic() - started),
-                    }
-                ok, text, truncated = job.result()
-            finally:
-                if not job.done():  # the client went away: stop the tool with it
-                    job.cancel()
-            timer.finish(ok=ok, result=text, error=None if ok else text, result_size=len(text))
-        await self.store.add_message(
-            turn.session_id,
-            "tool",
-            text,
-            tool_call_id=call_id,
-            name=name,
-            meta={"ok": ok, "truncated": truncated, "step": turn.steps},
-        )
-        if turn.route and name == routing.MORE_TOOLS and messages[0]["role"] == "system":
-            messages[0]["content"] = turn.build_system()  # (json mode lists the tools in it)
-        wrapped = wrap_untrusted(name, text)
-        if native:
-            messages.append({"role": "tool", "tool_call_id": call_id, "content": wrapped})
-        else:
-            messages.append({"role": "user", "content": f"Result of {name}:\n{wrapped}"})
-        yield {
-            "type": "tool_result",
-            "id": call_id,
-            "name": name,
-            "ok": ok,
-            "truncated": truncated,
-            "size": len(text),
-            "preview": text[:PREVIEW],
-        }
-
-    async def _execute(
-        self, turn: _Turn, tool: Tool | None, name: str, args: dict[str, Any], problem: str | None
-    ) -> tuple[bool, str, bool]:
-        """Run one tool call → (ok, text for the model, trimmed?). Never raises: every
-        failure becomes a message the model can react to."""
-        if tool is None:
-            return False, f"unknown tool {name!r}; available: {', '.join(turn.visible())}", False
-        if turn.route and name not in turn.route.names():
-            group = next(iter(routing.groups_of(name, self._mcp_servers())), None)
-            return (
-                False,
-                (
-                    f"{name} is not loaded for this question: call {routing.MORE_TOOLS} with "
-                    f"group={group!r} first, then {name}."
-                ),
-                False,
-            )
-        if problem:
-            return False, f"{name}: {problem}", False
-        try:
-            parsed = tool.args_model.model_validate(args)
-        except ValidationError as exc:
-            details = "; ".join(
-                f"{'.'.join(map(str, e['loc'])) or 'args'}: {e['msg']}"
-                for e in exc.errors(include_url=False, include_input=False, include_context=False)
-            )
-            return False, f"invalid arguments for {name}: {details}", False
-        try:
-            async with asyncio.timeout(turn.timeout):
-                result = await tool.handler(turn.ctx, parsed)
-        except ToolError as exc:
-            text = turn.scrub.text(str(exc))
-            return False, text + ("" if text.startswith("refused") else failure_hint(name)), False
-        except TimeoutError:
-            return False, f"{name} timed out after {turn.timeout:.0f}s{failure_hint(name)}", False
-        except Exception as exc:
-            log.exception("chat tool %s crashed", name)
-            return False, f"{name} failed: {type(exc).__name__}{failure_hint(name)}", False
-        text, truncated = shrink(humanize(turn.scrub.clean(result)), turn.limit_chars)
-        return True, text, truncated
-
-
-def _visible(text: str) -> str:
-    """The part of streamed text that may be shown so far: reasoning blocks removed and a
-    trailing, still incomplete tag (`<thi`) held back."""
-    shown = strip_reasoning(text)
-    cut = shown.rfind("<")
-    if cut != -1 and ">" not in shown[cut:] and len(shown) - cut < 12:
-        shown = shown[:cut]
-    return shown
-
 
 def _chunks(text: str) -> list[str]:
-    """Split the answer into small pieces for the token stream (on whitespace)."""
+    """Split text into small pieces for the token stream (on whitespace)."""
     pieces: list[str] = []
     current = ""
     for word in re.findall(r"\S+\s*|\s+", text):

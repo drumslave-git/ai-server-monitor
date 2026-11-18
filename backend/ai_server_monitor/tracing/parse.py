@@ -42,7 +42,7 @@ def empty_answer_message(limit: Any) -> str:
     where = f" ({limit} tokens)" if limit else ""
     return (
         f"The model used the whole output limit{where} on thinking and wrote no answer. "
-        "Raise the output limit or lower the thinking level in Settings → LLM."
+        "Raise the output limit or lower the thinking level in Settings → Main model."
     )
 
 

@@ -65,7 +65,7 @@ export const PURPOSE_LABEL: Record<string, string> = {
   report: "Report",
   chat: "Chat",
   chat_title: "Chat title",
-  chat_route: "Chat tool routing",
+  subagent: "Worker sub-task",
   probe: "Tool-mode probe",
   test: "Connection test",
   prom_plan: "Prometheus plan",

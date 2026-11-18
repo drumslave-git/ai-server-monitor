@@ -62,16 +62,6 @@ def test_chat_title_asks_for_no_thinking_and_has_room(bootstrap: Bootstrap) -> N
     assert request["reasoning_effort"] == "none" and request["max_tokens"] >= 200
 
 
-def test_tool_routing_asks_for_no_thinking_and_has_room(bootstrap: Bootstrap) -> None:
-    llm = FakeLLM(say("Ollama."))
-    llm.route_reply = '{"groups": ["host"]}'
-    app = make_app(bootstrap, llm, chat={"tool_routing": "always"})
-    with TestClient(app) as client:
-        ask(client, "what uses the most memory?")
-    (request,) = llm.route_requests
-    assert request["reasoning_effort"] == "none" and request["max_tokens"] >= 400
-
-
 @respx.mock
 def test_settings_test_asks_for_no_thinking_and_has_room(bootstrap: Bootstrap) -> None:
     respx.get(f"{LLM_URL}/models").mock(return_value=httpx.Response(404))
@@ -135,7 +125,6 @@ def test_chat_says_so_when_the_model_spent_its_whole_limit_thinking(bootstrap: B
                 "max_retries": 0,
                 "max_output_tokens": 2000,
             },
-            "chat": {"tool_routing": "off"},
         }
     )
     app = create_app(

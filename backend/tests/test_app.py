@@ -68,7 +68,8 @@ def test_settings_roundtrip_masks_secrets_and_applies_live(bootstrap: Bootstrap)
     app = create_app(bootstrap, collector_registry={"system": StubSystem})
     with TestClient(app) as client:
         doc = client.get("/api/settings").json()
-        assert doc["sections"]["llm"] == "LLM"
+        assert doc["sections"]["llm"] == "Main model"
+        assert doc["sections"]["worker"] == "Worker model"
         schema = doc["schema"]
         assert "$defs" in schema and "llm" in schema["properties"]
         values = doc["values"]

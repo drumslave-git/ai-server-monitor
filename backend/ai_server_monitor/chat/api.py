@@ -99,7 +99,9 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     without it the session keeps the title cut from the first message)."""
     ctx = _ctx(request)
     if not ctx.settings.llm.configured:
-        raise HTTPException(status_code=409, detail="The LLM is not configured (Settings → LLM).")
+        raise HTTPException(
+            status_code=409, detail="The LLM is not configured (Settings → Main model)."
+        )
     if body.session_id and not await ctx.chat.store.session_exists(body.session_id):
         raise HTTPException(status_code=404, detail=f"no session {body.session_id}")
 

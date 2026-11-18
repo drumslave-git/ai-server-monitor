@@ -29,9 +29,9 @@ log = logging.getLogger(__name__)
 
 TRUNCATED_NOTE = (
     "\n\n> ⚠ The report was cut off: the model reached its output limit. Raise "
-    "Settings → LLM → max output tokens (models that “think” spend part of it on reasoning)."
+    "Settings → Main model → max output tokens (models that “think” spend part of it on reasoning)."
 )
-NOT_CONFIGURED = "LLM is not configured: set the base URL and model in Settings → LLM."
+NOT_CONFIGURED = "LLM is not configured: set the base URL and model in Settings → Main model."
 
 
 @dataclass

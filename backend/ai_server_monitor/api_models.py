@@ -176,7 +176,7 @@ class SettingsValues(BaseModel):
 
 
 class ModelInfoResult(BaseModel):
-    """What the selected LLM model says about itself (Ollama only), for Settings → LLM."""
+    """What the selected LLM model says about itself (Ollama only), for Settings → Main model."""
 
     available: bool
     """False when the endpoint is not Ollama, is unreachable, or no model is set."""

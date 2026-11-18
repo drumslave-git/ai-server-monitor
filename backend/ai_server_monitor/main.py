@@ -17,9 +17,10 @@ from pydantic import ValidationError
 
 from . import __version__, api_models
 from .actions.api import router as actions_router
+from .agent.models import worker_config
 from .chat.api import router as chat_router
 from .collectors import Collector
-from .config import Bootstrap, LLMSettings, Settings, settings_json_schema
+from .config import Bootstrap, LLMSettings, Settings, WorkerLLMSettings, settings_json_schema
 from .conntest import KINDS as TEST_KINDS
 from .conntest import run_test
 from .context import AppContext
@@ -40,7 +41,8 @@ JsonBody = Annotated[dict[str, Any], Body()]
 
 SECTION_TITLES = {
     "general": "General",
-    "llm": "LLM",
+    "llm": "Main model",
+    "worker": "Worker model",
     "report": "Reports",
     "chat": "Chat",
     "storage": "Data retention",
@@ -325,14 +327,27 @@ def create_app(
         return api_models.SettingsValues.model_validate({"values": ctx.settings.public_dict()})
 
     @app.post("/api/settings/test-llm")
-    async def test_llm(request: Request, body: JsonBody) -> dict[str, Any]:
-        """Try the given (possibly unsaved) LLM settings: list models + a tiny completion."""
+    async def test_llm(
+        request: Request, body: JsonBody, profile: Literal["main", "worker"] = "main"
+    ) -> dict[str, Any]:
+        """Try the given (possibly unsaved) model settings: list models + a tiny completion.
+        `profile=worker` tests the worker model as the agents would use it (endpoint and key
+        of the main model when its own base URL is empty)."""
         ctx = get_ctx(request)
-        current = ctx.settings.llm.model_dump(mode="json", context={"reveal_secrets": True})
+        stored = ctx.settings.worker if profile == "worker" else ctx.settings.llm
+        current = stored.model_dump(mode="json", context={"reveal_secrets": True})
         try:
             cfg = LLMSettings.model_validate(merge_secrets(body, current))
         except ValidationError as exc:
             raise _validation_error(exc) from exc
+        if profile == "worker":
+            if not cfg.model.strip():
+                return {"ok": False, "error": "No worker model set: sub-tasks use the main model."}
+            cfg = worker_config(
+                ctx.settings.model_copy(
+                    update={"worker": WorkerLLMSettings.model_validate(cfg.model_dump())}
+                )
+            )
         if not cfg.configured:
             return {"ok": False, "error": "Set the base URL and model first."}
         client = LLMClient(

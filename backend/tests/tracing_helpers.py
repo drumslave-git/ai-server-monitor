@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ai_server_monitor.chat.safety import Scrubber
+from ai_server_monitor.agent.safety import Scrubber
 from ai_server_monitor.config import Settings
 from ai_server_monitor.db import Database
 from ai_server_monitor.tracing import TraceConfig, Tracing

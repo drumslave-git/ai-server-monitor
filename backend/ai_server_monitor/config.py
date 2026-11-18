@@ -168,6 +168,9 @@ ReasoningEffort = Literal["auto", "none", "low", "medium", "high"]
 
 
 class LLMSettings(_Model):
+    """The big model: it answers chat questions, writes reports and decides when to hand a
+    sub-task to the worker model."""
+
     base_url: OptionalHttpUrl = ""
     """OpenAI-compatible API base URL, e.g. http://ollama:11434/v1, http://llama:8080/v1,
     https://openrouter.ai/api/v1. Empty = LLM not configured."""
@@ -210,6 +213,12 @@ class LLMSettings(_Model):
     @property
     def configured(self) -> bool:
         return bool(self.base_url.strip() and self.model.strip())
+
+
+class WorkerLLMSettings(LLMSettings):
+    """A smaller, faster model for sub-tasks the main model hands off (looking through the
+    host with the shell). Empty model = the main model does them too. Empty base URL = the
+    main model's endpoint and API key with this model name (e.g. a second Ollama model)."""
 
 
 class ReportSettings(_Model):
@@ -263,8 +272,15 @@ class ReportSettings(_Model):
 
 
 class ChatSettings(_Model):
-    max_steps: int = Field(default=6, ge=1, le=20)
-    """Most tool-use rounds per question before the model must answer with what it has."""
+    max_steps: int = Field(default=15, ge=1, le=60)
+    """Most tool-use rounds of the main model per question before it must answer with what it
+    has. A host question usually takes 3 to 8 shell commands; the rest is room for a check."""
+    worker_max_steps: int = Field(default=20, ge=1, le=60)
+    """Most tool-use rounds of one sub-task on the worker model. Higher than the main model's:
+    a small model exploring with the shell needs more tries, and its steps are cheap."""
+    command_timeout: Duration = timedelta(minutes=5)
+    """How long one shell command may run when the model does not ask for longer (it may ask
+    for up to the tool time limit below, e.g. for a disk walk)."""
     history_messages: int = Field(default=12, ge=0, le=100)
     """How many earlier messages of a conversation the model sees."""
     max_tool_result_chars: int = Field(default=6000, ge=500, le=50000)
@@ -273,21 +289,6 @@ class ChatSettings(_Model):
     """Longest one tool call (a disk scan, a command, an API call) may run before the chat
     gives up on it. The answer waits for the tool; the chat shows what is running and for
     how long."""
-    shell: bool = True
-    """Let the chat run read-only commands on the host (journalctl, systemctl status, ss, df,
-    ps, ...) to answer questions. They run in a sandbox as an unprivileged user and can change
-    nothing. Off = the chat only sees the collected data."""
-    disk_cache_ttl: Duration = timedelta(minutes=10)
-    """How long a finished disk scan of a path is reused."""
-    tool_routing: Literal["auto", "always", "off"] = "auto"
-    """Send the model only the tool groups a question needs (host, media, metrics, containers,
-    actions, one per MCP server). A short model call picks the groups before the answer; the
-    model can load another group itself. auto = only when the full tool definitions are bigger
-    than the token limit below (strong models cope with all tools); always = every question;
-    off = every tool every time."""
-    tool_routing_tokens: int = Field(default=2000, ge=200, le=100_000)
-    """With tool routing auto: the size of the tool definitions (about 4 characters per token)
-    above which routing is used."""
 
 
 class StorageSettings(_Model):
@@ -647,6 +648,7 @@ class Settings(_Model):
 
     general: GeneralSettings = GeneralSettings()
     llm: LLMSettings = LLMSettings()
+    worker: WorkerLLMSettings = WorkerLLMSettings()
     report: ReportSettings = ReportSettings()
     chat: ChatSettings = ChatSettings()
     storage: StorageSettings = StorageSettings()

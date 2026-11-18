@@ -643,7 +643,9 @@ export interface paths {
         put?: never;
         /**
          * Test Llm
-         * @description Try the given (possibly unsaved) LLM settings: list models + a tiny completion.
+         * @description Try the given (possibly unsaved) model settings: list models + a tiny completion.
+         *     `profile=worker` tests the worker model as the agents would use it (endpoint and key
+         *     of the main model when its own base URL is empty).
          */
         post: operations["test_llm_api_settings_test_llm_post"];
         delete?: never;
@@ -858,16 +860,17 @@ export interface components {
         /** ChatSettings */
         ChatSettings: {
             /**
-             * Disk Cache Ttl
+             * Command Timeout
              * Format: duration
-             * @description How long a finished disk scan of a path is reused.
-             * @default 10m
+             * @description How long one shell command may run when the model does not ask for longer (it may ask
+             *     for up to the tool time limit below, e.g. for a disk walk).
+             * @default 5m
              * @example 30s
              * @example 5m
              * @example 6h
              * @example 30d
              */
-            disk_cache_ttl: string;
+            command_timeout: string;
             /**
              * History Messages
              * @description How many earlier messages of a conversation the model sees.
@@ -876,8 +879,9 @@ export interface components {
             history_messages: number;
             /**
              * Max Steps
-             * @description Most tool-use rounds per question before the model must answer with what it has.
-             * @default 6
+             * @description Most tool-use rounds of the main model per question before it must answer with what it
+             *     has. A host question usually takes 3 to 8 shell commands; the rest is room for a check.
+             * @default 15
              */
             max_steps: number;
             /**
@@ -886,32 +890,6 @@ export interface components {
              * @default 6000
              */
             max_tool_result_chars: number;
-            /**
-             * Shell
-             * @description Let the chat run read-only commands on the host (journalctl, systemctl status, ss, df,
-             *     ps, ...) to answer questions. They run in a sandbox as an unprivileged user and can change
-             *     nothing. Off = the chat only sees the collected data.
-             * @default true
-             */
-            shell: boolean;
-            /**
-             * Tool Routing
-             * @description Send the model only the tool groups a question needs (host, media, metrics, containers,
-             *     actions, one per MCP server). A short model call picks the groups before the answer; the
-             *     model can load another group itself. auto = only when the full tool definitions are bigger
-             *     than the token limit below (strong models cope with all tools); always = every question;
-             *     off = every tool every time.
-             * @default auto
-             * @enum {string}
-             */
-            tool_routing: "auto" | "always" | "off";
-            /**
-             * Tool Routing Tokens
-             * @description With tool routing auto: the size of the tool definitions (about 4 characters per token)
-             *     above which routing is used.
-             * @default 2000
-             */
-            tool_routing_tokens: number;
             /**
              * Tool Timeout
              * Format: duration
@@ -925,6 +903,13 @@ export interface components {
              * @example 30d
              */
             tool_timeout: string;
+            /**
+             * Worker Max Steps
+             * @description Most tool-use rounds of one sub-task on the worker model. Higher than the main model's:
+             *     a small model exploring with the shell needs more tries, and its steps are cheap.
+             * @default 20
+             */
+            worker_max_steps: number;
         };
         /** CollectorSettings */
         CollectorSettings: {
@@ -1313,7 +1298,11 @@ export interface components {
              */
             priority: "emerg" | "alert" | "crit" | "err" | "warning" | "notice" | "info";
         };
-        /** LLMSettings */
+        /**
+         * LLMSettings
+         * @description The big model: it answers chat questions, writes reports and decides when to hand a
+         *     sub-task to the worker model.
+         */
         LLMSettings: {
             /**
              * Api Key
@@ -1865,7 +1854,7 @@ export interface components {
         };
         /**
          * ModelInfoResult
-         * @description What the selected LLM model says about itself (Ollama only), for Settings → LLM.
+         * @description What the selected LLM model says about itself (Ollama only), for Settings → Main model.
          */
         ModelInfoResult: {
             /** Available */
@@ -2372,14 +2361,12 @@ export interface components {
             approvals: components["schemas"]["ApprovalsSettings"];
             /**
              * @default {
-             *       "disk_cache_ttl": "10m",
+             *       "command_timeout": "5m",
              *       "history_messages": 12,
-             *       "max_steps": 6,
+             *       "max_steps": 15,
              *       "max_tool_result_chars": 6000,
-             *       "shell": true,
-             *       "tool_routing": "auto",
-             *       "tool_routing_tokens": 2000,
-             *       "tool_timeout": "1h"
+             *       "tool_timeout": "1h",
+             *       "worker_max_steps": 20
              *     }
              */
             chat: components["schemas"]["ChatSettings"];
@@ -2550,6 +2537,25 @@ export interface components {
              *     }
              */
             storage: components["schemas"]["StorageSettings"];
+            /**
+             * @default {
+             *       "api_key": "",
+             *       "base_url": "",
+             *       "extra_body": {},
+             *       "max_context_tokens": 8192,
+             *       "max_output_tokens": 16384,
+             *       "max_retries": 2,
+             *       "model": "",
+             *       "reasoning_effort": "auto",
+             *       "stream_usage": true,
+             *       "temperature": "auto",
+             *       "timeout": "3m",
+             *       "tool_mode": "auto",
+             *       "top_k": "auto",
+             *       "top_p": "auto"
+             *     }
+             */
+            worker: components["schemas"]["WorkerLLMSettings"];
         };
         /** SettingsResponse */
         SettingsResponse: {
@@ -2865,6 +2871,117 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * WorkerLLMSettings
+         * @description A smaller, faster model for sub-tasks the main model hands off (looking through the
+         *     host with the shell). Empty model = the main model does them too. Empty base URL = the
+         *     main model's endpoint and API key with this model name (e.g. a second Ollama model).
+         */
+        WorkerLLMSettings: {
+            /**
+             * Api Key
+             * Format: password
+             * @description API key, if the endpoint needs one.
+             * @default
+             */
+            api_key: string;
+            /**
+             * Base Url
+             * @description OpenAI-compatible API base URL, e.g. http://ollama:11434/v1, http://llama:8080/v1,
+             *     https://openrouter.ai/api/v1. Empty = LLM not configured.
+             * @default
+             */
+            base_url: string;
+            /**
+             * Extra Body
+             * @description Extra provider-specific request fields (JSON), passed through verbatim.
+             */
+            extra_body?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Max Context Tokens
+             * @description Context window to plan prompts for. For Ollama, also raise OLLAMA_CONTEXT_LENGTH.
+             * @default 8192
+             */
+            max_context_tokens: number;
+            /**
+             * Max Output Tokens
+             * @description Maximum tokens per answer/report, counting a thinking model's reasoning too. Too low and
+             *     a model that thinks long runs out before it writes the answer (shown as an error).
+             * @default 16384
+             */
+            max_output_tokens: number;
+            /**
+             * Max Retries
+             * @description How many times a failed model request is retried before giving up.
+             * @default 2
+             */
+            max_retries: number;
+            /**
+             * Model
+             * @description Model name as the endpoint knows it, e.g. qwen2.5:14b or gpt-4o-mini.
+             * @default
+             */
+            model: string;
+            /**
+             * Reasoning Effort
+             * @description How much a thinking model reasons before answering chat questions and reports, sent as
+             *     the API's reasoning_effort. auto = not sent, the model decides; none = no thinking (fast,
+             *     shallower); low / medium / high = as the model supports. Short helper calls (chat titles,
+             *     tool routing, tests) always ask for none.
+             * @default auto
+             * @enum {string}
+             */
+            reasoning_effort: "auto" | "none" | "low" | "medium" | "high";
+            /**
+             * Stream Usage
+             * @description Ask the endpoint for token usage while streaming (turned off automatically if
+             *     the endpoint rejects it).
+             * @default true
+             */
+            stream_usage: boolean;
+            /**
+             * Temperature
+             * @description Randomness of answers: 0 is the most predictable, higher is more varied. auto = not sent,
+             *     so the model's own default applies (for Ollama models it is shown above).
+             * @default auto
+             */
+            temperature: number | "auto";
+            /**
+             * Timeout
+             * Format: duration
+             * @description Per-request timeout. Local models on CPU can be slow.
+             * @default 3m
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            timeout: string;
+            /**
+             * Tool Mode
+             * @description How the model calls tools in chat. auto = detect; native = OpenAI tool calls;
+             *     json = JSON-in-text fallback for models without tool calling; none = no tools.
+             * @default auto
+             * @enum {string}
+             */
+            tool_mode: "auto" | "native" | "json" | "none";
+            /**
+             * Top K
+             * @description Only the this-many most likely words are considered at each step (0 = no limit). auto =
+             *     not sent, the model's own default applies. Not every endpoint honours it.
+             * @default auto
+             */
+            top_k: number | "auto";
+            /**
+             * Top P
+             * @description Nucleus sampling: only the most likely words that together cover this share of the
+             *     probability are considered. auto = not sent, the model's own default applies.
+             * @default auto
+             */
+            top_p: number | "auto";
         };
     };
     responses: never;
@@ -3918,7 +4035,9 @@ export interface operations {
     };
     test_llm_api_settings_test_llm_post: {
         parameters: {
-            query?: never;
+            query?: {
+                profile?: "main" | "worker";
+            };
             header?: never;
             path?: never;
             cookie?: never;

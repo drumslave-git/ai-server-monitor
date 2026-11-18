@@ -37,7 +37,7 @@ What the compose file sets, and why:
 | `pid: host` | Lets the container see the host's processes (top CPU/memory consumers, which container a process belongs to). |
 | `/:/host:ro,rslave` | A read-only view of the host's filesystem: disk usage of the real mounts, the apt state, the journal, the systemd D-Bus socket. Nothing is ever written there. |
 | `security_opt: apparmor=unconfined` | On hosts with AppArmor (Ubuntu) Docker's default profile blocks the systemd D-Bus queries and reading other processes. The mounts stay read-only. Hosts without AppArmor do not need it. |
-| default container capabilities | The chat's `run_command` tool chroots into `/host` and drops to the host's unprivileged `nobody` user, which needs `CAP_SYS_CHROOT`, `CAP_SETUID` and `CAP_SETGID` (Docker's defaults; do not use `cap_drop: ALL`). The commands run read-only with no capabilities, limited CPU/memory/time, and every one is logged (`GET /api/chat/audit`). Turn it off with Settings → Chat → `shell`. |
+| `cap_add: [DAC_READ_SEARCH]` | The chat's `bash` tool runs real bash on the host's files and programs (`chroot /host`, then the host's `setpriv`/`prlimit`/`ionice`) as a dedicated unprivileged uid that owns no host process, with no_new_privs and only this capability: it can read every file, write none, signal nothing, and cannot open the real Docker socket (`docker` goes through the read-only proxy). Without this line the shell still works as a plain unprivileged user and says when root-only paths were unreadable. Needs Docker's default `CHROOT`/`SETUID`/`SETGID` (no `cap_drop: ALL`). Every command is logged (`GET /api/chat/audit`). |
 | `DOCKER_HOST: tcp://docker-proxy:2375` | The Docker API goes through a socket proxy that only allows GET requests. The monitor can look at containers and images, not start, stop or delete anything. |
 | `docker-proxy` env `CONTAINERS`, `IMAGES`, `INFO`, `SYSTEM` | The API sections the proxy lets through: containers (state, stats, logs), images (needed by the image-update check), engine info, and disk usage (`/system/df`). |
 | `# gpus: all` | Uncomment for NVIDIA GPU monitoring (needs the NVIDIA container runtime on the host). |
@@ -228,7 +228,7 @@ a fresh install starts with.
 |---|---|---|---|
 | `general.log_level` | debug / info / warning / error | `info` | Log verbosity of the service. |
 
-### LLM (`llm`)
+### Main model (`llm`)
 
 | Setting | Type | Default | What it does |
 |---|---|---|---|
@@ -246,6 +246,25 @@ a fresh install starts with.
 | `llm.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up. |
 | `llm.stream_usage` | boolean | on | Ask the endpoint for token usage while streaming (turned off automatically if the endpoint rejects it). |
 | `llm.extra_body` | map | empty | Extra provider-specific request fields (JSON), passed through verbatim. |
+
+### Worker model (`worker`)
+
+| Setting | Type | Default | What it does |
+|---|---|---|---|
+| `worker.base_url` | string | empty | OpenAI-compatible API base URL, e.g. http://ollama:11434/v1, http://llama:8080/v1, https://openrouter.ai/api/v1. Empty = LLM not configured. |
+| `worker.api_key` | secret | empty | API key, if the endpoint needs one. |
+| `worker.model` | string | empty | Model name as the endpoint knows it, e.g. qwen2.5:14b or gpt-4o-mini. |
+| `worker.tool_mode` | auto / native / json / none | `auto` | How the model calls tools in chat. auto = detect; native = OpenAI tool calls; json = JSON-in-text fallback for models without tool calling; none = no tools. |
+| `worker.max_context_tokens` | integer (min 1024) | `8192` | Context window to plan prompts for. For Ollama, also raise OLLAMA_CONTEXT_LENGTH. |
+| `worker.max_output_tokens` | integer (min 64) | `16384` | Maximum tokens per answer/report, counting a thinking model's reasoning too. Too low and a model that thinks long runs out before it writes the answer (shown as an error). |
+| `worker.reasoning_effort` | auto / none / low / medium / high | `auto` | How much a thinking model reasons before answering chat questions and reports, sent as the API's reasoning_effort. auto = not sent, the model decides; none = no thinking (fast, shallower); low / medium / high = as the model supports. Short helper calls (chat titles, tool routing, tests) always ask for none. |
+| `worker.temperature` | number or auto | `auto` | Randomness of answers: 0 is the most predictable, higher is more varied. auto = not sent, so the model's own default applies (for Ollama models it is shown above). |
+| `worker.top_p` | number or auto | `auto` | Nucleus sampling: only the most likely words that together cover this share of the probability are considered. auto = not sent, the model's own default applies. |
+| `worker.top_k` | integer or auto | `auto` | Only the this-many most likely words are considered at each step (0 = no limit). auto = not sent, the model's own default applies. Not every endpoint honours it. |
+| `worker.timeout` | duration | `3m` | Per-request timeout. Local models on CPU can be slow. |
+| `worker.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up. |
+| `worker.stream_usage` | boolean | on | Ask the endpoint for token usage while streaming (turned off automatically if the endpoint rejects it). |
+| `worker.extra_body` | map | empty | Extra provider-specific request fields (JSON), passed through verbatim. |
 
 ### Reports (`report`)
 
@@ -276,14 +295,12 @@ a fresh install starts with.
 
 | Setting | Type | Default | What it does |
 |---|---|---|---|
-| `chat.max_steps` | integer (min 1, max 20) | `6` | Most tool-use rounds per question before the model must answer with what it has. |
+| `chat.max_steps` | integer (min 1, max 60) | `15` | Most tool-use rounds of the main model per question before it must answer with what it has. A host question usually takes 3 to 8 shell commands; the rest is room for a check. |
+| `chat.worker_max_steps` | integer (min 1, max 60) | `20` | Most tool-use rounds of one sub-task on the worker model. Higher than the main model's: a small model exploring with the shell needs more tries, and its steps are cheap. |
+| `chat.command_timeout` | duration | `5m` | How long one shell command may run when the model does not ask for longer (it may ask for up to the tool time limit below, e.g. for a disk walk). |
 | `chat.history_messages` | integer (min 0, max 100) | `12` | How many earlier messages of a conversation the model sees. |
 | `chat.max_tool_result_chars` | integer (min 500, max 50000) | `6000` | Longest tool result passed to the model; bigger results are trimmed. |
 | `chat.tool_timeout` | duration | `1h` | Longest one tool call (a disk scan, a command, an API call) may run before the chat gives up on it. The answer waits for the tool; the chat shows what is running and for how long. |
-| `chat.shell` | boolean | on | Let the chat run read-only commands on the host (journalctl, systemctl status, ss, df, ps, ...) to answer questions. They run in a sandbox as an unprivileged user and can change nothing. Off = the chat only sees the collected data. |
-| `chat.disk_cache_ttl` | duration | `10m` | How long a finished disk scan of a path is reused. |
-| `chat.tool_routing` | auto / always / off | `auto` | Send the model only the tool groups a question needs (host, media, metrics, containers, actions, one per MCP server). A short model call picks the groups before the answer; the model can load another group itself. auto = only when the full tool definitions are bigger than the token limit below (strong models cope with all tools); always = every question; off = every tool every time. |
-| `chat.tool_routing_tokens` | integer (min 200, max 100000) | `2000` | With tool routing auto: the size of the tool definitions (about 4 characters per token) above which routing is used. |
 
 ### Data retention (`storage`)
 
@@ -414,9 +431,9 @@ host never stops the service. Disable it under Settings → Collectors if you do
 - **systemd: "D-Bus … closed the connection"**, or `apparmor="DENIED" operation="ptrace"
   profile="docker-default"` in the host's kernel log — the container is running under Docker's
   default AppArmor profile. Keep `security_opt: [apparmor=unconfined]` from the compose file.
-- **Chat: "host commands failed" / `sandbox setup failed: chroot` or `dropping privileges`** —
-  the container lacks `SYS_CHROOT`/`SETUID`/`SETGID` (a `cap_drop` in the compose file) or is not
-  root. Fix that, or turn `chat.shell` off.
+- **Chat: "the host lacks setpriv" / root-only paths unreadable** — the sandbox uses the host's own
+  util-linux tools (`setpriv`, `prlimit`, `ionice`); install them on the host. For root-only paths add
+  `cap_add: [DAC_READ_SEARCH]` to the ai-server-monitor service (the shell's output says so).
 - **Not sure a connection is right?** Every connection in Settings (LLM, Prometheus, Docker,
   Telegram) has a **Test** button that checks the values you typed
   *before* you save: it names the app and version that answered, or says what is wrong (wrong

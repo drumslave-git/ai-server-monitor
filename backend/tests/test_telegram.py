@@ -795,34 +795,6 @@ def test_chat_failure_is_reported_in_the_chat(bootstrap: Bootstrap) -> None:
     assert "not configured" in tg.texts()[0] and tg.texts()[0].startswith("⚠️")
 
 
-def test_chat_write_requests_carry_the_telegram_source(
-    bootstrap: Bootstrap, fake_action: FakeAction
-) -> None:
-    tg = FakeTelegram()
-    llm = FakeLLM(
-        {
-            "content": None,
-            "tool_calls": [
-                {
-                    "id": "w",
-                    "type": "function",
-                    "function": {
-                        "name": NAME,
-                        "arguments": json.dumps({"target": "alpha"}),
-                    },
-                }
-            ],
-        },
-        say("I asked for approval."),
-    )
-    app = make_app(bootstrap, tg, llm=llm)
-    with TestClient(app) as client:
-        client.portal.call(app.state.ctx.telegram.handle_update, message("change alpha"))
-        pending = client.get("/api/approvals").json()["items"]
-        assert pending[0]["source"] == f"telegram:{CHAT}" and fake_action.calls == []
-        wait_for(lambda: any("Approval needed" in t for t in tg.texts()))
-
-
 # --------------------------------------------------------------------------- the loop
 
 

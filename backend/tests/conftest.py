@@ -95,3 +95,28 @@ def chat_response(
     if usage is not None:
         body["usage"] = usage
     return httpx.Response(200, json=body)
+
+
+SHELL_SECRET = "sk-live-0123456789abcdef"
+"""The same value as the chat tests' configured API key: the fake shell prints it."""
+
+
+@pytest.fixture
+def shell(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replaces the host shell of the `bash` tool: records the commands and prints a df line
+    (with a configured secret in it). A command containing `sleep` takes 0.4 s."""
+    import asyncio
+
+    from ai_server_monitor.agent.shell import HostShell, ShellResult
+
+    commands: list[str] = []
+
+    async def run(self: HostShell, command: str, *, timeout_s: float, max_chars: int) -> Any:
+        commands.append(command)
+        if "sleep" in command:
+            await asyncio.sleep(0.4)
+        output = f"/dev/sda1  100G  40G  60G  40% /\nTOKEN={SHELL_SECRET}\n"
+        return ShellResult(exit_code=0, output=output, duration_s=0.01, output_bytes=len(output))
+
+    monkeypatch.setattr(HostShell, "run", run)
+    return commands

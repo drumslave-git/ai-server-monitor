@@ -56,14 +56,9 @@ def clean_title(raw: str | None) -> str | None:
     return text or None
 
 
-def title_messages(question: str, answer: str) -> list[dict[str, str]]:
-    return [
-        {"role": "system", "content": TITLE_SYSTEM},
-        {
-            "role": "user",
-            "content": (
-                f"User question:\n{question[:500]}\n\nAssistant answer (beginning):\n"
-                f"{answer[:400]}\n\nTitle:"
-            ),
-        },
-    ]
+def title_prompt(question: str, answer: str) -> str:
+    """The user message of the title request (the instructions are `TITLE_SYSTEM`)."""
+    return (
+        f"User question:\n{question[:500]}\n\nAssistant answer (beginning):\n"
+        f"{answer[:400]}\n\nTitle:"
+    )

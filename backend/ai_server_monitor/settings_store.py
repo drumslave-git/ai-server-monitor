@@ -62,6 +62,7 @@ OLD_DEFAULTS: dict[tuple[str, str], Any] = {
     ("chat", "tool_timeout"): "30s",
     ("llm", "max_output_tokens"): 4096,  # a thinking model spent all of it before the answer
     ("llm", "temperature"): 0.2,  # now "auto": the model's own sampling defaults apply
+    ("chat", "max_steps"): 6,  # too few for exploring the host with a shell
 }
 """Stored values that are the OLD default of a setting whose default was raised. The database
 holds every setting (not only the changed ones), so an installation that never touched

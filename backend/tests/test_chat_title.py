@@ -86,7 +86,7 @@ def test_title_is_generated_after_the_answer_and_stored(bootstrap: Bootstrap) ->
         assert llm.title_requests[0].get("stream") in (None, False)
 
 
-@pytest.mark.parametrize("reply", ["", "   ", "<think>hmm", "```\n```", "🚀"])
+@pytest.mark.parametrize("reply", ["", "   ", "<think>hmm</think>", "```\n```", "🚀"])
 def test_junk_titles_fall_back_to_the_first_message(bootstrap: Bootstrap, reply: str) -> None:
     llm = FakeLLM(say("ok"))
     llm.title_reply = reply

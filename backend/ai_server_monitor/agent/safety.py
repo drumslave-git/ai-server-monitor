@@ -74,6 +74,17 @@ class Scrubber:
         return value
 
 
+def cap_text(text: str, limit: int) -> tuple[str, bool]:
+    """`text` within about `limit` characters: head and tail kept, the middle cut with a
+    marker saying how much. Returns (text, whether anything was cut)."""
+    if len(text) <= limit:
+        return text, False
+    head = limit * 35 // 100
+    tail = limit - head
+    cut = len(text) - head - tail
+    return f"{text[:head]}\n… {cut} characters cut …\n{text[-tail:]}", True
+
+
 def shrink(value: Any, limit: int) -> tuple[str, bool]:
     """JSON text of `value` within `limit` characters, and whether anything was cut.
 
