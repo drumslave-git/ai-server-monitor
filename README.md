@@ -518,6 +518,15 @@ log and the model call logs are kept; the rest of the old data is deleted by the
 - **Select all** / **Deselect all** in each domain card and next to the filters; with a search
   or filter active both switch only the tools shown, and the page-level pair says how many.
 
+### 0.8.2
+
+- Every chat turn, job run and the MCP domain classification now get the current date, time
+  and time zone (Settings → General time zone, the host's by default); the summary's time is
+  in that zone too.
+- The chat model is told to look up facts that change with its tools (loading a domain when
+  needed) instead of answering from memory, and to say so when nothing can look it up.
+- The domain classification sees the names of each domain's tools next to its description.
+
 ## Troubleshooting
 
 - **A job or the summary shows `error`** — open the run on the Jobs page: its error says why
