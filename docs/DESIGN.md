@@ -1,154 +1,141 @@
-# AI Server Monitor — Design (v1)
+# AI Server Monitor — Design (0.7)
 
-An AI-powered monitor for a single self-hosted Linux server. An LLM (any OpenAI-compatible API
-with native tool calling) answers questions in chat by looking at the host through a read-only
-shell, and can call tools of external MCP servers under per-action policy.
+One container on the monitored host: a FastAPI backend (`backend/ai_server_monitor/`) and a
+React/Vite SPA (`frontend/`, served by the backend). The rule since 0.7: **nothing is collected
+by code; a language model does all the monitoring** through a read-only shell, and the code only
+schedules, stores, shows and guards. Where a maintained library does the job, it is used
+instead of our own code.
 
-## Goals and non-goals
+## Components
 
-**Goals**
-- Works with any OpenAI-compatible endpoint that supports native tool calling, small local
-  models as well as strong cloud models.
-- Strictly read-only towards the host. The only write access is MCP tool calls,
-  and every write is policy-gated and audited.
-- Single container, simple config, no external database.
+| Part | Code | Library |
+|---|---|---|
+| Agent loop: tools, step limit, approvals, tracing hooks | `agent/runtime.py` | Pydantic AI |
+| Models: main and worker on any OpenAI-compatible endpoint | `agent/models.py` (`ModelHub`) | Pydantic AI `OpenAIChatModel`, `openai`, `httpx` |
+| Read-only shell sandbox | `agent/shell.py` | the host's util-linux (`setpriv`, `prlimit`), `chroot` |
+| Root shell for approved changes | `agent/change_shell.py` | util-linux `nsenter` |
+| Tools: `bash`, `delegate`, `bash_write`, MCP tools | `agent/tools.py`, `mcp_client/` | `mcp` SDK |
+| Jobs: store, builtins, prompts, runner, API, chat tools | `jobs/` | — |
+| Schedule: jobs + housekeeping, pause | `schedule.py`, `automation.py` | APScheduler 3 |
+| Chat engine and sessions | `chat/` | — |
+| Approvals and audit (the action layer) | `actions/` | — |
+| Telegram bot | `outputs/telegram.py` | python-telegram-bot |
+| `/metrics` | `outputs/metrics.py` | prometheus_client |
+| Live updates (SSE), event bus | `outputs/sse.py`, `events.py` | FastAPI streaming responses |
+| Model call logs, app log | `tracing/` | — |
+| Settings (GUI only), SQLite, migrations | `config.py`, `settings_store.py`, `db.py`, `migrations/` | pydantic, aiosqlite |
 
-**Non-goals (v1)**
-- Multi-host monitoring (hub + agents).
-- Remediation on the host itself (restarting containers, installing updates, etc.).
-- Built-in authentication — a reverse proxy (Authelia/Authentik/etc.) is expected in front.
-- SMART / disk-health monitoring.
+`context.py` (`AppContext`) owns all of it and rebuilds the settings-dependent services when
+settings are saved.
 
-## Decisions
+## The agent loop
 
-| Area | Decision |
+`run_agent(cfg, prompt, history=…)` runs one Pydantic AI agent and yields our own events
+(`token`, `tool_call`, `tool_progress`, `tool_result`, `end`). `AgentConfig` carries the model,
+instructions, `AgentTool`s (name, JSON schema, async handler, `requires_approval` or a per-call
+`approval_for`), `max_steps`, tool timeout, the result size cap, the secret scrubber, the trace
+context and an optional structured `output_type`.
+
+- Step limit: a `PrepareTools` capability hides the tools past `max_steps` and adds a note to
+  the instructions, so the model answers with what it has; `UsageLimits` is the backstop.
+- Tool results are scrubbed of secrets, capped (`chat.max_tool_result_chars`) and wrapped as
+  untrusted data. Failures come back to the model as text; they never end the run.
+- Every model request goes through our `httpx` transport into `llm_calls` (Logs page), and every
+  tool call into `llm_tool_calls`; sub-agent calls are tagged `worker:…` in the same turn.
+- Tool sets: **chat** (main model) gets `bash`, `delegate`, the job tools, `bash_write` (when
+  offered) and the MCP tools. **`delegate`** runs the worker model with `bash` only
+  (`chat.worker_max_steps`). **Topic jobs** get `bash`; **the summary** gets `bash` and
+  `delegate`. Jobs and the worker never get a writing tool.
+- Ollama URLs get Pydantic AI's Ollama profile; reasoning effort is sent as
+  `openai_reasoning_effort` (Pydantic AI's `thinking` setting sends nothing to these endpoints).
+
+## Jobs and scheduling
+
+`jobs` holds the definitions (builtins are seeded from `jobs/builtins.py`; unedited ones follow
+later releases, edited ones keep the owner's version until *Reset*); `job_runs` holds the runs.
+`JobRunner` runs a job as one agent run with `output_type=JobResult` (status, summary, findings)
+under a per-job lock and a global semaphore (`jobs.max_concurrent_runs`) with a time limit.
+Every failure is stored as `error` with the reason; the overall headline turns it into plain
+words (`jobs/status.py`). The summary's input is the latest result of every enabled topic job
+and the previous summary.
+
+`schedule.py` is APScheduler's `AsyncIOScheduler` in memory, rebuilt from the `jobs` table after
+every change (`sync_jobs`): interval or cron triggers in the host's time zone, `coalesce`,
+`max_instances=1`. Housekeeping (pruning, approval sweeps, the hourly-cap queue) is jittered and
+skips runs missed while paused. Pause pauses the scheduler and cancels scheduled runs in flight.
+A stop stores runs in flight as `interrupted (the service stopped)`; after the start those jobs
+are moved to run about a minute later (summary last), and the latest-run queries skip an
+interrupted run when the job has a real result.
+
+## Approvals and continuation
+
+Every write is an action (`actions/registry.py`: `mcp_call`, `host_command`) requested through
+`ActionService`: validate → policy (`off`, `suggest`, `approve`, `auto`) → pending approval or
+execute (hourly cap, dry-run) → a permanent `actions` row. Items of one chat turn and action form
+one `approval_batches` row (one card, one Telegram message). Policy and dry-run come only from
+settings, never from the request.
+
+In the chat, an approval-required call is deferred by Pydantic AI (`DeferredToolRequests`).
+`on_approval` files it; when a person has to decide, the run ends with a `Suspended` output
+(messages and settled/pending calls, JSON) stored in `chat_pending_runs` /
+`chat_pending_actions`, and the answer is the waiting note. `ChatEngine.on_action` resumes the
+run when every action of it is executed, failed, dry-run, rejected or expired: approved calls get
+the action's stored result (they are not run again), the others a `ToolDenied` with the reason.
+The new answer is stored and published as `chat.message`; Telegram sends it to the chat that
+asked. The generic `mcp_call` is deferred the same way when it reaches a write tool.
+
+`host_command` (`bash_write`) runs `nsenter --target 1 --mount --uts --ipc --net --pid -- bash
+-c CMD` as root; `ChangeShell.probe()` checks at start whether that works, and
+`/api/status.change_shell` says why not. Its approval runs in the background so the approve call
+returns at once; the result arrives as `action.result` / `approval.progress`.
+
+## Storage (SQLite, `data/monitor.db`)
+
+| Table | Holds |
 |---|---|
-| Language | Python 3.12+, asyncio, FastAPI |
-| Frontend | React + Vite SPA, built in a Docker build stage, served by FastAPI |
-| Deployment | One Docker container on a Debian/Ubuntu host |
-| LLM | OpenAI-compatible API (`base_url`, `api_key`, `model`), streaming |
-| Storage | SQLite (WAL), configurable retention (default 30 days), permanent action audit log |
-| Outputs | Web UI (live via SSE), Telegram bot, Prometheus `/metrics` |
-| Chat | UI + Telegram, with native tool calling |
-| Configuration | Web UI only (stored in SQLite, applied live); compose sets only mounts, data dir, port, Docker proxy |
-| Auth | None built in; reverse proxy handles it |
-| Repo / CI | GitHub, GitHub Actions publishes `ghcr.io/drumslave-git/ai-server-monitor` (amd64) on version bumps |
+| `kv` | settings (and backups), the automation switch, the chat audit list, small state |
+| `jobs`, `job_runs` | job definitions; runs with status, summary, findings, error, tokens, trace turn |
+| `chat_sessions`, `chat_messages` | conversations |
+| `chat_pending_runs`, `chat_pending_actions` | chat runs waiting for approvals |
+| `actions`, `approval_batches` | the permanent audit log and approval groups |
+| `telegram_batch_messages` | which Telegram message shows which approval |
+| `llm_calls`, `llm_tool_calls` | model requests and tool calls (Logs page) |
+| `app_log` | saved warnings and errors of the app log |
 
-## Architecture
+Retention: `storage.retention` for chats and runs, `logs.*` for traces; actions are never pruned.
 
-See `docs/handover-agent-runtime.md` for the agent runtime.
+## Security boundaries
 
-### Components
+The read-only shell is `chroot /host` plus the host's `env -i … prlimit … nice ionice setpriv
+--reuid=2147483000 --clear-groups --inh-caps/ambient/bounding-set=-all,+dac_read_search
+--no-new-privs -- bash -c CMD` (without `DAC_READ_SEARCH` in the container: no capability and the
+`adm`/`systemd-journal` groups). The uid owns no host process, so it can signal nothing; the
+host mount is read-only; `DAC_READ_SEARCH` reads but cannot open the Docker socket (connect
+needs write permission); `docker` goes through a GET-only socket proxy. Measured on a simulated
+host (Docker 29.8, WSL2, no AppArmor; the probe scripts live outside the repo): all reads above
+work; writes (EROFS), signals to uid 1000, 65534 and PID 1 (EPERM), the real socket, proxy writes
+(403), device/`/proc/sys`/`/sys` writes (EACCES), `nsenter` and `unshare` all fail, also when
+the container has `SYS_ADMIN` and `SYS_PTRACE` (the sandbox's effective set stays `0x4`). Not
+measured: `nvidia-smi`, a real AppArmor host.
 
-- **Chat engine** — conversational loop over the tool registry, with native OpenAI
-  tool calling.
-- **Tool registry** — single source of truth for everything the LLM can call, each with a
-  JSON schema, a description, and a `kind: read|write`. Write tools (MCP tool calls)
-  always go through the action layer.
-- **Action layer** — every write passes through here:
-  - Per-action policy: `off | suggest | approve | auto`.
-  - Rate limits / caps (e.g. max N calls per hour).
-  - Pending approvals are stored and surfaced as buttons in the UI and Telegram
-    inline keyboards; they expire after a configurable time.
-  - Everything (suggested, approved, rejected, executed, failed) is written to the
-    audit log.
-- **Event bus** — in-process pub/sub. Pending approvals and action results are published
-  once and fanned out to SSE, Telegram, and metrics.
-- **Outputs**
-  - **Web UI** — chat, approvals queue, action audit log, logs, settings view.
-  - **Telegram** — chat, approval inline buttons. Restricted to an allowlist of chat IDs.
-  - **Prometheus `/metrics`** — LLM latency/tokens/errors, actions by type/result,
-    pending approvals.
+`nsenter` into PID 1 needs both `SYS_ADMIN` and `SYS_PTRACE` (measured: neither alone works).
+Only the chat's main model can propose a root command; a person approves it unless the owner
+chose `auto`.
 
-## Configuration
+## Not built, and why
 
-Everything is configured in the web UI (Settings page), applied live without a restart.
-There are no config files.
-
-- **Settings** (`config.Settings`, a pydantic model) are stored as one JSON document in the
-  SQLite `kv` table. `GET /api/settings` returns the values (secrets masked as `********`),
-  the JSON schema and section titles; the UI renders the form from the schema, so a new
-  backend setting appears in the UI automatically, with its docstring as help text.
-  `PUT /api/settings` validates (422 with per-field messages), saves, and rebuilds the
-  scheduler and LLM client in place. Sending a masked secret back keeps the
-  stored value. `POST /api/settings/test-llm` tries unsaved LLM settings.
-- **On upgrade**, stored settings are validated leniently: parts that no longer fit fall
-  back to defaults (with a logged warning and a backup copy in `kv`) instead of failing.
-- **Bootstrap** (`config.Bootstrap`): only what's needed before the app can start, from
-  `ASM_*` env vars with defaults matching the image — `ASM_DATA_DIR` (/data),
-  `ASM_PORT` (8080), `ASM_HOST_ROOT` (/host). Plus the standard `DOCKER_HOST` for the
-  socket proxy. The compose file sets nothing else.
-- Secrets are stored in clear text in the SQLite file under the data directory; protect
-  that directory like any other credentials store.
-
-## Storage schema (SQLite)
-
-- `chat_sessions`, `chat_messages` — chat history.
-- `actions(id, ts, action, target, args_json, policy, status, source, result_json, decided_by)` —
-  permanent audit log; `status` ∈ suggested | pending | approved | rejected | expired | executed | failed | dry_run.
-
-## API (backend ↔ SPA)
-
-- `GET /api/status` — version, uptime, model names, pending approvals and automation state.
-- `GET /api/stream` — SSE over the in-process event bus; `?types=approval,action` filters by
-  prefix. Events: `action.suggested|result`, `approval.pending|decided|expired` (action layer, compact payloads).
-  Every frame has an `id:`; `retry: 3000` is sent first; a `: keepalive` comment every 15 s;
-  each client has a bounded queue (a slow client loses its oldest events, publishers never
-  wait). There is no replay on reconnect: clients re-fetch state via `/api/status`. The action
-  layer (M9) should publish `approval.pending`, `approval.decided`, `action.result`.
-- `POST /api/chat` (SSE response), `GET /api/chat/sessions`.
-- `GET /api/actions`, `GET /api/approvals`, `POST /api/approvals/{id}` (approve/reject).
-- There is no separate `/api/config`: `GET /api/settings` already returns the settings with secrets masked.
-- `GET /metrics` (Prometheus text format, hand-rolled in `outputs/metrics.py`; on/off and an
-  optional scrape bearer token in Settings → Outputs → metrics), `GET /healthz`. Series (prefix
-  `asm_`): `llm_request_duration_seconds` (histogram), `llm_requests_total{result}`,
-  `llm_tokens_total{direction}`, `llm_errors_total{type}`, `build_info{version}`, and for the
-  action layer: `actions_total{action,result}`, `pending_approvals`, `pending_approval_batches`. Other modules
-  add series with `MetricsHub.add_provider` (the action layer lists its names in `metrics.py`).
-
-## Security notes
-
-- Host mounts are read-only; the Docker socket should go through a GET-only socket
-  proxy where possible (documented in the compose example).
-- Secrets are never sent to the LLM; tool outputs are scrubbed of API keys/passwords.
-- Log lines and tool results are untrusted input for the LLM: they are clearly delimited
-  in prompts, and no write action can be executed solely because of text found in
-  data — writes always go through the policy layer.
-- Telegram restricted to allowlisted chat IDs. No built-in web auth: the docs require a
-  reverse proxy with auth if the UI is exposed beyond the LAN.
-
-## Project layout
-
-```
-backend/
-  ai_server_monitor/   # import package (dist name: ai-server-monitor)
-    __main__.py        # entry point: python -m ai_server_monitor
-    main.py            # FastAPI app factory + API routes
-    context.py         # AppContext: owns db + settings-dependent services, live re-apply
-    config.py          # Bootstrap (env) + Settings (GUI) models, durations, secrets
-    settings_store.py  # settings persistence, secret merging, lenient upgrade validation
-    db.py              # SQLite access, migrations (PRAGMA user_version), retention, kv
-    migrations/        # NNNN_name.sql
-    scheduler.py       # asyncio interval scheduler (trigger, timeouts, status)
-    chat/              # chat engine
-    tools/             # tool registry + read tools
-    actions/           # policy, limits, approvals, audit
-    outputs/           # sse, telegram, metrics
-  tests/
-frontend/              # React + Vite SPA (schema-driven settings form, overview)
-                       #   src/api-types.ts is generated: `npm run gen:api` (backend OpenAPI schema
-                       #   -> openapi-typescript; tools/api-gen pins TypeScript 5 for the generator)
-docker/                # Dockerfile, compose example
-docs/
-```
-
-## Milestones
-
-1. **Foundation** — repo, config, SQLite + migrations, scheduler, LLM client, Dockerfile.
-2. **Event bus + API + SSE**.
-3. **Web UI** — chat, approvals, audit log.
-4. **Telegram bot** — chat, approval buttons.
-5. **Prometheus `/metrics` exporter**.
-6. **Action layer** — policy, limits, approvals, audit.
-7. **Chat tool-calling** — tool registry.
-8. **Packaging & docs** — compose example, README, GitHub Actions image publish.
+- **Our own sandbox runtime**: bubblewrap 0.11 and `unshare` fail under Docker's default
+  seccomp ("Creating new namespace failed"); with seccomp off they map the sandbox to real root.
+  nsjail is not packaged in Debian trixie and needs the same calls. `setpriv` + `chroot` need no
+  namespaces.
+- **JSON-in-text tool calls** for models without native tool calling: Pydantic AI has none, and
+  a wrapper model would be ~250 lines of our own. Such models are not supported.
+- **Pydantic AI's MCP toolset**: its `mcp` extra needs `mcp>=2`; we stay on the `mcp` SDK
+  through `mcp_client/` (connection, discovery, tool picking, the `mcp_call` action).
+- **Our own scheduler, metrics registry or Telegram client**: APScheduler, prometheus_client and
+  python-telegram-bot replaced them.
+- **Collectors, reports, charts, health scores, the Prometheus query planner**: removed in 0.7;
+  the jobs do this with the shell.
+- Small gaps kept: tool names the model invents are answered by Pydantic AI itself (no
+  `llm_tool_calls` row); an endpoint that rejects `reasoning_effort` fails until the setting is
+  `auto`.

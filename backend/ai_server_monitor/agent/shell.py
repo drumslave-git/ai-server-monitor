@@ -2,7 +2,7 @@
 to change the host.
 
 Isolation is done with stock util-linux tools, not our own code (measured, see
-docs/handover-agent-runtime.md): `chroot` into the read-only host root, then the host's
+docs/DESIGN.md, "Security boundaries"): `chroot` into the read-only host root, then the host's
 `prlimit` (CPU, memory, no file writes, no core dumps), `nice`/`ionice` (low priority) and
 `setpriv`: an uid no host process uses (so nothing can be signalled), cleared groups,
 no_new_privs, and as the only capability CAP_DAC_READ_SEARCH, which reads every file and

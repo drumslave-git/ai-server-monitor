@@ -1,26 +1,38 @@
 # AI Server Monitor
 
-An AI-powered, **read-only** monitor for one self-hosted Linux server. You ask questions in chat
-(the web Chat page, Telegram, or the `/api/chat` endpoint) and one LLM agent, behind any
-OpenAI-compatible API, finds the answer itself: it runs read-only shell commands on the host (a
-`bash` tool in a sandbox), can hand sub-tasks to a smaller worker model, and uses the tools of the
-MCP servers you add. The monitor collects nothing by code on its own; everything it knows comes
-from what the model looks at. Every write goes through a per-action policy (`off`, `suggest`,
-`approve`, `auto`), rate limits and a permanent audit log; the host itself is only ever read. `/metrics`
-exposes the monitor's own counters for Grafana.
+A self-hosted monitor for one Linux server in which **a language model does all the
+monitoring**. Nothing is collected by code: scheduled LLM jobs look at the host with a read-only
+shell and write down what they found, a summary job turns their results into one overall
+status, and you can ask the same agent anything in chat (web page, Telegram or `/api/chat`). It
+works with any OpenAI-compatible endpoint (Ollama, llama.cpp, OpenRouter, OpenAI...).
 
-**The model must support native tool calling** (OpenAI-style `tools`). A model that cannot call tools
-cannot run the product; Settings → LLM → **Test** checks the endpoint, the model and one tool-call
-round trip.
+What it does:
 
-![Chat](docs/samples/ui/chat-desktop.png)
+- **Topic jobs** on a small *worker* model check one area each (disk, journal, resources,
+  Docker, systemd, updates) on a schedule and store a status (`ok`, `warn`, `crit`, or `error`
+  when the run failed), a short summary and findings. You can edit them and add your own.
+- **A summary job** on the big *main* model reads the latest topic results and the previous
+  summary, looks again where it needs to, and writes the overall status. It is the headline of
+  the Dashboard, of `/api/status` and of the Telegram summary message.
+- **Chat** on the main model with a read-only `bash` tool on the host, `delegate` (hands a
+  sub-task to the worker model), tools to list, run and edit jobs, and the tools of the MCP
+  servers you add.
+- **Changes only with your approval**: when you ask the chat for a change, it proposes a root
+  command (`bash_write`) or an MCP write; you approve it on the Approvals page or with a
+  Telegram button, it runs, and the chat continues with the result by itself.
+- **Telegram** bot (questions, `/status`, `/run`, approvals, the summary when it changes),
+  **`/metrics`** for Prometheus with a Grafana dashboard, and a **Logs** page with every model
+  request as sent and received.
 
-- [Install](#install) · [First run](#first-run-walkthrough) · [Using it](#using-it)
-- [LLM recommendations](#llm-recommendations) · [Security and the approval model](#security-and-the-approval-model)
-- [Settings reference](#settings-reference) · [Troubleshooting](#troubleshooting)
-- [Development](#development) · [Releasing](#releasing) · [Design notes](docs/DESIGN.md)
+**The models must support native tool calling** (OpenAI-style `tools`). Settings → Main model →
+**Test** checks the endpoint, the model and one tool-call round trip.
 
-## Install
+- [Quick start](#quick-start) · [The compose file](#the-compose-file) · [Models](#models)
+- [Jobs](#jobs) · [Using it](#using-it) · [Security model](#security-model)
+- [Settings reference](#settings-reference) · [Upgrading from 0.6.x](#upgrading-from-06x)
+- [Troubleshooting](#troubleshooting) · [Development](#development) · [Design notes](docs/DESIGN.md)
+
+## Quick start
 
 Debian/Ubuntu (or any Linux) host with Docker and the compose plugin:
 
@@ -30,117 +42,134 @@ curl -fsSL https://raw.githubusercontent.com/drumslave-git/ai-server-monitor/mai
 docker compose up -d
 ```
 
-Open `http://<server>:8080`. Everything else is configured in the web UI under **Settings**;
-changes apply immediately and there are no config files.
+1. Open `http://<server>:8080` → **Settings**. Changes apply on **Save**, without a restart;
+   there are no config files.
+2. **Main model** (`llm`): base URL ending in `/v1` (`http://ollama:11434/v1`,
+   `https://openrouter.ai/api/v1`...), model name, API key if needed. Press **Test**.
+3. **Worker model** (`worker`): a smaller model for the topic jobs and `delegate`. Leave it
+   empty to use the main model for everything; an empty base URL means the main model's
+   endpoint and key.
+4. Optional: **Outputs** → Telegram (bot token, allowed chat ids) and the `/metrics` bearer
+   token; **MCP servers**; **Approvals** (whether changing commands are allowed).
 
-What the compose file sets, and why:
-
-| Part | Why |
-|---|---|
-| `./data:/data` | Settings and history (one SQLite file). **Back it up: it contains your API keys and tokens in clear text.** |
-| `pid: host` | Lets the container see the host's processes (`ps`, `top`). |
-| `/:/host:ro,rslave` | A read-only view of the host's filesystem: what the chat's shell reads: disk usage of the real mounts, package state, logs. Nothing is ever written there. |
-| `security_opt: apparmor=unconfined` | On hosts with AppArmor (Ubuntu) Docker's default profile blocks reading other processes. The mounts stay read-only. Hosts without AppArmor do not need it. |
-| `cap_add: [DAC_READ_SEARCH]` | The chat's `bash` tool runs real bash on the host's files and programs (`chroot /host`, then the host's `setpriv`/`prlimit`/`ionice`) as a dedicated unprivileged uid that owns no host process, with no_new_privs and only this capability: it can read every file, write none, signal nothing, and cannot open the real Docker socket (`docker` goes through the read-only proxy). Without this line the shell still works as a plain unprivileged user and says when root-only paths were unreadable. Needs Docker's default `CHROOT`/`SETUID`/`SETGID` (no `cap_drop: ALL`). Every command is logged (`GET /api/chat/audit`). |
-| `cap_add: SYS_ADMIN, SYS_PTRACE` (commented out) | Only for **changing commands from the chat** (restart a container, delete files): after you approve one it runs as root on the host through `nsenter` into PID 1's namespaces, which needs both capabilities (measured: either alone fails). Without them the chat only reads: the `bash_write` tool is not offered and `/api/status` (`change_shell.reason`) says which lines enable it. The read-only `bash` is not affected: its sandbox keeps only `DAC_READ_SEARCH` whatever the container has. |
-| `DOCKER_HOST: tcp://docker-proxy:2375` | The Docker API goes through a socket proxy that only allows GET requests. The monitor can look at containers and images, not start, stop or delete anything. |
-| `docker-proxy` env `CONTAINERS`, `IMAGES`, `INFO`, `SYSTEM` | The API sections the proxy lets through: containers (state, stats, logs), images, engine info, and disk usage (`/system/df`). |
-| `# gpus: all` | Uncomment to make an NVIDIA GPU visible to the shell (needs the NVIDIA container runtime on the host). |
-
-Startup parameters that are not settings (the image defaults are right for the compose file):
-`ASM_DATA_DIR` (`/data`), `ASM_PORT` (`8080`), `ASM_HOST` (`0.0.0.0`), `ASM_HOST_ROOT` (`/host`),
-`ASM_STATIC_DIR` (the built web UI, set in the image).
-
-**There is no built-in login.** Keep port 8080 on your LAN, or put a reverse proxy with
-authentication in front of it (Authelia, oauth2-proxy, basic auth, Cloudflare Access...). The UI,
-the API (including the approval endpoints) and chat are all behind the same door, so whoever can
-reach the port can approve actions. If you expose `/metrics` to a Prometheus on another network,
-set a bearer token for it (below). The live endpoints `/api/stream` and `/api/chat` are
-server-sent events; they send `X-Accel-Buffering: no`, and if your proxy still buffers them,
-disable response buffering for those two paths.
+The jobs start on their schedules; **Jobs** → *Run now* runs one at once.
 
 Update: `docker compose pull && docker compose up -d`. To pin a version, change the image tag
-(`ghcr.io/drumslave-git/ai-server-monitor:X.Y.Z`; tags `X.Y.Z`, `X.Y` and `latest`, amd64). If the
-GHCR package is private, `docker login ghcr.io` with a token that has `read:packages`.
+(`ghcr.io/drumslave-git/ai-server-monitor:X.Y.Z`; tags `X.Y.Z`, `X.Y` and `latest`, amd64).
 
-## First run walkthrough
+**There is no built-in login.** Keep port 8080 on your LAN, or put a reverse proxy with
+authentication in front of it (Authelia, oauth2-proxy, basic auth...). Whoever can reach the
+port can use the chat and approve changes. The live endpoints `/api/stream` and `/api/chat` are
+server-sent events; they send `X-Accel-Buffering: no`, and if your proxy still buffers them,
+disable response buffering for those two paths. Over plain HTTP/1.1 (no HTTP/2 proxy in front)
+every open tab holds one connection for live updates and browsers allow six per host, so with
+six or more tabs open the page stalls.
 
-Open **Settings**. The sections are tabs; **Save** applies the change without a restart. A bad
-value is shown next to the field and nothing is saved until it is fixed.
-Every connection (LLM, Telegram) has a **Test**
-button that checks what you typed, before you save, and says what answered or what is wrong.
+## The compose file
 
-1. **LLM** (`llm`) — the one thing the monitor cannot work without. The model must support native
-   tool calling.
-   - *Base URL*: any OpenAI-compatible endpoint ending in `/v1`: `http://ollama:11434/v1`,
-     `http://llama:8080/v1`, `https://openrouter.ai/api/v1`, `https://api.openai.com/v1`.
-   - *Model*: the name the endpoint knows (`gemma4:e4b`, `qwen2.5:14b`, `gpt-4o-mini`...).
-     *API key* only if the endpoint wants one.
-   - *Max output tokens*: keep it at **4096 or more**. Thinking models spend part of the budget on
-     reasoning before the answer; a small limit gives empty or cut-off answers.
-   - Press **Test**: it checks the endpoint, the model and one tool-call round trip.
-   - A second, smaller *worker* model can be set; the main model hands it sub-tasks.
-2. **General** (`general`) — *Language* of chat answers, the log level, and the Docker API address
-   (`docker_url`; empty = `$DOCKER_HOST` from the compose file).
-3. **Outputs** (`outputs`):
-   - *Telegram*: create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`), paste the token.
-     Press **Test** to check the token (it shows the bot's name). To find your chat id, open the
-     bot in Telegram and send `/id`: it answers in any chat with the chat id, your user id and the
-     chat type. Add the chat id to *Allowed chat ids*, save, and the bot answers. **Send test
-     message** then sends a short message to every allowed chat and reports each one (a chat that
-     never pressed *Start* fails with "chat not found"). Apart from `/id`, chats that are not on
-     the list are ignored without a reply.
-   - *Metrics*: `/metrics` is on by default. Set a *Bearer token* if anything outside your trusted
-     network can reach the port.
-4. **Data retention** (`storage`): history and chats are kept 30 days by default; the
-   action audit log is never pruned.
+[`docker/compose.example.yaml`](docker/compose.example.yaml), line by line:
+
+| Line | Why |
+|---|---|
+| `image: ghcr.io/drumslave-git/ai-server-monitor:latest` | The app: backend and web UI in one container. |
+| `container_name`, `depends_on: docker-proxy` | A fixed name for `docker logs`; the proxy starts first. |
+| `restart: unless-stopped` | Comes back after a reboot. Runs that a stop interrupted are rerun about a minute after the start. |
+| `pid: host` | The container sees the host's processes, so `ps`, `top` and `/proc/<pid>` in the shell show the host. Also needed to reach PID 1 for approved changes. |
+| `security_opt: apparmor=unconfined` | On hosts with AppArmor (Ubuntu) Docker's default profile blocks reading other processes under `/proc`. The mounts stay read-only. Hosts without AppArmor do not need it. |
+| `cap_add: DAC_READ_SEARCH` | Lets the read-only shell read root-only files (`/var/log/*`, `/root`, `du` over every directory). It reads every file and writes none. Without it the shell still works as an unprivileged user with the `adm` and `systemd-journal` groups and says when a path was unreadable. |
+| `# - SYS_ADMIN` / `# - SYS_PTRACE` | Only for **approved changes**: an approved command runs as root on the host through `nsenter` into PID 1's namespaces, which needs both (measured: either alone fails). Without them the chat only reads: `bash_write` is not offered and `/api/status` (`change_shell.reason`) says what is missing. The read-only shell keeps only `DAC_READ_SEARCH` either way. |
+| `ports: "8080:8080"` | Web UI, API and `/metrics`. |
+| `DOCKER_HOST: tcp://docker-proxy:2375` | The shell's `docker` commands go through the socket proxy below, never the real socket. |
+| `./data:/data` | Settings, jobs, runs, chats, the audit log: one SQLite file. **Back it up: it holds your API keys and tokens in clear text.** |
+| `/:/host:ro,rslave` | The host's filesystem, read-only: the shell runs the host's own programs (`chroot /host`) on the host's files. `rslave` makes mounts added later visible. |
+| `# gpus: all` | Uncomment to make an NVIDIA GPU visible to the shell (`nvidia-smi`; needs the NVIDIA container runtime). |
+| `docker-proxy` (`tecnativa/docker-socket-proxy`) | Lets only GET requests through to the Docker socket (mounted `:ro`): containers can be listed, inspected, their logs read; nothing can be started, stopped or deleted. |
+| proxy env `CONTAINERS`, `IMAGES`, `INFO`, `SYSTEM` | The API sections allowed: containers (state, stats, logs), images, engine info, disk usage (`docker system df`). |
+
+The container needs Docker's default capabilities `CHROOT`, `SETUID` and `SETGID` for the
+shell sandbox: do not add `cap_drop: ALL`. Startup parameters that are not settings (the image
+defaults fit the compose file): `ASM_DATA_DIR` (`/data`), `ASM_PORT` (`8080`), `ASM_HOST`
+(`0.0.0.0`), `ASM_HOST_ROOT` (`/host`), `ASM_STATIC_DIR` (the built web UI).
+
+## Models
+
+Two model settings, both any OpenAI-compatible endpoint:
+
+| | Used for | Setting |
+|---|---|---|
+| **Main model** | chat, the summary job, chat titles | `llm` |
+| **Worker model** | the topic jobs, `delegate` sub-tasks from the chat and the summary | `worker` (empty model = the main model) |
+
+- **Native tool calling is required** for both. There is no fallback for models that cannot call
+  tools.
+- *Max output tokens* counts a thinking model's reasoning too: keep it at 4096 or more (default
+  16384). With Ollama also raise `OLLAMA_CONTEXT_LENGTH`, or long prompts are cut silently.
+- A small local model (e.g. `gemma4:e4b` on Ollama) works as the worker; give the main model
+  the best model you have, since it writes the summary and talks to you.
+- Cloud models: tool results (process names, container names, log lines, file contents) leave
+  your network. Configured secrets and common credential formats are scrubbed first.
+
+## Jobs
+
+A job is a prompt for the model, a schedule (an interval or a cron line, in the host's time
+zone unless `general.timezone` says otherwise) and a model. A topic run gets only `bash` and must
+finish with a structured result: status, a short markdown summary and findings (`info`, `warn`,
+`crit`). A run that fails (model unreachable, over its time limit, no result) is stored as
+`error` with the reason. Runs are kept for `storage.retention`.
+
+Built-in jobs (edit them on the Jobs page; *Reset* brings back the release version, and
+unedited ones follow later releases):
+
+| Job | Model | Schedule | Looks at |
+|---|---|---|---|
+| `storage` | worker | every 4 h | disk space and inodes, biggest directories |
+| `journal` | worker | every 1 h | journal errors of the last hour, kernel warnings |
+| `resources` | worker | every 30 min | CPU, memory, load, GPU, temperatures |
+| `docker` | worker | every 30 min | container state, restarts, health |
+| `systemd` | worker | every 1 h | failed units, system state |
+| `updates` | worker | daily at 06:00 | pending updates, reboot required |
+| `summary` | main | every 1 h | the latest result of every enabled topic job and the previous summary; may use `bash` and `delegate` to check |
+
+Settings → Jobs: `max_concurrent_runs` (1 = runs that come due together wait for each other,
+right for one GPU), the default time limit and step limit. The chat can list, run, create, edit
+and delete jobs (`jobs_list`, `job_results`, `job_run`, `job_save`, `job_delete`); a builtin can
+be disabled but not deleted.
+
+**Pause automation** (button on every page) stops the whole schedule (jobs, pruning, approval
+sweeps) and cancels scheduled runs in flight. *Run now*, the chat, approvals and Telegram keep
+working. It survives a restart. `GET /api/automation`, `POST /api/automation/pause|resume`.
 
 ## Using it
 
-- **Approvals** — what is waiting for your decision, with the
-  audit log. **Chat** — ask questions about the server, with
-  conversation history, streamed answers and approval cards for changes
-  (screenshot: `docs/samples/ui/chat-desktop.png`). **Logs** — every request to the language
-  model exactly as sent and received (the full messages, tool definitions, answer, reasoning, tool
-  calls, token counts and timings: queue, time to first token, generation), a timeline per chat
-  question (LLM call → tool → LLM call → answer) and the app's own log with a live tail
-  (screenshots: `docs/samples/ui/logs-*.png`). Each chat answer links to its
-  calls. Passwords, keys and tokens are removed from what is stored; retention and size limits
-  are in Settings → Logs.
-- **Pause automation** — the button at the top of every page stops every scheduled job and automation (approval sweeps, pruning) and cancels the runs in flight. Chat, approving/rejecting, the Settings test buttons and the Telegram bot keep working. It survives a restart; Resume lets the jobs come due again (the overdue ones start a couple of seconds apart). `GET /api/automation`, `POST /api/automation/pause|resume`; `/api/info` shows it per job.
-- **Telegram** — write a plain question to chat
-  ("what is using the most disk and memory?"); the model looks at the host with its read-only
-  shell and answers. Commands: `/status` (overall status with its headline, then one line per
-  job: its last status and how long ago), `/jobs` (every job: builtin or custom, on or off, next
-  run), `/run <job>` (runs that job now and answers in the same chat when it is done; an unknown
-  name lists the valid ones), `/summary` (the same for the summary job), `/approvals` (open
-  requests, with buttons), `/id` (this chat's id: works in any chat, also for
-  chats that are not allowed yet, once per 10 s), `/new` (start a fresh chat), `/help`. The
-  **summary** of the Summary job (status, headline and its warnings; info findings are left out)
-  goes to every allowed chat as `outputs.telegram.send_summary` says: `changed` (default: when
-  the status or the list of warnings differs from the last summary), `every` (after every run)
-  or `never`. What was sent last is remembered, so a restart does not repeat it. When an
-  action needs approval, the bot sends
-  ONE message per approval (all the items one chat turn asked for: the
-  first ten are listed, then "+N more") with **Approve all**, **Reject all** and, when
-  `outputs.telegram.web_url` is set, **Review** (opens the approval in the web UI). Requests of the
-  same run that arrive within 30 s end up in the same message. The message is edited to the
-  outcome ("Approved by @name: 37 executed, 2 failed"), also when you decide in the
-  web UI.
-  Each Telegram chat is one conversation; the model sees only its last
-  `chat.history_messages` (12) messages. A fresh conversation starts with `/new` or by itself after
-  `outputs.telegram.new_session_after` (6 h) without a message (0 = never); the older ones stay in
-  the web Chat list with their titles. Chat messages older than `storage.retention` (30 d) are
-  deleted, also from a conversation still in use, and conversations left empty are removed.
+- **Dashboard** — the overall status and headline from the newest summary run, and one tile per
+  job with its last status. **Jobs** — every job with its runs (summary, findings, error, model,
+  tokens), the editor and *Run now*.
+- **Chat** — ask about the server ("what is using the most disk?"). Answers stream in; each tool
+  call is shown with its command and output. The model sees the last `chat.history_messages`
+  messages of a conversation.
+- **Approvals** — what waits for your decision, and the permanent audit log of every action.
+- **Logs** — every request to a model exactly as sent and received (messages, tool definitions,
+  answer, reasoning, token counts, timings), a timeline per chat question and per job run, and
+  the app's own log with a live tail. Secrets are removed from what is stored; limits are in
+  Settings → Logs.
+- **Telegram** — write a plain question to chat. Commands: `/status` (overall status with its
+  headline, then one line per job), `/jobs` (every job: on or off, next run), `/run <job>`
+  (runs it and answers when it is done), `/summary` (the same for the summary), `/approvals`
+  (open requests with buttons), `/new` (fresh conversation), `/id` (this chat's id; works in any
+  chat, also before it is allowed), `/help`. The summary's result (status, headline, warnings)
+  goes to every allowed chat as `outputs.telegram.send_summary` says: `changed` (default),
+  `every` or `never`. Each approval is one message with **Approve all** / **Reject all** (and
+  **Review** when `outputs.telegram.web_url` is set); it is edited to the outcome, also when you
+  decide in the web UI. A conversation starts fresh after `outputs.telegram.new_session_after`
+  (6 h) of silence or with `/new`.
 - **Chat API** — `POST /api/chat` with `{"message": "...", "session_id": "..."}` answers as a
-  server-sent-event stream (`session`, `tool_call`, `tool_result`, `token`, `done`);
-  `GET /api/chat/sessions[/{id}]` and `DELETE /api/chat/sessions/{id}` manage the history.
-  Chat can ask for changes through MCP tools but only through the
-  same policy and approval path as everything else.
-- **Metrics** — `/metrics` exposes LLM request and token counters, pending approvals, action counts,
-  the status, last run time, duration and findings of every scheduled job (`asm_job_*`) and build
-  info (`asm_*`). A Grafana dashboard to import is in [docs/grafana-dashboard.json](docs/grafana-dashboard.json).
-  Scrape config:
+  server-sent-event stream; `GET /api/chat/sessions[/{id}]`, `DELETE /api/chat/sessions/{id}`.
+  `GET /api/chat/audit` lists the commands and MCP calls the chat made. `GET /api/status`,
+  `GET /api/jobs`, `GET /api/jobs/{slug}/runs` give the job picture.
+- **Metrics** — `/metrics` (`prometheus_client`): job status, last run time, duration, findings
+  by severity and runs by status (`asm_job_*`), LLM requests, tokens, errors and duration
+  (`asm_llm_*`), pending approvals and actions by result, build info. Import
+  [docs/grafana-dashboard.json](docs/grafana-dashboard.json). Scrape config:
 
   ```yaml
   scrape_configs:
@@ -149,70 +178,57 @@ button that checks what you typed, before you save, and says what answered or wh
       static_configs: [{ targets: ["ai-server-monitor:8080"] }]
   ```
 
-## LLM recommendations
+## Security model
 
-- **Native tool calling is required.** The chat agent works by calling tools (the host shell,
-  `delegate`, MCP tools). There is no fallback for models that cannot call tools natively; the
-  Settings Test button tells you whether yours can.
-- **Local, small**: tested with `gemma4:e4b` through Ollama at `https://.../v1`. It uses native tool
-  calling, and chat questions that need one or two tool calls were answered in about 5 to 15
-  seconds in our tests. It needs the 4096 output tokens mentioned above. With Ollama also raise
-  `OLLAMA_CONTEXT_LENGTH`, or the server silently truncates long prompts.
-- **Cloud models** (OpenAI, OpenRouter, any OpenAI-compatible gateway) work the same way
-  and are the best choice for chat that has to use many tools. Remember that tool results
-  (process names, container names, log excerpts, file contents) leave your network; secrets are
-  scrubbed from them first, but check that you are comfortable with the rest.
+**The read-only shell** (`bash`, used by the jobs, the chat and `delegate`) runs the host's own
+bash and programs on the read-only host mount, as a dedicated uid (2147483000) that owns no host
+process, with `no_new_privs` and at most the `DAC_READ_SEARCH` capability, under `prlimit` (CPU
+time, 4 GiB address space, no file writes, at most 512 processes), `nice`/`ionice` and a time
+limit (`chat.command_timeout`, the model may ask for up to `chat.tool_timeout`). Measured in a
+simulated host (Docker 29.8 on WSL2, `pid: host`, the compose file above; GPU commands were not
+tested):
 
-## Security and the approval model
+- It **can** read every file (with `DAC_READ_SEARCH`; without it, what the `adm` and
+  `systemd-journal` groups may read), `journalctl`, `ps`/`top` over all host processes, the
+  host's listening ports from `/proc/1/net/tcp`, and `docker ps/logs/inspect/stats/system df`
+  through the proxy; pipes, subshells and redirection to `/dev/null` work.
+- It **cannot** write, delete or create any host file (read-only mount), signal any process
+  (also not PID 1 or `nobody`'s), open the real Docker socket, change anything through the
+  Docker proxy (403), write to devices, `/proc/sys` or `/sys`, enter other namespaces
+  (`nsenter`, `unshare`) or see which process owns another user's socket (`ss -p` needs
+  `SYS_PTRACE`, which the sandbox never has).
 
-- **The host is read-only**: read-only mounts, a GET-only Docker proxy, no write path to anything
-  but the MCP servers you add.
-- **Changing commands** (`approvals.shell_changes`): when you ask the chat for a change, the main
-  model proposes a root command on the host with `bash_write` (never the scheduled jobs or the
-  worker model). `approve` (default): it waits on the Approvals page and in Telegram; once you
-  approve, reject or it expires, the chat continues by itself with the output (or the refusal),
-  on the web page and in the Telegram chat that asked. `auto`: it runs without asking. `off`:
-  the chat cannot change anything. Every command, its reason, exit code and output are in the
-  permanent action log. Needs the two commented-out capabilities in the compose file.
-- **Secrets**: API keys and tokens are stored in clear text in the SQLite file under `data/`
-  (protect that directory like a credentials store) and are shown as `********` in the API and the
-  UI. They are never sent to the LLM: tool results are scrubbed of configured secrets, secret-looking
-  fields and common credential formats, and capped in size before the model sees them.
-- **Untrusted text**: log lines, container output and tool results can say anything.
-  They are passed to the model as clearly delimited data, and **no write can happen because of text**:
-  a model can only *request* an action, and what happens is decided by your settings.
-- **Policies**, per MCP server and tool: `off` = never (the request is only logged), `suggest` = recorded and mentioned,
-  never executed, `approve` = waits for your button press (expires after `approvals.approval_ttl`, default
-  1 day), `auto` = executes by itself within the caps. Approvals are grouped: everything one
-  chat turn asks for with the same action is ONE approval with a checklist
-  on the Approvals page: approve or reject all of it, or only the items you tick. Every item
-  keeps its own row in the audit log (linked by its approval number). The hourly cap is applied
-  when items are executed; items beyond it stay approved as `queued` and run by themselves as the cap frees up (nobody is
-  asked a second time; the card and the Telegram message show "10 executed, 30 queued, next in ~N min"). *Max per hour* limits how often an action
-  may run, counted from the audit log.
-- **Audit log**: every request and its outcome (`suggested`, `pending`, `approved`, `rejected`,
-  `expired`, `executed`, `failed`, `queued`, `dry_run`) is kept permanently with who asked (`chat:<session>`, `telegram:<chat>`), who decided (`ui`, `telegram:<user>`, `policy`, `timeout`)
-  and the result. Read it on the Approvals page or at `GET /api/actions`.
-- **MCP servers** (Settings → MCP servers): the chat can use tools of remote MCP servers you add (Home
-  Assistant, Grafana, your own), over Streamable HTTP or the older HTTP+SSE, with a bearer token or
-  headers. No stdio servers (that would mean running arbitrary programs inside this container), and
-  only *tools* are used, not a server's prompts or resources. You pick which tools the chat gets
-  (press **Test**, tick them): small models break with dozens of tool definitions, so none is chosen
-  by default, and above `mcp.max_inline_tool_tokens` the chat gets a generic list/call pair instead.
-  A tool is *read* only if the server marks it `readOnlyHint` and you did not override it; reads run
-  at once and are listed under `GET /api/chat/audit?kind=mcp`. Everything else is a *write*: it is
-  requested through the action layer (`mcp_call`) with the server's policy (default `approve`, so
-  "turn off the heating" becomes an approval card in the UI or Telegram), per-tool overrides, its own
-  `mcp.dry_run` switch, and the permanent audit log. Tool results are untrusted data: capped,
-  scrubbed of secrets and delimited like everything else.
-- **Telegram** only serves the chat ids you list; button presses carry a signature, so a forged
-  callback cannot approve anything. There is no web login: see [Install](#install).
+Every command a chat runs is in `GET /api/chat/audit` and in the Logs page; a job's commands are
+in its run's trace.
+
+**Approved changes** (`approvals.shell_changes`): only the main model in chat has `bash_write`,
+never the jobs or the worker model. With `approve` (default) every command waits for you on the
+Approvals page and in Telegram, and expires after `approvals.approval_ttl` (1 day); with `auto`
+it runs without asking; `off` removes the tool. An approved command runs **as root on the host**
+(nsenter into PID 1's namespaces) and can do anything root can, so read it before you approve.
+The approve button answers at once; the command runs (up to `chat.command_timeout`), its exit
+code and output go into the permanent audit log, and the chat continues with them.
+
+**MCP servers** (Settings → MCP servers): remote servers only (Streamable HTTP or HTTP+SSE, no
+stdio programs), tools only. You pick which tools the chat gets; above
+`mcp.max_inline_tool_tokens` it gets a generic `mcp_list_tools` / `mcp_call` pair instead. A tool
+is *read* only if the server marks it `readOnlyHint` and you did not override it; reads run at
+once. Everything else is a *write* under the server's policy: `off` (never), `suggest` (recorded,
+never run), `approve` (default: waits for you) or `auto`, with per-tool overrides and its own
+`mcp.dry_run` switch. Approvals of one chat turn are grouped into one card with a checklist.
+
+**Untrusted text and secrets**: log lines, command output and tool results are passed to the
+model as delimited data; a model can only *request* an action, and your settings decide what
+happens. Configured secrets, secret-looking fields and common credential formats are scrubbed
+from tool results and from stored logs. Keys and tokens are stored in clear text in `data/` and
+shown as `********` in the UI and API. Telegram serves only the chat ids you list, and button
+presses carry a signature.
 
 ## Settings reference
 
-Generated from the code by `python scripts/gen_settings_docs.py --write` (run `--check` in CI to
-catch drift). Durations are written like `30s`, `5m`, `6h`, `30d`, `1h30m`. Defaults are the values
-a fresh install starts with.
+Generated from the code by `python scripts/gen_settings_docs.py --write` (`--check` fails when it
+is out of date). Durations are written like `30s`, `5m`, `6h`, `30d`, `1h30m`. Defaults are the
+values a fresh install starts with.
 
 <!-- settings-reference:start (generated by scripts/gen_settings_docs.py) -->
 
@@ -339,23 +355,62 @@ a fresh install starts with.
 
 <!-- settings-reference:end -->
 
+## Upgrading from 0.6.x
+
+0.7.0 replaces the code-based collection with LLM jobs. Your settings, chats, the action audit
+log and the model call logs are kept; the rest of the old data is deleted by the upgrade.
+
+**Removed** (and its stored data):
+
+- the \*arr (Radarr, Sonarr, Whisparr, Prowlarr) and qBittorrent integration: its settings are
+  dropped, its actions still waiting are closed as expired (finished ones stay in the audit log);
+- model benchmarks and their tables;
+- collectors, the health score, charts, the digest and the reports: collected samples and old
+  reports are deleted; the Dashboard now shows the jobs;
+- the Prometheus input (the query planner), and the chat's generic HTTP API tool (`api_call`);
+- the settings that only these used, plus `chat.shell`, `llm.tool_mode` and the other knobs of
+  the old LLM client. Moved for you: `report.language` → `general.language`,
+  `collectors.docker.url` → `general.docker_url`, the *arr approval timeout →
+  `approvals.approval_ttl`, the Telegram report switches → `outputs.telegram.send_summary`.
+
+**Do this**:
+
+- Add to the `ai-server-monitor` service in your `compose.yaml` (or take the new example file):
+
+  ```yaml
+      cap_add:
+        - DAC_READ_SEARCH
+        # - SYS_ADMIN     # only to allow approved changes
+        # - SYS_PTRACE
+  ```
+
+  The old `pid: host`, `apparmor=unconfined`, mounts and Docker proxy stay as they are.
+- **Models without native tool calling no longer work**: the JSON-in-text and no-tools modes
+  are gone. Check with Settings → Main model → **Test**, and set a worker model if you have a
+  smaller one.
+- Telegram: `/report` is gone; `/status` now shows the overall status and one line per job; new
+  are `/jobs`, `/run <job>` and `/summary`. Reports and alerts are replaced by the summary
+  message (`outputs.telegram.send_summary`).
+- Metrics: the `asm_health_*`, `asm_findings`, `asm_report_*` and `asm_collector_*` series are
+  gone; the jobs export `asm_job_*`. Re-import `docs/grafana-dashboard.json`.
+
 ## Troubleshooting
 
-- **Chat says the shell cannot run, or an answer is empty** — Settings → LLM → **Test** first; it
-  checks the endpoint, the model and a tool-call round trip. Thinking models need
-  *Max output tokens* of 4096 or more.
-- **Chat: "the host lacks setpriv" / root-only paths unreadable** — the sandbox uses the host's own
-  util-linux tools (`setpriv`, `prlimit`, `ionice`); install them on the host. For root-only paths add
-  `cap_add: [DAC_READ_SEARCH]` to the ai-server-monitor service (the shell's output says so).
-- **Not sure a connection is right?** Every connection in Settings (LLM, Telegram) has a **Test** button that checks the values you typed
-  *before* you save: it names the app and version that answered, or says what is wrong (wrong
-  key, DNS name not found, timeout, TLS error).
+- **A job or the summary shows `error`** — open the run on the Jobs page: its error says why
+  (model unreachable, timed out, no result). Settings → Main model / Worker model → **Test**.
+  Thinking models need *Max output tokens* of 4096 or more.
+- **"the host lacks setpriv" / root-only paths unreadable** — the sandbox uses the host's own
+  util-linux tools (`setpriv`, `prlimit`, `ionice`); install them on the host. For root-only
+  paths add `cap_add: [DAC_READ_SEARCH]`.
+- **The chat cannot change anything** — `/api/status` → `change_shell.reason` says whether the
+  policy is `off` or the `SYS_ADMIN` + `SYS_PTRACE` lines are missing.
 - **Telegram does not answer** — your chat id must be in *Allowed chat ids*: send `/id` to the
-  bot to see it, and use *Send test message* under Settings → Outputs → Telegram to check each
-  chat. `docker logs` shows polling errors without the token. The bot uses python-telegram-bot and
-  keeps retrying while Telegram cannot be reached.
-- **An approval or action does nothing** — with `mcp.dry_run` on, approved calls only log what they
-  would have done (status `dry_run`).
+  bot, and use *Send test message* under Settings → Outputs → Telegram. `docker logs` shows
+  polling errors without the token.
+- **An approved MCP write does nothing** — with `mcp.dry_run` on, approved calls are only
+  recorded (status `dry_run`).
+- **The page stops updating with many tabs open** — see the HTTP/1.1 note under
+  [Quick start](#quick-start).
 
 ## Development
 
@@ -368,8 +423,7 @@ cd ../frontend && npm install && npm run dev                                # UI
 
 Local image: `docker build -f docker/Dockerfile -t ai-server-monitor:dev .`
 
-The settings reference above is generated: after changing `backend/ai_server_monitor/config.py`
-run `python scripts/gen_settings_docs.py --write`.
+After changing `backend/ai_server_monitor/config.py` run `python scripts/gen_settings_docs.py --write`.
 
 ## Releasing
 
@@ -381,7 +435,5 @@ git commit -am "Release vX.Y.Z" && git push
 ```
 
 On push to `main`, the **Release** workflow checks whether the current version has a tag yet;
-if not, it runs CI, publishes the image to GHCR and then tags `vX.Y.Z`. A failed release is
-retried by the next push. Pushes without a version bump publish nothing.
-You can also trigger it via Actions → Release → *Run workflow*.
-**CI** (lint, tests, frontend build) runs on every push and pull request.
+if not, it runs CI, publishes the image to GHCR and then tags `vX.Y.Z`. Pushes without a version
+bump publish nothing. **CI** (lint, tests, frontend build) runs on every push and pull request.

@@ -1,5 +1,5 @@
 """The `bash` tool's sandbox runner. The isolated (root) path is measured in a deployment-like
-container (docs/handover-agent-runtime.md); here: its command line, and real bash runs."""
+container (docs/DESIGN.md, "Security boundaries"); here: its command line, and real bash runs."""
 
 from __future__ import annotations
 

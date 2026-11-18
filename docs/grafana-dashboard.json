@@ -11,7 +11,7 @@
   "title": "AI Server Monitor",
   "uid": "ai-server-monitor",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": true,
   "tags": [
     "ai-server-monitor"
@@ -21,12 +21,15 @@
     "to": "now"
   },
   "refresh": "1m",
+  "templating": {
+    "list": []
+  },
   "panels": [
     {
       "id": 1,
-      "title": "Health score",
-      "type": "gauge",
-      "description": "",
+      "title": "Job status",
+      "type": "stat",
+      "description": "Status of each job's latest finished run (the summary job is the overall status).",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -34,7 +37,7 @@
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 5,
+        "w": 12,
         "h": 6
       },
       "targets": [
@@ -43,92 +46,90 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "asm_health_score",
-          "legendFormat": "",
+          "expr": "asm_job_status",
+          "legendFormat": "{{job}}",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "ok",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "warn",
+                  "color": "yellow",
+                  "index": 1
+                },
+                "2": {
+                  "text": "crit",
+                  "color": "red",
+                  "index": 2
+                },
+                "3": {
+                  "text": "error",
+                  "color": "purple",
+                  "index": 3
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "green",
                 "value": null
               },
               {
-                "color": "orange",
-                "value": 50
+                "color": "yellow",
+                "value": 1
               },
               {
-                "color": "green",
-                "value": 90
+                "color": "red",
+                "value": 2
+              },
+              {
+                "color": "purple",
+                "value": 3
               }
             ]
-          },
-          "min": 0,
-          "max": 100
+          }
         },
         "overrides": []
       },
-      "options": {}
-    },
-    {
-      "id": 2,
-      "title": "Status",
-      "type": "stat",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 5,
-        "y": 0,
-        "w": 4,
-        "h": 6
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "asm_health_status == 1",
-          "legendFormat": "{{status}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "options": {
-        "textMode": "name",
         "colorMode": "background",
+        "textMode": "value_and_name",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
-          ],
-          "fields": "/^status$/"
+          ]
         }
       }
     },
     {
-      "id": 3,
-      "title": "Findings",
+      "id": 2,
+      "title": "Last run age",
       "type": "stat",
-      "description": "",
+      "description": "How long ago each job's latest run finished. A job far past its interval is stuck, disabled or paused.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
-        "x": 9,
+        "x": 12,
         "y": 0,
-        "w": 6,
+        "w": 12,
         "h": 6
       },
       "targets": [
@@ -137,45 +138,8 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "asm_findings",
-          "legendFormat": "{{severity}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none"
-      }
-    },
-    {
-      "id": 4,
-      "title": "Latest report age",
-      "type": "stat",
-      "description": "Time since the last successful report. Stale = LLM down or reports skipped.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 15,
-        "y": 0,
-        "w": 5,
-        "h": 6
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "time() - asm_report_last_success_timestamp_seconds",
-          "legendFormat": "",
+          "expr": "time() - asm_job_last_run_timestamp_seconds",
+          "legendFormat": "{{job}}",
           "refId": "A"
         }
       ],
@@ -190,59 +154,33 @@
                 "value": null
               },
               {
-                "color": "orange",
-                "value": 1800
+                "color": "yellow",
+                "value": 7200
               },
               {
                 "color": "red",
-                "value": 7200
+                "value": 86400
               }
             ]
           }
         },
         "overrides": []
       },
-      "options": {}
-    },
-    {
-      "id": 5,
-      "title": "Reports by result (1h)",
-      "type": "stat",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 20,
-        "y": 0,
-        "w": 4,
-        "h": 6
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "increase(asm_reports_total[1h])",
-          "legendFormat": "{{result}}",
-          "refId": "A"
+      "options": {
+        "colorMode": "value",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
         }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "options": {}
+      }
     },
     {
-      "id": 6,
-      "title": "Health score over time",
+      "id": 3,
+      "title": "Job run duration",
       "type": "timeseries",
-      "description": "",
+      "description": "How long each job's latest run took.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -259,26 +197,24 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "asm_health_score",
-          "legendFormat": "score",
+          "expr": "asm_job_last_run_duration_seconds",
+          "legendFormat": "{{job}}",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
-          "min": 0,
-          "max": 100
+          "unit": "s"
         },
         "overrides": []
       },
       "options": {}
     },
     {
-      "id": 7,
-      "title": "Findings over time",
+      "id": 4,
+      "title": "Findings by severity",
       "type": "timeseries",
-      "description": "",
+      "description": "Findings of the latest run of every job, added up by severity.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -295,8 +231,40 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "asm_findings",
+          "expr": "sum by (severity) (asm_job_findings)",
           "legendFormat": "{{severity}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 5,
+      "title": "Job runs by status (1h)",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (status) (increase(asm_job_runs_total[1h]))",
+          "legendFormat": "{{status}}",
           "refId": "A"
         }
       ],
@@ -309,7 +277,61 @@
       "options": {}
     },
     {
-      "id": 8,
+      "id": 6,
+      "title": "Failed job runs (24h)",
+      "type": "stat",
+      "description": "Runs stored as error: model unreachable, timeout, no result, interrupted.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (job) (increase(asm_job_runs_total{status=\"error\"}[24h]))",
+          "legendFormat": "{{job}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 7,
       "title": "LLM request duration (p50 / p95)",
       "type": "timeseries",
       "description": "",
@@ -319,7 +341,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 14,
+        "y": 22,
         "w": 12,
         "h": 8
       },
@@ -352,7 +374,7 @@
       "options": {}
     },
     {
-      "id": 9,
+      "id": 8,
       "title": "LLM tokens / hour",
       "type": "timeseries",
       "description": "",
@@ -362,7 +384,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 14,
+        "y": 22,
         "w": 12,
         "h": 8
       },
@@ -372,7 +394,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "increase(asm_llm_tokens_total[1h])",
+          "expr": "sum by (direction) (increase(asm_llm_tokens_total[1h]))",
           "legendFormat": "{{direction}}",
           "refId": "A"
         }
@@ -386,9 +408,9 @@
       "options": {}
     },
     {
-      "id": 10,
-      "title": "Collectors up",
-      "type": "table",
+      "id": 9,
+      "title": "LLM requests (1h)",
+      "type": "stat",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -396,9 +418,9 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 22,
-        "w": 12,
-        "h": 8
+        "y": 30,
+        "w": 6,
+        "h": 4
       },
       "targets": [
         {
@@ -406,47 +428,8 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "asm_collector_up",
-          "legendFormat": "{{collector}}",
-          "refId": "A",
-          "instant": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "options": {},
-      "transformations": [
-        {
-          "id": "labelsToFields",
-          "options": {}
-        }
-      ]
-    },
-    {
-      "id": 11,
-      "title": "Collector errors (1h)",
-      "type": "timeseries",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 22,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "increase(asm_collector_errors_total[1h]) > 0",
-          "legendFormat": "{{collector}}",
+          "expr": "sum by (result) (increase(asm_llm_requests_total[1h]))",
+          "legendFormat": "{{result}}",
           "refId": "A"
         }
       ],
@@ -456,10 +439,17 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     },
     {
-      "id": 12,
+      "id": 10,
       "title": "LLM errors (1h)",
       "type": "stat",
       "description": "",
@@ -468,7 +458,7 @@
         "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
-        "x": 0,
+        "x": 6,
         "y": 30,
         "w": 6,
         "h": 4
@@ -504,9 +494,110 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 11,
+      "title": "Pending approvals",
+      "type": "stat",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 30,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "asm_pending_approval_batches",
+          "legendFormat": "approvals",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "asm_pending_approvals",
+          "legendFormat": "items",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Actions by result (24h)",
+      "type": "stat",
+      "description": "Changing shell commands and MCP writes by outcome.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 30,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (result) (increase(asm_actions_total[24h]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     }
-  ],
-  "templating": {
-    "list": []
-  }
+  ]
 }
