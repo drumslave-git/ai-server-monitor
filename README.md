@@ -462,7 +462,7 @@ log and the model call logs are kept; the rest of the old data is deleted by the
 - The summary lists every enabled topic job with its status and one line (Dashboard and
   Telegram).
 
-### Next release (after 0.7.4)
+### 0.7.5
 
 - Commands the model shows without a valid mark get one: after the answer is final, one more
   call of the main model labels them read-only or write, and the mark is written into the
