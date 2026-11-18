@@ -7,7 +7,7 @@ import { useStream } from "./live";
 export type AutomationState = {
   paused: boolean;
   since: number | null;
-  /** "ui", or "bench #<id>" when a benchmark run holds the pause. */
+  /** Who paused it: "ui", "api" or "telegram". */
   by: string | null;
   /** Approved actions waiting for the hourly limit: they run again after the resume. */
   queued_actions: number;
@@ -65,12 +65,6 @@ export function sinceText(ts: number): string {
   return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${time}`;
 }
 
-/** Who holds the pause, in words. */
-function holder(by: string | null): string | null {
-  const bench = /^bench #(\d+)$/.exec(by ?? "");
-  return bench ? `benchmark run #${bench[1]}` : null;
-}
-
 /** On top of every page: the switch, and while it is on a banner saying what is stopped. */
 export function AutomationBar() {
   const { state, busy, error, pause, resume } = useAutomation();
@@ -79,22 +73,20 @@ export function AutomationBar() {
     return (
       <div className="auto-bar">
         <span className="muted small">Scheduled jobs and automations are running</span>
-        <button className="btn btn-quiet btn-sm" disabled={busy} onClick={pause} title="Stop every scheduled job and automation, for example for a clean benchmark run">
+        <button className="btn btn-quiet btn-sm" disabled={busy} onClick={pause} title="Stop every scheduled job and automation">
           <Pause size={14} strokeWidth={1.5} aria-hidden /> Pause automation
         </button>
         {error && <span className="error small">{error}</span>}
       </div>
     );
   }
-  const by = holder(state.by);
   return (
     <div className="auto-banner" role="status">
       <div className="auto-banner-text">
         <strong>Automation paused{state.since ? ` since ${sinceText(state.since)}` : ""}</strong>
         <span>
-          Scheduled jobs and automations are stopped: no collectors, reports, planning or *arr automations. Chat, benchmarks, approvals and the Telegram bot keep working.
+          Scheduled jobs and automations are stopped: no collectors, reports or planning. Chat, approvals and the Telegram bot keep working.
           {state.queued_actions > 0 && ` ${state.queued_actions} approved action${state.queued_actions > 1 ? "s" : ""} wait${state.queued_actions > 1 ? "" : "s"} and will run after the resume.`}
-          {by && ` Paused by ${by}; it resumes when the run ends.`}
         </span>
         {error && <span className="error small">{error}</span>}
       </div>

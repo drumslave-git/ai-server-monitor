@@ -236,7 +236,7 @@ async def seed(tracing: Tracing) -> None:
     for name, level, text in [
         ("ai_server_monitor.main", logging.INFO, "Listening on 0.0.0.0:8080 (schema v7)"),
         ("ai_server_monitor.collectors.manager", logging.INFO, "collectors started: system, docker, gpu, systemd, journal, apt"),
-        ("ai_server_monitor.collectors.docker", logging.WARNING, "docker stats for container 'whisparr' took 4.2s"),
+        ("ai_server_monitor.collectors.docker", logging.WARNING, "docker stats for container 'grafana' took 4.2s"),
         ("ai_server_monitor.report.engine", logging.INFO, "report 12 stored (score 82, 13 s)"),
         ("ai_server_monitor.llm.client", logging.WARNING, "LLM request failed (HTTP 503: model is loading), retrying"),
         ("ai_server_monitor.chat.engine", logging.INFO, "chat turn finished: 2 steps, 2 tool calls"),

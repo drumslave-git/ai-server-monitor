@@ -16,12 +16,8 @@ from typing import Any
 import httpx
 
 from .actions import ActionService, Notifier
-from .apiaccess import ApiGateway
-from .arr.automations import AutomationEnv
-from .arr.automations import register as register_automations
 from .automation import KV_KEY as AUTOMATION_KEY
 from .automation import AutomationState
-from .bench.service import BenchService
 from .chat import ChatEngine
 from .chat.audit import audit_hook
 from .chat.safety import Scrubber
@@ -34,9 +30,8 @@ from .events import EventBus
 from .llm import LLMClient, ToolModeResolver
 from .mcp_client import McpManager
 from .outputs.action_events import ActionEventBridge
-from .outputs.arr_metrics import arr_families
 from .outputs.live import LiveFeed
-from .outputs.metrics import Family, MetricsHub
+from .outputs.metrics import Family, MetricsHub, Sample
 from .outputs.telegram import TelegramBot
 from .promauto import Planner, QueryStore
 from .report.engine import ReportEngine
@@ -64,7 +59,6 @@ class AppContext:
         collector_registry: dict[str, type[Collector]] | None = None,
         host_env: HostEnv | None = None,
         seed_settings: Settings | None = None,
-        arr_transport: httpx.AsyncBaseTransport | None = None,
         telegram_transport: httpx.AsyncBaseTransport | None = None,
     ):
         self.bootstrap = bootstrap
@@ -75,7 +69,6 @@ class AppContext:
         self._llm_transport = llm_transport
         self._registry = collector_registry
         self._seed = seed_settings
-        self._arr_transport = arr_transport
         self._telegram_transport = telegram_transport
         self.telegram: TelegramBot | None = None
         self._lock = asyncio.Lock()
@@ -84,7 +77,7 @@ class AppContext:
         self.observer = WindowObserver()
         self.live = LiveFeed(self.events)
         self.metrics = MetricsHub()
-        self.metrics.add_provider(self._arr_metrics)
+        self.metrics.add_provider(self._approval_metrics)
         self._metrics_task: asyncio.Task[None] | None = None
         self.action_notifiers: list[Notifier] = [ActionEventBridge(self.events, self.metrics)]
         """Callables `(event, record)` told about suggested/pending/finished actions.
@@ -111,37 +104,22 @@ class AppContext:
         self.reports = self._build_reports()
         self.promauto = Planner(self.settings, self.db, self.llm)
         self.mcp = McpManager(self.settings.mcp, audit=audit_hook(self.db, "mcp"))
-        self.api_gateway = self._build_api_gateway(self.settings)
         self.actions = ActionService(
             self.db,
             self.settings,
             notifiers=self.action_notifiers,
-            transport=arr_transport,
             mcp=self.mcp,
-            api=self.api_gateway,
         )
         self.chat = ChatEngine(self)
-        self.bench = BenchService(self, llm_transport=llm_transport)
-        """Model benchmarks; survives settings changes (a run keeps the LLM it started with)."""
-
-    def _build_api_gateway(self, settings: Settings) -> ApiGateway:
-        """Generic HTTP API access (chat `api_call` / `api_endpoints` and the `api_call`
-        action). Every call, GET included, goes to the shared chat audit trail (kind "api")."""
-        return ApiGateway(
-            settings, transport=self._arr_transport, on_call=audit_hook(self.db, "api")
-        )
 
     def _collector_options(self) -> dict[str, dict[str, Any]]:
         options: dict[str, dict[str, Any]] = {"prometheus": {"store": QueryStore(self.db)}}
-        if self._arr_transport:
-            options["arr"] = {"transport": self._arr_transport}
         return options
 
     # ------------------------------------------------------------------ lifecycle
 
     async def start(self) -> None:
         await self.db.connect()
-        await self.bench.store.recover()
         self.tracing.applog.install()
         self.tracing.applog.start()
         self._start_metrics_consumer()
@@ -149,20 +127,12 @@ class AppContext:
             await self.store.save(self._seed)
         self.settings = await self.store.load()
         self.automation = AutomationState.from_stored(await self.db.kv_get(AUTOMATION_KEY))
-        if self.automation.paused and (self.automation.by or "").startswith("bench #"):
-            # A benchmark run held the switch and died with the process: it is not running now.
-            log.warning(
-                "automation was paused by %s, which no longer runs: resumed", self.automation.by
-            )
-            self.automation = AutomationState()
-            await self.db.kv_set(AUTOMATION_KEY, self.automation.to_dict())
         if self.automation.paused:
             log.warning("automation is paused: nothing runs by itself until it is resumed")
         await self._start_services()
         log.info("started (data=%s, host root=%s)", self.bootstrap.data_dir, self.host_env.root)
 
     async def stop(self) -> None:
-        await self.bench.shutdown()
         await self._stop_services()
         self.events.close()
         if self._metrics_task is not None:
@@ -221,21 +191,14 @@ class AppContext:
             timeout=timedelta(seconds=s.llm.timeout.total_seconds() * 2 + 30),
         )
         self.mcp = McpManager(s.mcp, audit=audit_hook(self.db, "mcp"))
-        self.api_gateway = self._build_api_gateway(s)
         self.actions = ActionService(
             self.db,
             s,
             notifiers=self.action_notifiers,
-            transport=self._arr_transport,
             mcp=self.mcp,
-            api=self.api_gateway,
         )
         self.scheduler.add("approvals:sweep", self.actions.sweep_expired, APPROVAL_SWEEP)
         self.scheduler.add("approvals:drain", self.actions.drain_queue, APPROVAL_SWEEP)
-        register_automations(
-            self.scheduler,
-            AutomationEnv(self.actions, s, collector_results=lambda: self.collectors.latest),
-        )
         await self.collectors.setup()
         self.metrics.reset_collectors()
         self.llm.stats.on_success = self.metrics.on_llm_success
@@ -273,15 +236,22 @@ class AppContext:
         )
         return int(row["n"]) if row else 0
 
-    async def _arr_metrics(self) -> list[Family]:
-        result = self.collectors.latest.get("arr")
-        data = result.data if result is not None and result.ok else None
-        return arr_families(
-            self.settings,
-            data,
-            await self.pending_approvals_count(),
-            await self.pending_approval_batches_count(),
-        )
+    async def _approval_metrics(self) -> list[Family]:
+        """Evaluated at scrape time: one indexed COUNT each."""
+        return [
+            Family(
+                "asm_pending_approvals",
+                "gauge",
+                "Actions (items) waiting for a human decision.",
+                [Sample(await self.pending_approvals_count())],
+            ),
+            Family(
+                "asm_pending_approval_batches",
+                "gauge",
+                "Approvals (batches of items) waiting for a human decision.",
+                [Sample(await self.pending_approval_batches_count())],
+            ),
+        ]
 
     def _on_collector_result(self, result: CollectorResult) -> None:
         self.metrics.on_collector_result(result)
@@ -314,8 +284,6 @@ class AppContext:
             self.telegram = None
         await self.scheduler.stop()
         await self.collectors.close()
-        await self.actions.close()
-        await self.api_gateway.close()
         await self.mcp.close()
         await self.llm.aclose()
 

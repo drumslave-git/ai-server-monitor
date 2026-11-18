@@ -17,7 +17,6 @@ from pydantic import ValidationError
 
 from . import __version__, api_models
 from .actions.api import router as actions_router
-from .bench.api import router as bench_router
 from .chat.api import router as chat_router
 from .collectors import Collector
 from .config import Bootstrap, LLMSettings, Settings, settings_json_schema
@@ -46,10 +45,9 @@ SECTION_TITLES = {
     "chat": "Chat",
     "storage": "Data retention",
     "logs": "Logs",
-    "bench": "Benchmarks",
+    "approvals": "Approvals",
     "collectors": "Collectors",
     "outputs": "Outputs",
-    "arr": "*arr & downloads",
     "mcp": "MCP servers",
 }
 
@@ -87,7 +85,6 @@ def create_app(
     llm_transport: httpx.AsyncBaseTransport | None = None,
     collector_registry: dict[str, type[Collector]] | None = None,
     seed_settings: Settings | None = None,
-    arr_transport: httpx.AsyncBaseTransport | None = None,
     telegram_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     bootstrap = bootstrap or Bootstrap()
@@ -99,7 +96,6 @@ def create_app(
             llm_transport=llm_transport,
             collector_registry=collector_registry,
             seed_settings=seed_settings,
-            arr_transport=arr_transport,
             telegram_transport=telegram_transport,
         )
         app.state.ctx = ctx
@@ -115,7 +111,6 @@ def create_app(
     app.include_router(chat_router)
     app.include_router(prometheus_router)
     app.include_router(logs_router)
-    app.include_router(bench_router)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz(request: Request) -> JSONResponse:
@@ -397,10 +392,9 @@ def create_app(
         index: Annotated[int | None, Query(ge=0)] = None,
     ) -> api_models.ConnectionTestResult:
         """Try one connection with the given (possibly unsaved) form values: Prometheus,
-        Docker, a Radarr/Sonarr/Whisparr/Prowlarr instance, qBittorrent or Telegram.
-        Masked secrets are replaced by the stored ones. `mode=send` (Telegram) sends a test
-        message to every allowed chat; `index` is the position of a list item (*arr
-        instance) in the form."""
+        Docker or Telegram. Masked secrets are replaced by the stored ones. `mode=send`
+        (Telegram) sends a test message to every allowed chat; `index` is the position of a
+        list item in the form."""
         if kind not in TEST_KINDS:
             raise HTTPException(status_code=404, detail=f"no connection test {kind!r}")
         ctx = get_ctx(request)

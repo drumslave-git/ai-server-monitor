@@ -8,9 +8,12 @@ from typing import Any
 import httpx
 import pytest
 
+from ai_server_monitor.actions import REGISTRY
 from ai_server_monitor.config import Bootstrap, LLMSettings, Settings
 from ai_server_monitor.db import Database
 from ai_server_monitor.llm import LLMClient
+
+from .actionfakes import NAME, FakeAction
 
 LLM_URL = "http://llm.test/v1"
 
@@ -24,12 +27,13 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(key, raising=False)
 
 
-@pytest.fixture(autouse=True)
-def _fresh_qbit_backoff() -> None:
-    """The qBittorrent login back-off is process-wide state: no test may inherit another's."""
-    from ai_server_monitor.arr import qbit_auth
-
-    qbit_auth.reset()
+@pytest.fixture
+def fake_action(monkeypatch: pytest.MonkeyPatch) -> FakeAction:
+    """The fake write action, registered in the shared REGISTRY (so the chat tools, Telegram and
+    the web API see it); its policy, cap and dry-run are attributes the test sets."""
+    fake = FakeAction()
+    monkeypatch.setitem(REGISTRY, NAME, fake.definition())
+    return fake
 
 
 @pytest.fixture

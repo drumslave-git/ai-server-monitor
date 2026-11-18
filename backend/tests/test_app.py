@@ -75,12 +75,12 @@ def test_settings_roundtrip_masks_secrets_and_applies_live(bootstrap: Bootstrap)
 
         values["llm"].update(base_url="http://ollama:11434/v1", model="qwen3:8b", api_key="sk-1")
         values["collectors"]["system"]["interval"] = "45s"
-        values["arr"]["radarr"] = [{"name": "radarr", "url": "http://radarr:7878", "api_key": "rk"}]
+        values["mcp"]["servers"] = [{"name": "ha", "url": "http://ha:8123/mcp", "token": "rk"}]
         saved = client.put("/api/settings", json=values)
         assert saved.status_code == 200, saved.text
         out = saved.json()["values"]
         assert out["llm"]["api_key"] == SECRET_MASK  # never returned
-        assert out["arr"]["radarr"][0]["api_key"] == SECRET_MASK
+        assert out["mcp"]["servers"][0]["token"] == SECRET_MASK
         # Live: the collector job was rebuilt with the new interval.
         assert app.state.ctx.scheduler.jobs["collect:system"].interval.total_seconds() == 45
 
@@ -89,7 +89,7 @@ def test_settings_roundtrip_masks_secrets_and_applies_live(bootstrap: Bootstrap)
         assert client.put("/api/settings", json=out).status_code == 200
         stored = app.state.ctx.settings
         assert stored.llm.api_key.get_secret_value() == "sk-1"
-        assert stored.arr.radarr[0].api_key.get_secret_value() == "rk"
+        assert stored.mcp.servers[0].token.get_secret_value() == "rk"
         assert stored.llm.temperature == 0.5
 
         bad = dict(out, report={**out["report"], "interval": "five minutes"})
@@ -107,16 +107,14 @@ def test_settings_roundtrip_masks_secrets_and_applies_live(bootstrap: Bootstrap)
 def test_settings_rejects_incomplete_instances_with_readable_errors(bootstrap: Bootstrap) -> None:
     with TestClient(create_app(bootstrap, collector_registry={})) as client:
         values = client.get("/api/settings").json()["values"]
-        values["arr"]["radarr"] = [{"name": "", "url": "", "api_key": ""}]
+        values["mcp"]["servers"] = [{"name": "ha", "url": ""}]
         values["llm"]["base_url"] = "ollama:11434"
         resp = client.put("/api/settings", json=values)
     assert resp.status_code == 422
     errors = {".".join(e["loc"]): e["msg"] for e in resp.json()["detail"]}
     assert errors == {
         "llm.base_url": "Must be a URL starting with http:// or https://",
-        "arr.radarr.0.name": "Required",
-        "arr.radarr.0.url": "Must be a URL starting with http:// or https://",
-        "arr.radarr.0.api_key": "API key is required",
+        "mcp.servers.0.url": "Must be a URL starting with http:// or https://",
     }
 
 

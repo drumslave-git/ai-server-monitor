@@ -58,7 +58,6 @@ class CollectorManager:
             # Nothing a single collector does may stop the service from starting.
             try:
                 collector = cls(cfg, self.env, **self.options.get(name, {}))
-                collector.app_settings = self.settings
             except Exception as exc:
                 self.states[name] = "unavailable"
                 self.reasons[name] = f"cannot start: {exc}"

@@ -70,7 +70,6 @@ def test_bootstrap_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_defaults_and_json_shape() -> None:
     s = Settings()
     assert s.llm.configured is False  # nothing configured until the user does it in the UI
-    assert s.arr.dry_run is True
     data = s.public_dict()
     assert data["report"]["interval"] == "5m"  # human durations, not ISO 8601
     assert data["collectors"]["gpu"]["enabled"] == "auto"
@@ -98,10 +97,10 @@ def test_unknown_keys_rejected() -> None:
 
 
 def test_merge_secrets_matches_list_items_by_name() -> None:
-    current = {"radarr": [{"name": "a", "api_key": "KA"}, {"name": "b", "api_key": "KB"}]}
-    incoming = {"radarr": [{"name": "b", "api_key": SECRET_MASK}, {"name": "c", "api_key": "KC"}]}
+    current = {"servers": [{"name": "a", "api_key": "KA"}, {"name": "b", "api_key": "KB"}]}
+    incoming = {"servers": [{"name": "b", "api_key": SECRET_MASK}, {"name": "c", "api_key": "KC"}]}
     assert merge_secrets(incoming, current) == {
-        "radarr": [{"name": "b", "api_key": "KB"}, {"name": "c", "api_key": "KC"}]
+        "servers": [{"name": "b", "api_key": "KB"}, {"name": "c", "api_key": "KC"}]
     }
     assert merge_secrets({"k": SECRET_MASK}, {}) == {"k": ""}  # mask without stored value
 
@@ -118,14 +117,14 @@ def test_lenient_validate_keeps_valid_parts() -> None:
 
 def test_lenient_validate_drops_incomplete_list_item_not_everything() -> None:
     raw = Settings(llm={"model": "keep-me"}).storage_dict()
-    raw["arr"]["radarr"] = [
-        {"name": "", "url": "", "api_key": ""},
-        {"name": "ok", "url": "http://radarr:7878", "api_key": "k"},
+    raw["mcp"]["servers"] = [
+        {"name": "", "url": ""},
+        {"name": "ok", "url": "http://ha:8123/mcp"},
     ]
-    del raw["arr"]["radarr"][0]["name"]  # missing required field
+    del raw["mcp"]["servers"][0]["name"]  # missing required field
     settings, _ = lenient_validate(raw)
     assert settings.llm.model == "keep-me"
-    assert [r.name for r in settings.arr.radarr] == ["ok"]
+    assert [r.name for r in settings.mcp.servers] == ["ok"]
 
 
 def test_every_tool_may_run_for_an_hour_by_default() -> None:

@@ -29,13 +29,11 @@ _LIST_KEYS = {
     "gpu": ("gpus",),
     "apt": ("packages",),
     "image_updates": ("images",),
-    "arr": ("findings", "apps"),
 }
 _DICT_KEYS = {
     "system": ("cpu", "memory", "processes"),
     "docker": ("summary", "engine", "disk_usage"),
     "image_updates": ("summary",),
-    "arr": ("summary",),
 }
 
 

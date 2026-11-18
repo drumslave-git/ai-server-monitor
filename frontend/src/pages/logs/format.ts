@@ -58,10 +58,6 @@ export function linkLabel(call: Pick<LlmCallSummary, "link_kind" | "link_id" | "
 export function linkHref(call: Pick<LlmCallSummary, "link_kind" | "link_id">): string | null {
   if (call.link_kind === "report" && call.link_id) return `#/reports/${call.link_id}`;
   if (call.link_kind === "chat") return "#/chat";
-  if (call.link_kind === "bench" && call.link_id) {
-    const [run, scenario] = call.link_id.split("/");
-    return `#/bench/run/${run}${scenario && scenario !== "warmup" ? `/${scenario}` : ""}`;
-  }
   return null;
 }
 
@@ -73,7 +69,6 @@ export const PURPOSE_LABEL: Record<string, string> = {
   probe: "Tool-mode probe",
   test: "Connection test",
   prom_plan: "Prometheus plan",
-  bench: "Benchmark",
   other: "Other",
 };
 

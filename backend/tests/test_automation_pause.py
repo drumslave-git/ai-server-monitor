@@ -1,4 +1,4 @@
-"""The global "pause automation" switch: scheduler behaviour, persistence, API and benchmarks."""
+"""The global "pause automation" switch: scheduler behaviour, persistence and API."""
 
 from __future__ import annotations
 
@@ -9,19 +9,14 @@ from datetime import timedelta
 from typing import Any
 
 import httpx
-import pytest
 from fastapi.testclient import TestClient
 
-from ai_server_monitor.bench.service import BenchService
 from ai_server_monitor.collectors.base import Collector
 from ai_server_monitor.config import Bootstrap, Settings
 from ai_server_monitor.main import create_app
 from ai_server_monitor.scheduler import Scheduler
 
 from .conftest import LLM_URL
-from .fake_llm import CANNED_REPORT
-from .test_bench_run import probe_transport, run_bench, wait_done
-from .test_chat import FakeLLM, say
 
 
 async def _until(predicate, timeout: float = 3.0) -> None:  # type: ignore[no-untyped-def]
@@ -271,116 +266,3 @@ def _wait(predicate, timeout: float = 5.0) -> None:  # type: ignore[no-untyped-d
             return
         time.sleep(0.02)
     raise AssertionError("condition not met")
-
-
-# --------------------------------------------------------------------------- benchmarks
-
-
-@pytest.fixture(autouse=True)
-def _no_warmup(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(BenchService, "warmup_enabled", False)
-
-
-def _bench_app(bootstrap: Bootstrap, llm: FakeLLM, seen: list[Any], holder: dict[str, Any]) -> Any:
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(holder["app"].state.ctx.automation.paused)
-        return llm.handler(request)
-
-    app = create_app(
-        bootstrap,
-        llm_transport=httpx.MockTransport(handler),
-        collector_registry={"system": StubSystem},
-        seed_settings=_settings(),
-    )
-    holder["app"] = app
-    return app
-
-
-def test_bench_pauses_for_the_run_and_restores(bootstrap: Bootstrap) -> None:
-    seen: list[Any] = []
-    holder: dict[str, Any] = {}
-    app = _bench_app(bootstrap, FakeLLM(say(CANNED_REPORT)), seen, holder)
-    with TestClient(app) as client:
-        assert client.get("/api/automation").json()["paused"] is False
-        seen.clear()  # the start-up probe of the tool mode called the model before the run
-        run = run_bench(client, app, ids=["report.smoke_disk"], repeats=1)
-        assert run["status"] == "done"
-        assert seen and all(seen)  # automation was paused while the model was being called
-        assert run["meta"]["automation"] == {"paused": True, "by_run": True, "was_paused": False}
-        after = client.get("/api/automation").json()
-        assert after["paused"] is False  # back as it was found
-        assert not any(j["paused"] for j in client.get("/api/info").json()["jobs"])
-
-
-def test_bench_leaves_a_pause_the_user_set(bootstrap: Bootstrap) -> None:
-    seen: list[Any] = []
-    holder: dict[str, Any] = {}
-    app = _bench_app(bootstrap, FakeLLM(say(CANNED_REPORT)), seen, holder)
-    with TestClient(app) as client:
-        client.post("/api/automation/pause")
-        since = client.get("/api/automation").json()["since"]
-        run = run_bench(client, app, ids=["report.smoke_disk"], repeats=1)
-        assert run["meta"]["automation"] == {"paused": True, "by_run": False, "was_paused": True}
-        after = client.get("/api/automation").json()
-        assert after["paused"] is True and after["since"] == since and after["by"] == "ui"
-
-
-def test_bench_without_the_tick_leaves_automation_running(bootstrap: Bootstrap) -> None:
-    seen: list[Any] = []
-    holder: dict[str, Any] = {}
-    app = _bench_app(bootstrap, FakeLLM(say(CANNED_REPORT)), seen, holder)
-    with TestClient(app) as client:
-        run = run_bench(client, app, ids=["report.smoke_disk"], repeats=1, pause_automation=False)
-        assert seen and not any(seen)
-        assert run["meta"]["automation"] == {"paused": False, "by_run": False, "was_paused": False}
-        assert client.get("/api/automation").json()["paused"] is False
-
-
-def test_bench_restores_when_the_run_fails(bootstrap: Bootstrap) -> None:
-    def boom(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("down")
-
-    app = create_app(
-        bootstrap,
-        llm_transport=httpx.MockTransport(boom),
-        collector_registry={"system": StubSystem},
-        seed_settings=_settings(),
-    )
-    with TestClient(app) as client:
-        run = run_bench(client, app, ids=["report.smoke_disk"], repeats=1)
-        assert run["meta"]["automation"]["by_run"] is True
-        assert client.get("/api/automation").json()["paused"] is False
-
-
-def test_bench_restores_when_cancelled(bootstrap: Bootstrap) -> None:
-    async def never(request: httpx.Request) -> httpx.Response:
-        await asyncio.sleep(60)
-        raise AssertionError("unreachable")
-
-    app = create_app(
-        bootstrap,
-        llm_transport=httpx.MockTransport(never),
-        collector_registry={"system": StubSystem},
-        seed_settings=_settings(),
-    )
-    with TestClient(app) as client:
-        app.state.ctx.bench._probe_transport = probe_transport()
-        run_id = client.post("/api/bench/runs", json={"ids": ["report.smoke_disk"]}).json()[
-            "run_id"
-        ]
-        _wait(lambda: client.get("/api/automation").json()["paused"])
-        assert client.get("/api/automation").json()["by"] == f"bench #{run_id}"
-        assert client.post("/api/bench/cancel").json() == {"cancelled": True}
-        wait_done(client)
-        assert client.get("/api/automation").json()["paused"] is False
-
-
-def test_a_pause_left_by_a_dead_bench_run_is_lifted_at_startup(bootstrap: Bootstrap) -> None:
-    app = create_app(bootstrap, collector_registry={}, seed_settings=_settings())
-    with TestClient(app) as client:
-        ctx = app.state.ctx
-        client.portal.call(ctx.pause_automation, "bench #7")
-        assert client.get("/api/automation").json()["paused"] is True
-    app = create_app(bootstrap, collector_registry={})
-    with TestClient(app) as client:
-        assert client.get("/api/automation").json()["paused"] is False

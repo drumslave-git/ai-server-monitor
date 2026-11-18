@@ -125,7 +125,7 @@ class FakeProc:
             1,
         ),
         501: ("s6-svscan", ["s6-svscan"], 500),
-        502: ("Whisparr", ["/app/bin/Whisparr"], 501),
+        502: ("Jellyfin", ["/app/bin/Jellyfin"], 501),
         900: ("llama-server", ["/usr/lib/ollama/llama-server"], 1),
     }
 

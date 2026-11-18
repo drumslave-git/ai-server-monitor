@@ -1,7 +1,7 @@
 """Run the real chat engine against a real LLM endpoint on a scratch "host" (see
 chat_tools_live.sh, which builds /fakehost and runs this inside a Linux container as root).
 
-Docker and the *arr apps are faked (no real instances are touched); the host commands run for
+Docker is faked (no real instances are touched); the host commands run for
 real in the sandbox, chrooted into /fakehost. Prints a Markdown transcript to stdout.
 
     python chat_tools_live.py BASE_URL MODEL "question 1" "question 2" ...
@@ -25,54 +25,17 @@ from ai_server_monitor.context import AppContext
 CONTAINERS: list[dict[str, Any]] = [
     {
         "Id": "1" * 64,
-        "Names": ["/radarr"],
-        "Image": "lscr.io/linuxserver/radarr:latest",
+        "Names": ["/nextcloud"],
+        "Image": "nextcloud:latest",
         "State": "running",
         "Status": "Up 3 days",
-        "Ports": [{"PublicPort": 7878, "PrivatePort": 7878, "Type": "tcp"}],
-        "Labels": {"com.docker.compose.service": "radarr"},
-        "Mounts": [
-            {
-                "Type": "bind",
-                "Source": "/mnt/disks/disk14TB/media",
-                "Destination": "/data",
-                "RW": True,
-            }
-        ],
-    },
-    {
-        "Id": "2" * 64,
-        "Names": ["/sonarr"],
-        "Image": "lscr.io/linuxserver/sonarr:latest",
-        "State": "running",
-        "Status": "Up 3 days",
-        "Ports": [{"PublicPort": 8989, "PrivatePort": 8989, "Type": "tcp"}],
-        "Labels": {"com.docker.compose.service": "sonarr"},
-        "Mounts": [
-            {
-                "Type": "bind",
-                "Source": "/mnt/disks/disk14TB/media",
-                "Destination": "/data",
-                "RW": True,
-            }
-        ],
-    },
-    {
-        "Id": "3" * 64,
-        "Names": ["/qbittorrent"],
-        "Image": "lscr.io/linuxserver/qbittorrent:latest",
-        "State": "running",
-        "Status": "Up 3 days (healthy)",
-        "Ports": [
-            {"PublicPort": 8080, "PrivatePort": 8080, "Type": "tcp"},
-            {"PublicPort": 6881, "PrivatePort": 6881, "Type": "tcp"},
-        ],
-        "Labels": {"com.docker.compose.service": "qbittorrent"},
+        "Ports": [{"PublicPort": 8081, "PrivatePort": 80, "Type": "tcp"}],
+        "Labels": {"com.docker.compose.service": "nextcloud"},
         "Mounts": [
             {
                 "Type": "bind",
                 "Source": "/mnt/disks/disk14TB/downloads",
-                "Destination": "/downloads",
+                "Destination": "/data",
                 "RW": True,
             }
         ],
@@ -137,35 +100,20 @@ class FakeDockerCollector(Collector):
         return {"containers": []}
 
 
-def arr_transport() -> httpx.MockTransport:
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/v3/rootfolder":
-            path = "/data/movies" if "radarr" in request.url.host else "/data/tv"
-            return httpx.Response(200, json=[{"id": 1, "path": path, "freeSpace": 1}])
-        return httpx.Response(404, json={})
-
-    return httpx.MockTransport(handler)
-
-
 async def main(base_url: str, model: str, questions: list[str]) -> None:
     data = Path(tempfile.mkdtemp(prefix="asm-live-"))
     bootstrap = Bootstrap(data_dir=data, host_root=Path("/fakehost"))
     settings = Settings(
         llm={"base_url": base_url, "model": model, "tool_mode": "auto"},
-        arr={
-            "radarr": [{"name": "radarr", "url": "http://radarr.test:7878", "api_key": "k"}],
-            "sonarr": [{"name": "sonarr", "url": "http://sonarr.test:8989", "api_key": "k"}],
-        },
     )
     app = AppContext(
         bootstrap,
         collector_registry={"docker": FakeDockerCollector},
-        arr_transport=arr_transport(),
         seed_settings=settings,
     )
     await app.start()
     print(f"# Chat with host tools, live run\n\nModel `{model}` at `{base_url}`; scratch host "
-          "root `/fakehost` (Docker and *arr faked, host commands real).\n")
+          "root `/fakehost` (Docker faked, host commands real).\n")
     try:
         for question in questions:
             print(f"## Q: {question}\n")

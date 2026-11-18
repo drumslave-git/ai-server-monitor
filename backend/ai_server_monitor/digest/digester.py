@@ -373,30 +373,6 @@ def _journal_section(j: JournalSummary | None, label: str) -> Section | None:
     return Section("journal", "System journal", 50, lines)
 
 
-def _arr_section(snap: Snapshot, pending_approvals: int) -> Section | None:
-    arr = snap.data("arr")
-    if not arr:
-        return None
-    s = arr.get("summary") or {}
-    parts = [f"{s.get('instances', '?')} instances"]
-    if s.get("unreachable"):
-        parts.append("UNREACHABLE: " + ", ".join(map(str, s["unreachable"])))
-    queue_total, queue_problems = s.get("queue_total", 0), s.get("queue_problems", 0)
-    parts.append(f"download queues {queue_total} items ({queue_problems} with problems)")
-    missing, cutoff = s.get("wanted_missing", 0), s.get("wanted_cutoff_unmet", 0)
-    parts.append(f"wanted: {missing} missing, {cutoff} below cutoff")
-    if s.get("indexers_failing"):
-        parts.append(f"{s['indexers_failing']} indexers failing")
-    if s.get("stalled_candidates"):
-        parts.append(f"{s['stalled_candidates']} stalled torrents")
-    lines = ["; ".join(parts)]
-    if pending_approvals:
-        lines.append(f"{pending_approvals} action(s) waiting for approval")
-    for f in (arr.get("findings") or [])[:8]:
-        lines.append(f"[{str(f.get('severity')).upper()}] {f.get('source')}: {f.get('message')}")
-    return Section("arr", "*arr and downloads", 45, lines)
-
-
 def _updates_section(snap: Snapshot) -> Section | None:
     apt = snap.data("apt")
     img = snap.data("image_updates")
@@ -550,7 +526,6 @@ async def build_digest(
             _prometheus_section(snap),
             _gpu_section(snap),
             _journal_section(journal, label),
-            _arr_section(snap, pending),
             _updates_section(snap),
         )
         if s is not None

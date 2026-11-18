@@ -367,17 +367,6 @@ def unused_images(c: Context) -> list[Flag]:
     ]
 
 
-def arr_findings(c: Context) -> list[Flag]:
-    """Problems found by the *arr/qBittorrent collector. Capped at warn: a broken Radarr
-    does not make the server itself critical."""
-    flags: list[Flag] = []
-    for f in c.snap.data("arr").get("findings") or []:
-        sev = "warn" if f.get("severity") in ("warn", "crit") else "info"
-        title = f"{f.get('source', '?')}: {f.get('message', '')}"
-        flags.append(Flag(sev, title[:160]))
-    return _fold(flags, "*arr problems")
-
-
 def approvals(c: Context) -> list[Flag]:
     n = c.pending_approvals
     if n <= 0:
@@ -476,7 +465,6 @@ RULES: tuple[Rule, ...] = (
     docker_health,
     image_updates,
     unused_images,
-    arr_findings,
     approvals,
     journal,
     updates,

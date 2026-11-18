@@ -510,8 +510,7 @@ CONTAINER_CLIENTS = frozenset(
 CONTAINER_HINT = (
     "Containers are not reachable with a command here, but with tools: container logs -> "
     "`container_logs`; container state, config, mounts, ports -> `container_inspect` (no name "
-    "lists all containers); a configured service (qBittorrent, *arr...) that cannot be reached "
-    "-> `diagnose_service`."
+    "lists all containers)."
 )
 
 

@@ -100,7 +100,7 @@ def rows(
             p = {**p, "default": defaults[key]}
         group_defaults = p.get("default") if isinstance(p.get("default"), dict) else {}
         nested = p
-        if "anyOf" in p:  # optional group, e.g. `prowlarr: ArrInstance | None`
+        if "anyOf" in p:  # optional group, e.g. `proxy: ProxySettings | None`
             objects = [resolve(o, defs) for o in p["anyOf"] if o.get("type") != "null"]
             if len(objects) == 1 and objects[0].get("properties"):
                 nested = {

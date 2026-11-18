@@ -15,7 +15,6 @@ const shots = [
   { name: "dashboard-desktop", route: "dashboard", width: 1440, height: 1180 },
   { name: "reports-desktop", route: "reports", width: 1440, height: 1000 },
   { name: "approvals-desktop", route: "approvals", width: 1440, height: 900 },
-  { name: "arr-desktop", route: "arr", width: 1440, height: 1200 },
   { name: "settings-desktop", route: "settings/llm", width: 1440, height: 900 },
   { name: "dashboard-light-desktop", route: "dashboard", width: 1440, height: 1180, scheme: "light" },
   { name: "chat-desktop", route: "chat/new", width: 1440, height: 1000, chat: true },

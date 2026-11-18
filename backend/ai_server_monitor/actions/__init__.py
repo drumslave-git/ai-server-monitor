@@ -1,4 +1,4 @@
-"""Policy-gated, audited writes to the *arr apps and qBittorrent."""
+"""Policy-gated, audited writes (today: MCP tool calls)."""
 
 from .registry import REGISTRY, ActionDef, ActionError
 from .service import (

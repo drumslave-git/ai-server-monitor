@@ -60,7 +60,7 @@ _AUTH_PARAM = re.compile(r'(\w+)="([^"]*)"')
 @dataclass(frozen=True)
 class ImageRef:
     registry: str  # canonical: docker.io, ghcr.io, lscr.io, localhost:5000
-    repo: str  # library/nginx, linuxserver/radarr
+    repo: str  # library/nginx, linuxserver/nginx
     tag: str | None  # None when pinned by digest only
     digest: str | None
 

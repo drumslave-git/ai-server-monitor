@@ -14,7 +14,7 @@ from ai_server_monitor.collectors.base import Collector
 from ai_server_monitor.config import Bootstrap, Settings
 from ai_server_monitor.main import create_app
 
-from .arrfakes import HASH_A, FakeArrWorld, arr_settings, torrent
+from .actionfakes import NAME, FakeAction
 from .conftest import LLM_URL
 
 SECRET = "sk-live-0123456789abcdef"
@@ -159,9 +159,7 @@ def make_app(
     llm: FakeLLM,
     *,
     mode: str = "native",
-    world: FakeArrWorld | None = None,
     chat: dict[str, Any] | None = None,
-    **arr: Any,
 ) -> Any:
     settings = Settings.model_validate(
         {
@@ -174,7 +172,6 @@ def make_app(
             },
             # (routing has its own tests; the scripted conversations here expect every tool)
             "chat": {"tool_routing": "off", **(chat or {})},
-            "arr": arr_settings(**arr) if world is not None else {},
         }
     )
     return create_app(
@@ -182,7 +179,6 @@ def make_app(
         llm_transport=httpx.MockTransport(llm.handler),
         collector_registry={"system": StubSystem},
         seed_settings=settings,
-        arr_transport=world.transport() if world is not None else None,
     )
 
 
@@ -349,119 +345,80 @@ def test_step_limit_stops_the_loop_and_forces_an_answer(bootstrap: Bootstrap) ->
     assert answer(events) == "Here is what I have: the system data."
 
 
-def test_write_tool_only_yields_a_pending_approval(bootstrap: Bootstrap) -> None:
-    world = FakeArrWorld()
-    world.lookup_results = [{"tmdbId": 603, "title": "The Matrix", "id": 0}]
-    add = {
-        "app": "radarr",
-        "instance": "radarr",
-        "tmdb_id": 603,
-        "quality_profile_id": 4,
-        "root_folder_path": "/media/movies",
-        "title": "The Matrix",
-    }
+def test_write_tool_only_yields_a_pending_approval(
+    bootstrap: Bootstrap, fake_action: FakeAction
+) -> None:
     llm = FakeLLM(
-        call("arr_lookup", {"app": "radarr", "term": "matrix"}, "l"),
-        call("arr_quality_profiles", {"app": "radarr"}, "q"),
-        call("arr_root_folders", {"app": "radarr"}, "r"),
-        call("arr_add_media", add, "w"),
-        say("I asked for approval to add The Matrix; nothing is added until you approve."),
+        call(NAME, {"target": "alpha", "title": "Alpha"}, "w"),
+        say("I asked for approval to change alpha; nothing happens until you approve."),
     )
-    app = make_app(bootstrap, llm, world=world, dry_run=False)
+    app = make_app(bootstrap, llm)
     with TestClient(app) as client:
-        events = ask(client, "add the matrix")
+        events = ask(client, "change alpha")
         session_id = events[-1]["session_id"]
-        results = {e["name"]: e for e in events if e["type"] == "tool_result"}
-        assert "The Matrix" in results["arr_lookup"]["preview"]
-        assert "HD-1080p" in results["arr_quality_profiles"]["preview"]
-        assert "/media/movies" in results["arr_root_folders"]["preview"]
-        write = json.loads(results["arr_add_media"]["preview"])
+        write = json.loads(next(e for e in events if e["type"] == "tool_result")["preview"])
         assert write["status"] == "pending" and "NOT been done" in write["note"]
-        write_call = next(
-            e for e in events if e["type"] == "tool_call" and e["name"] == "arr_add_media"
-        )
+        write_call = next(e for e in events if e["type"] == "tool_call" and e["name"] == NAME)
         assert write_call["kind"] == "write"
 
-        assert world.added == []  # chat executed nothing
+        assert fake_action.calls == []  # chat executed nothing
         approvals = client.get("/api/approvals").json()["items"]
-        assert [a["action"] for a in approvals] == ["arr_add_media"]
+        assert [a["action"] for a in approvals] == [NAME]
         assert (
             approvals[0]["source"] == f"chat:{session_id}" and approvals[0]["status"] == "pending"
         )
-        assert approvals[0]["args"]["tmdb_id"] == 603
+        assert approvals[0]["args"]["target"] == "alpha"
 
         # Only the owner's approval makes it happen.
         done = client.post(
             f"/api/approvals/{approvals[0]['batch_id']}", json={"decision": "approve"}
         )
-        assert done.json()["counts"] == {"executed": 1} and len(world.added) == 1
+        assert done.json()["counts"] == {"executed": 1} and fake_action.calls == ["alpha"]
 
 
-def test_write_tools_follow_policy_and_configuration(bootstrap: Bootstrap) -> None:
-    llm = FakeLLM(say("ok"))
-    app = make_app(
-        bootstrap,
-        llm,
-        world=FakeArrWorld(),
-        actions={"add_media": {"policy": "off"}, "stalled_cleanup": {"policy": "suggest"}},
-    )
+def test_write_tool_with_bad_arguments_files_nothing(
+    bootstrap: Bootstrap, fake_action: FakeAction
+) -> None:
+    llm = FakeLLM(call(NAME, {"target": ""}), say("That did not work."))
+    app = make_app(bootstrap, llm)
+    with TestClient(app) as client:
+        events = ask(client, "change nothing")
+        result = next(e for e in events if e["type"] == "tool_result")
+        assert result["ok"] is False
+        assert client.get("/api/approvals").json()["items"] == []
+        assert fake_action.calls == []
+
+
+def test_write_tools_follow_policy_and_configuration(
+    bootstrap: Bootstrap, fake_action: FakeAction
+) -> None:
+    llm = FakeLLM(say("ok"), say("ok"))
+    app = make_app(bootstrap, llm)
     with TestClient(app) as client:
         ask(client, "hi")
-    offered = {t["function"]["name"] for t in llm.requests[0]["tools"]}
-    assert "arr_add_media" not in offered  # policy off: not offered at all
-    assert {"qbit_delete_torrent", "arr_search", "arr_lookup", "get_arr_overview"} <= offered
+        fake_action.policy = "off"
+        ask(client, "hi again")
+    on = {t["function"]["name"]: t for t in llm.requests[0]["tools"]}
+    assert NAME in on
+    description = on[NAME]["function"]["description"]
+    assert "do not ask first" in description and "approval card" in description
+    offered = {t["function"]["name"] for t in llm.requests[1]["tools"]}
+    assert NAME not in offered  # policy off: not offered at all
     assert "promql_query" not in offered  # Prometheus not configured
 
 
-def test_delete_torrent_by_name_files_an_approval_with_files_kept(bootstrap: Bootstrap) -> None:
-    world = FakeArrWorld()
-    world.torrents[HASH_A] = torrent(HASH_A, "Northern.Tides.S01E01.2160p.WEB-DL", "stalledDL")
-    llm = FakeLLM(
-        call("qbit_delete_torrent", {"name": "northern.tides.s01e01"}),
-        say("I filed the removal; it is pending your approval, nothing is deleted yet."),
-    )
-    app = make_app(bootstrap, llm, world=world, actions={"stalled_cleanup": {"policy": "approve"}})
+def test_an_action_without_chat_tool_is_not_offered(
+    bootstrap: Bootstrap, fake_action: FakeAction, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ai_server_monitor.actions import REGISTRY
+
+    fake_action.chat_tool = False
+    monkeypatch.setitem(REGISTRY, NAME, fake_action.definition())
+    llm = FakeLLM(say("ok"))
+    app = make_app(bootstrap, llm)
     with TestClient(app) as client:
-        events = ask(client, "Delete the stalled torrent Northern.Tides.S01E01.2160p.WEB-DL")
-        result = next(e for e in events if e["type"] == "tool_result")
-        assert result["ok"] is True and "pending" in result["preview"]
-        (approval,) = client.get("/api/approvals").json()["items"]
-        assert approval["action"] == "qbit_delete_torrent"
-        assert approval["args"]["hash"] == HASH_A and approval["args"]["delete_files"] is False
-        assert "Northern.Tides.S01E01" in approval["target"]
-        assert HASH_A in world.torrents  # nothing deleted before the owner approves
-    description = next(
-        t["function"]["description"]
-        for t in llm.requests[0]["tools"]
-        if t["function"]["name"] == "qbit_delete_torrent"
-    )
-    assert "do not ask first" in description and "approval card" in description
-    assert "files are KEPT" in description and "confirmed the details" not in description
-
-
-def test_delete_torrent_by_name_asks_which_when_several_match(bootstrap: Bootstrap) -> None:
-    world = FakeArrWorld()
-    world.torrents[HASH_A] = torrent(HASH_A, "Northern.Tides.S01E01.2160p")
-    world.torrents["b" * 40] = torrent("b" * 40, "Northern.Tides.S01E02.2160p")
-    llm = FakeLLM(
-        call("qbit_delete_torrent", {"name": "Northern.Tides"}), say("Which episode do you mean?")
-    )
-    app = make_app(bootstrap, llm, world=world, actions={"stalled_cleanup": {"policy": "approve"}})
-    with TestClient(app) as client:
-        events = ask(client, "delete Northern.Tides")
-        result = next(e for e in events if e["type"] == "tool_result")
-        assert result["ok"] is False and "2 torrents match" in result["preview"]
-        assert "S01E01" in result["preview"] and "S01E02" in result["preview"]
-        assert client.get("/api/approvals").json()["items"] == []
-
-
-def test_delete_torrent_needs_a_name_or_a_hash() -> None:
-    from ai_server_monitor.actions.registry import QbitDeleteArgs
-
-    with pytest.raises(ValueError, match="name or its hash"):
-        QbitDeleteArgs.model_validate({})
-    assert QbitDeleteArgs.model_validate({"name": "x"}).delete_files is False
-    assert QbitDeleteArgs.model_validate({"hash": HASH_A}).name is None
+        ask(client, "hi")
+    assert NAME not in {t["function"]["name"] for t in llm.requests[0]["tools"]}
 
 
 # --------------------------------------------------------------------------- JSON fallback

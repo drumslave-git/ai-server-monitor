@@ -27,7 +27,7 @@ def test_clean_fenced_header() -> None:
 
 
 def test_warn_from_info_flags_only_is_kept_ok() -> None:
-    """The benchmark trap: three kernel audit lines are an [INFO] flag, not a problem."""
+    """A trap: three kernel audit lines are an [INFO] flag, not a problem."""
     text = (
         '```json\n{"health": "warn", "score": 70, "summary": "Audit lines.", '
         '"findings": [{"severity": "warn", "title": "Audit", "detail": "3 lines"}]}\n```\n' + BODY

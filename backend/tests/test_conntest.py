@@ -15,15 +15,12 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 
-from ai_server_monitor.arr import qbit_auth
 from ai_server_monitor.config import SECRET_MASK, Bootstrap, Settings
 from ai_server_monitor.conntest import describe_error, scrub
 from ai_server_monitor.main import create_app
 
-RADARR = "http://radarr.test:7878"
 KEY = "SECRET-api-key-0123456789"
 PROM = "http://prom.test:9090"
-QBIT = "http://qbit.test:8080"
 DOCKER = "http://docker-proxy.test:2375"
 TG_TOKEN = "123456:TG-secret-token-abcdefghijklmnop"
 TG = f"https://api.telegram.org/bot{TG_TOKEN}"
@@ -33,10 +30,6 @@ TG = f"https://api.telegram.org/bot{TG_TOKEN}"
 def client(bootstrap: Bootstrap) -> Iterator[TestClient]:
     settings = Settings.model_validate(
         {
-            "arr": {
-                "radarr": [{"name": "main", "url": RADARR, "api_key": KEY}],
-                "qbittorrent": {"url": QBIT, "username": "admin", "password": "stored-pass-123"},
-            },
             "collectors": {"prometheus": {"url": PROM, "token": "stored-bearer-token"}},
             "outputs": {"telegram": {"token": TG_TOKEN, "allowed_chat_ids": [111, 222]}},
         }
@@ -72,191 +65,6 @@ def tls_failure() -> httpx.ConnectError:
     )
     exc.__cause__ = inner
     return exc
-
-
-# --------------------------------------------------------------------------- *arr
-
-ARR_BODY = {"name": "main", "url": RADARR, "api_key": KEY}
-
-
-@respx.mock
-def test_arr_connected_reports_app_and_version(client: TestClient) -> None:
-    route = respx.get(f"{RADARR}/api/v3/system/status").respond(
-        json={"appName": "Radarr", "version": "5.14.0.9383"}
-    )
-    r = post(client, "radarr", ARR_BODY)
-    assert r["ok"] is True and r["message"] == "Connected: Radarr 5.14.0.9383."
-    assert r["details"]["version"] == "5.14.0.9383" and r["details"]["app"] == "Radarr"
-    assert route.calls.last.request.headers["x-api-key"] == KEY
-
-
-@respx.mock
-def test_arr_masked_key_uses_the_stored_one(client: TestClient) -> None:
-    route = respx.get(f"{RADARR}/api/v3/system/status").respond(
-        json={"appName": "Radarr", "version": "5"}
-    )
-    r = post(client, "radarr", {**ARR_BODY, "api_key": SECRET_MASK})
-    assert r["ok"] is True
-    assert route.calls.last.request.headers["x-api-key"] == KEY
-    # a renamed item is still matched by its position in the list
-    r = post(client, "radarr", {**ARR_BODY, "name": "renamed", "api_key": SECRET_MASK}, index=0)
-    assert r["ok"] is True and route.calls.last.request.headers["x-api-key"] == KEY
-
-
-@respx.mock
-def test_arr_prowlarr_uses_api_v1(client: TestClient) -> None:
-    respx.get("http://prowlarr.test:9696/api/v1/system/status").respond(
-        json={"appName": "Prowlarr", "version": "1.28.0"}
-    )
-    body = {"name": "prowlarr", "url": "http://prowlarr.test:9696", "api_key": KEY}
-    assert post(client, "prowlarr", body)["message"] == "Connected: Prowlarr 1.28.0."
-
-
-@respx.mock
-@pytest.mark.parametrize("app", ["Radarr", "Sonarr", "Whisparr"])
-def test_arr_wrong_application_is_reported(client: TestClient, app: str) -> None:
-    kind = "sonarr" if app == "Radarr" else "radarr"
-    respx.get(f"{RADARR}/api/v3/system/status").respond(json={"appName": app, "version": "1.2"})
-    r = post(client, kind, ARR_BODY)
-    assert r["ok"] is False
-    assert f"this URL is {app} 1.2, not {kind.capitalize()}" in r["message"]
-
-
-@respx.mock
-def test_arr_wrong_key(client: TestClient) -> None:
-    respx.get(f"{RADARR}/api/v3/system/status").respond(401, json={"error": "Unauthorized"})
-    r = post(client, "radarr", ARR_BODY)
-    assert r["ok"] is False and "Radarr itself rejected the API key" in r["message"]
-    assert "HTTP 401" in r["message"] and "Unauthorized" in r["message"]
-    assert KEY not in r["message"]
-
-
-@respx.mock
-def test_arr_not_json_and_redirect_and_404(client: TestClient) -> None:
-    route = respx.get(f"{RADARR}/api/v3/system/status")
-    route.respond(200, text="<html>login</html>")
-    assert "not JSON" in post(client, "radarr", ARR_BODY)["message"]
-    route.respond(302, headers={"location": "https://radarr.test/login?next=%2F&apikey=zzz"})
-    message = post(client, "radarr", ARR_BODY)["message"]
-    assert "redirected to https://radarr.test/login" in message and "apikey" not in message
-    route.respond(404)
-    assert "not Radarr" in post(client, "radarr", ARR_BODY)["message"]
-
-
-@respx.mock
-@pytest.mark.parametrize(
-    ("error", "expected"),
-    [
-        (dns_failure(), "DNS name not found: radarr.test"),
-        (refused(), "Connection refused by radarr.test:7878"),
-        (httpx.ReadTimeout("slow"), "Timed out after 10 s"),
-        (tls_failure(), "TLS certificate of radarr.test is not trusted (self-signed"),
-    ],
-)
-def test_arr_unreachable_messages(client: TestClient, error: Exception, expected: str) -> None:
-    respx.get(f"{RADARR}/api/v3/system/status").mock(side_effect=error)
-    r = post(client, "radarr", ARR_BODY)
-    assert r["ok"] is False and expected in r["message"]
-    assert KEY not in r["message"]
-
-
-def test_arr_bad_input_is_a_readable_message_not_an_error(client: TestClient) -> None:
-    r = post(client, "sonarr", {"name": "s", "url": "radarr:7878", "api_key": ""})
-    assert r["ok"] is False and r["message"].startswith("Fix this first:")
-    assert "http://" in r["message"]
-
-
-# --------------------------------------------------------------------------- qBittorrent
-
-
-@respx.mock
-def test_qbit_connected(client: TestClient) -> None:
-    login = respx.post(f"{QBIT}/api/v2/auth/login").respond(
-        200, text="Ok.", headers={"set-cookie": "SID=abc; path=/"}
-    )
-    respx.get(f"{QBIT}/api/v2/app/version").respond(200, text="v5.0.2")
-    body = {"url": QBIT, "username": "admin", "password": SECRET_MASK}
-    r = post(client, "qbittorrent", body)
-    assert r["ok"] is True and r["message"] == "Connected: qBittorrent v5.0.2, login OK."
-    assert b"stored-pass-123" in login.calls.last.request.content  # the stored password
-
-
-@respx.mock
-def test_qbit_wrong_credentials_ban_and_unreachable(client: TestClient) -> None:
-    body = {"url": QBIT, "username": "admin", "password": "nope"}
-    login = respx.post(f"{QBIT}/api/v2/auth/login")
-    login.respond(200, text="Fails.")
-    r = post(client, "qbittorrent", body)
-    assert r["ok"] is False and "answered 'Fails.'" in r["message"]
-    assert 'HTTP 200, body "Fails."' in r["message"] and "Referer: " in r["message"]
-    assert "paused until" in r["message"]
-    assert "nope" not in r["message"]
-    # retried with the same credentials: not sent again (that would only add a failed attempt)
-    calls = login.call_count
-    again = post(client, "qbittorrent", body)
-    assert "Not tried again" in again["message"] and login.call_count == calls
-    # other credentials = new key = a fresh attempt
-    qbit_auth.reset()
-    login.respond(403, text="Your IP address has been banned")
-    r = post(client, "qbittorrent", body)
-    assert "banned" in r["message"] and "extends the ban" in r["message"]
-    assert r["details"]["http_status"] == 403 and r["details"]["kind"] == "banned"
-    qbit_auth.reset()
-    login.mock(side_effect=dns_failure())
-    assert "DNS name not found: qbit.test" in post(client, "qbittorrent", body)["message"]
-    login.respond(404)
-    assert "does not look like qBittorrent" in post(client, "qbittorrent", body)["message"]
-
-
-@respx.mock
-def test_qbit_52_login_answers_204_with_a_cookie(client: TestClient) -> None:
-    body = {"url": QBIT, "username": "admin", "password": "good-password"}
-    respx.post(f"{QBIT}/api/v2/auth/login").respond(204, headers={"set-cookie": "SID=abc; path=/"})
-    respx.get(f"{QBIT}/api/v2/app/version").respond(200, text="v5.2.0")
-    r = post(client, "qbittorrent", body)
-    assert r["ok"] is True and "qBittorrent v5.2.0" in r["message"]
-    assert r["details"]["version"] == "v5.2.0"
-
-
-@respx.mock
-def test_qbit_204_without_cookie_needs_a_working_version_call(client: TestClient) -> None:
-    body = {"url": QBIT, "username": "admin", "password": "good-password"}
-    respx.post(f"{QBIT}/api/v2/auth/login").respond(204)
-    version = respx.get(f"{QBIT}/api/v2/app/version").respond(403, text="Forbidden")
-    r = post(client, "qbittorrent", body)
-    assert r["ok"] is False and "does not look like qBittorrent" in r["message"]
-    assert "HTTP 204" in r["message"] and "HTTP 403" in r["message"]
-    version.respond(200, text="v5.2.0")
-    assert post(client, "qbittorrent", body)["ok"] is True  # (e.g. authentication bypass)
-
-
-@respx.mock
-def test_qbit_401_is_host_validation_not_wrong_password(client: TestClient) -> None:
-    body = {"url": QBIT, "username": "admin", "password": "good-password"}
-    login = respx.post(f"{QBIT}/api/v2/auth/login").respond(401, text="Unauthorized")
-    r = post(client, "qbittorrent", body)
-    assert r["ok"] is False
-    assert "Host-header validation" in r["message"] and "Server domains" in r["message"]
-    assert "http://<qbittorrent container>:8080" in r["message"]
-    assert 'HTTP 401, body "Unauthorized"' in r["message"]
-    sent = login.calls.last.request.headers
-    assert sent["origin"] == QBIT
-    assert sent["referer"] == QBIT
-    assert r["details"]["headers_sent"]["Host"] == "qbit.test:8080"
-    assert "good-password" not in str(r)
-
-
-@respx.mock
-def test_qbit_html_page_in_front(client: TestClient) -> None:
-    body = {"url": QBIT, "username": "admin", "password": "pw-123456"}
-    respx.post(f"{QBIT}/api/v2/auth/login").respond(
-        200,
-        text="<html><body>Sign in to continue</body></html>",
-        headers={"content-type": "text/html"},
-    )
-    r = post(client, "qbittorrent", body)
-    assert "web page, not qBittorrent's API" in r["message"]
-    assert "Sign in to continue" in r["message"] and "paused" not in r["message"]
 
 
 # --------------------------------------------------------------------------- Prometheus

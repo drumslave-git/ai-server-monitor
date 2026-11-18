@@ -47,12 +47,12 @@ mkdir -p /fakehost/proc && mount --bind /proc /fakehost/proc
 echo 0123456789abcdef0123456789abcdef > /fakehost/etc/machine-id
 
 D=/fakehost/mnt/disks/disk14TB
-mkdir -p $D/media/movies $D/media/tv $D/downloads/incomplete $D/appdata/radarr $D/lost+found
+mkdir -p $D/media/movies $D/media/tv $D/downloads/incomplete $D/appdata/nextcloud $D/lost+found
 head -c 220M /dev/zero | tr '\0' 'm' > $D/media/movies/Some.Movie.2021.1080p.mkv
 head -c 90M  /dev/zero | tr '\0' 't' > $D/media/movies/Another.Movie.2019.mkv
 head -c 130M /dev/zero | tr '\0' 'v' > $D/media/tv/Show.S01.mkv
 head -c 70M  /dev/zero | tr '\0' 'd' > $D/downloads/incomplete/linux.iso.part
-head -c 12M  /dev/zero | tr '\0' 'a' > $D/appdata/radarr/radarr.db
+head -c 12M  /dev/zero | tr '\0' 'a' > $D/appdata/nextcloud/nextcloud.db
 chmod -R a+rX $D
 
 # logrotate: a broken config, a unit that failed, and its journal

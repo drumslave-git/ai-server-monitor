@@ -41,8 +41,8 @@ _FENCE = re.compile(r"```(?:json|JSON)?\s*\n?(.*?)```", re.DOTALL)
 COVERED = (
     "host CPU, memory and swap, disks and filesystems, network traffic, temperatures, top "
     "processes, Docker containers (state, CPU, RAM, restarts, log errors), the NVIDIA GPU of "
-    "this host, failed systemd units, the system journal, pending apt updates, container "
-    "image updates and the *arr apps"
+    "this host, failed systemd units, the system journal, pending apt updates, and container "
+    "image updates"
 )
 
 SYSTEM_PROMPT = """\

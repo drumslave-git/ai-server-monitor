@@ -98,7 +98,7 @@ jobs:
             type=raw,value=latest
           labels: |
             org.opencontainers.image.title=AI Server Monitor
-            org.opencontainers.image.description=AI-powered read-only server monitor with *arr automation
+            org.opencontainers.image.description=AI-powered read-only server monitor
 
       - uses: docker/build-push-action@v6
         with:

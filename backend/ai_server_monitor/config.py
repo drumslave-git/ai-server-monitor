@@ -156,6 +156,13 @@ class GeneralSettings(_Model):
     """Log verbosity of the service."""
 
 
+class ApprovalsSettings(_Model):
+    """Actions waiting for your decision (the Approvals page, Telegram buttons)."""
+
+    approval_ttl: Duration = timedelta(hours=24)
+    """Pending approvals expire after this."""
+
+
 ToolMode = Literal["auto", "native", "json", "none"]
 ReasoningEffort = Literal["auto", "none", "low", "medium", "high"]
 
@@ -312,40 +319,6 @@ class LogsSettings(_Model):
     The Logs page always shows the newest few thousand lines since the last start."""
 
 
-class BenchJudgeSettings(_Model):
-    """A second model that grades the answers of a benchmark run."""
-
-    enabled: bool = False
-    """Grade every answer 1-5 against the scenario's rubric. The grade is shown next to the rule
-    score and never mixed into it. Costs one extra model call per graded attempt."""
-    base_url: OptionalHttpUrl = ""
-    """OpenAI-compatible API base URL of the judge, e.g. https://api.openai.com/v1."""
-    api_key: Secret = SecretStr("")
-    """API key of the judge, if its endpoint needs one."""
-    model: str = ""
-    """Model name of the judge."""
-
-    @property
-    def configured(self) -> bool:
-        return bool(self.enabled and self.base_url.strip() and self.model.strip())
-
-
-class BenchSettings(_Model):
-    """Model benchmarks (the Benchmarks page): fixed scenarios run against the model chosen in
-    LLM. To compare models, switch the model there and run again."""
-
-    repeats: int = Field(default=3, ge=1, le=20)
-    """How many times every scenario runs. More runs smooth out the model's randomness."""
-    attempt_timeout: Duration = timedelta(minutes=5)
-    """Time budget of one attempt; a slower one counts as failed."""
-    record_hardware: bool = True
-    """Record the GPU, VRAM, power, CPU and RAM load of this host while a run goes, and show it
-    with the results. Read from the same sources as the dashboard."""
-    hardware_interval: Duration = timedelta(seconds=1)
-    """How often the load is sampled during a run (between 500ms and 10s)."""
-    judge: BenchJudgeSettings = BenchJudgeSettings()
-
-
 class CollectorSettings(_Model):
     enabled: bool | Literal["auto"] = True
     """auto = use it if available on this host, silently skip otherwise."""
@@ -483,16 +456,6 @@ class ImageUpdatesCollectorSettings(CollectorSettings):
     """How long a registry answer is reused. Registries rate-limit, so don't set this low."""
 
 
-class ArrCollectorSettings(CollectorSettings):
-    enabled: bool | Literal["auto"] = "auto"
-    """auto = on as soon as an *arr app, Prowlarr or qBittorrent is configured under
-    *arr & downloads."""
-    interval: Duration = timedelta(minutes=2)
-    """How often this collector gathers fresh data."""
-    max_queue_items: int = Field(default=50, ge=1, le=500)
-    """Max queue entries listed per *arr instance (the rest is only counted)."""
-
-
 class CollectorsSettings(_Model):
     system: SystemCollectorSettings = SystemCollectorSettings()
     """CPU, memory, disks, network, temperatures, top processes."""
@@ -517,9 +480,6 @@ class CollectorsSettings(_Model):
         default=PrometheusCollectorSettings(), json_schema_extra={"test": "prometheus"}
     )
     """Run PromQL queries against an existing Prometheus."""
-    arr: ArrCollectorSettings = ArrCollectorSettings()
-    """Radarr/Sonarr/Whisparr queues and health, Prowlarr indexers, qBittorrent torrents
-    (the apps themselves are configured under *arr & downloads)."""
 
 
 class TelegramSettings(_Model):
@@ -561,116 +521,10 @@ class OutputsSettings(_Model):
     metrics: MetricsSettings = MetricsSettings()
 
 
-class ArrInstance(_Model):
-    name: Name
-    """Display name, e.g. radarr-4k."""
-    url: HttpUrl
-    """Base URL, e.g. http://radarr:7878."""
-    api_key: Secret
-    """Settings → General → API Key in the app."""
-
-    @field_validator("api_key")
-    @classmethod
-    def _api_key_required(cls, value: SecretStr) -> SecretStr:
-        if not value.get_secret_value().strip():
-            raise ValueError("API key is required")
-        return value
-
-
-class QbitSettings(_Model):
-    url: HttpUrl
-    """WebUI URL, e.g. http://qbittorrent:8080."""
-    username: str = "admin"
-    """WebUI user name."""
-    password: Secret = SecretStr("")
-    """WebUI password."""
-
-
-Policy = Literal["off", "suggest", "approve", "auto"]
-
-
-class ActionSettings(_Model):
-    policy: Policy = "suggest"
-    """off = never; suggest = mention in reports; approve = ask you first; auto = just do it."""
-    max_per_hour: int = Field(default=0, ge=0)
-    """Cap on how many of these actions run per hour (0 = no cap)."""
-
-
-class StalledCleanupSettings(ActionSettings):
-    policy: Policy = "approve"
-    """off = never; suggest = mention in reports; approve = ask you first; auto = just do it."""
-    interval: Duration = timedelta(minutes=30)
-    """How often to look for stalled downloads."""
-    stalled_after: Duration = timedelta(hours=6)
-    """A download with no progress for this long counts as stalled."""
-    max_per_hour: int = Field(default=10, ge=0)
-    """Cap on how many downloads are cleaned up per hour (0 = no cap)."""
-
-
-class IndexerTriageSettings(ActionSettings):
-    interval: Duration = timedelta(hours=1)
-    """How often to look for failing indexers."""
-
-
-class SearchActionSettings(ActionSettings):
-    max_per_hour: int = Field(default=30, ge=0)
-    """Cap on how many searches run per hour (0 = no cap)."""
-    interval: Duration = timedelta(hours=6)
-    """How often a search run starts."""
-    batch: int = Field(default=10, ge=1)
-    """Items searched per run (keeps indexers from being hammered)."""
-
-
-class ActionsSettings(_Model):
-    stalled_cleanup: StalledCleanupSettings = StalledCleanupSettings()
-    """Remove stalled/failed downloads, blocklist the release and search again."""
-    missing_search: SearchActionSettings = SearchActionSettings()
-    """Search for missing episodes/movies."""
-    cutoff_search: SearchActionSettings = SearchActionSettings(
-        interval=timedelta(hours=24), batch=5
-    )
-    """Search for quality upgrades (cutoff unmet)."""
-    add_media: ActionSettings = ActionSettings(policy="approve")
-    """Add movies/series when asked in chat."""
-    indexer_triage: IndexerTriageSettings = IndexerTriageSettings()
-    """Test/disable failing indexers in Prowlarr."""
-    api_call: ActionSettings = ActionSettings(policy="approve")
-    """Any other write the chat asks for through the HTTP API of a service (POST/PUT/DELETE
-    to Radarr, Sonarr, Whisparr, Prowlarr, qBittorrent) and searches that query every indexer.
-    Dry-run (above) applies too."""
-    approval_ttl: Duration = timedelta(hours=24)
-    """Pending approvals expire after this."""
-
-
-class ArrSettings(_Model):
-    dry_run: bool = True
-    """Log what would be done without changing anything."""
-    timeout: Duration = timedelta(seconds=15)
-    """Per-request timeout for *arr, Prowlarr and qBittorrent."""
-    radarr: list[ArrInstance] = Field(default_factory=list, json_schema_extra={"test": "radarr"})
-    sonarr: list[ArrInstance] = Field(default_factory=list, json_schema_extra={"test": "sonarr"})
-    whisparr: list[ArrInstance] = Field(
-        default_factory=list, json_schema_extra={"test": "whisparr"}
-    )
-    prowlarr: ArrInstance | None = Field(default=None, json_schema_extra={"test": "prowlarr"})
-    qbittorrent: QbitSettings | None = Field(
-        default=None, json_schema_extra={"test": "qbittorrent"}
-    )
-    actions: ActionsSettings = ActionsSettings()
-
-    @model_validator(mode="after")
-    def _unique_instance_names(self) -> ArrSettings:
-        for kind in ("radarr", "sonarr", "whisparr"):
-            names = [i.name for i in getattr(self, kind)]
-            dupes = sorted({n for n in names if names.count(n) > 1})
-            if dupes:
-                raise ValueError(f"{kind}: duplicate instance names: {', '.join(dupes)}")
-        return self
-
-
 # --------------------------------------------------------------------------- mcp
 
 McpTransport = Literal["auto", "streamable_http", "sse"]
+Policy = Literal["off", "suggest", "approve", "auto"]
 ToolPolicy = Literal["inherit", "off", "suggest", "approve", "auto"]
 ToolKindSetting = Literal["auto", "read", "write"]
 
@@ -799,9 +653,8 @@ class Settings(_Model):
     logs: LogsSettings = LogsSettings()
     collectors: CollectorsSettings = CollectorsSettings()
     outputs: OutputsSettings = OutputsSettings()
-    arr: ArrSettings = ArrSettings()
     mcp: McpSettings = McpSettings()
-    bench: BenchSettings = BenchSettings()
+    approvals: ApprovalsSettings = ApprovalsSettings()
 
     def public_dict(self) -> dict[str, Any]:
         """JSON for the API: secrets masked."""

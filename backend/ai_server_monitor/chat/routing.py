@@ -6,7 +6,7 @@ on, one short model call (`chat_route` in the Logs) names the relevant groups, t
 those tools plus `get_status` and `more_tools(group)`, and a wrong classification is repaired in
 the same answer by calling `more_tools`.
 
-Groups: host, media, metrics, containers, actions and `mcp:<server>`. A tool may belong to
+Groups: host, metrics, containers, actions and `mcp:<server>`. A tool may belong to
 several groups; a tool without a group is an error that `tests/test_chat_routing.py` catches.
 """
 
@@ -46,8 +46,6 @@ GROUP_HELP: dict[str, str] = {
     "host": "the server itself: disks and what fills them, files, logs and services "
     "(journalctl, systemctl), processes, ports, CPU/RAM/GPU, collected data, history and trends, "
     "status reports",
-    "media": "Radarr, Sonarr, Whisparr, Prowlarr, qBittorrent: movies, series, queues, "
-    "downloads, torrents, indexers, adding or removing media; why one of these services fails",
     "metrics": "Prometheus: PromQL queries and metric trends",
     "containers": "Docker containers: state, restarts, logs, mounts, ports, config, Docker API",
     "actions": "the owner's approvals and the audit log of actions (what is waiting, what was "
@@ -65,21 +63,8 @@ TOOL_GROUPS: dict[str, tuple[str, ...]] = {
     "container_inspect": ("containers",),
     "container_logs": ("containers",),
     "promql_query": ("metrics",),
-    "arr_lookup": ("media",),
-    "arr_quality_profiles": ("media",),
-    "arr_root_folders": ("media",),
-    "get_arr_overview": ("media",),
-    "diagnose_service": ("media",),
-    "api_call": ("media", "containers", "metrics"),
-    "api_endpoints": ("media", "containers", "metrics"),
     "list_pending_approvals": ("actions",),
     "list_recent_actions": ("actions",),
-    # the WRITE tools of chat/tools.py
-    "qbit_delete_torrent": ("media",),
-    "arr_remove_queue_item": ("media",),
-    "arr_search": ("media",),
-    "arr_add_media": ("media",),
-    "prowlarr_test_indexer": ("media",),
 }
 MCP_META_TOOLS = ("mcp_list_tools", "mcp_call")
 """The generic pair that stands in for many MCP tools: it belongs to every MCP server group."""

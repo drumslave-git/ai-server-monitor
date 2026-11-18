@@ -23,7 +23,7 @@ from ai_server_monitor.outputs.telegram import (
     split_message,
 )
 
-from .arrfakes import HASH_A, FakeArrWorld, arr_settings, torrent
+from .actionfakes import NAME, FakeAction
 from .conftest import LLM_URL
 from .test_chat import FakeLLM, say
 
@@ -89,12 +89,7 @@ def make_app(
     *,
     telegram: dict[str, Any] | None = None,
     llm: FakeLLM | None = None,
-    world: FakeArrWorld | None = None,
-    actions: dict[str, Any] | None = None,
 ) -> Any:
-    arr = arr_settings() if world is not None else {}
-    if world is not None:
-        arr["actions"] = actions or {"stalled_cleanup": {"policy": "approve"}}
     settings = Settings.model_validate(
         {
             "llm": (
@@ -111,7 +106,6 @@ def make_app(
                     **(telegram or {}),
                 }
             },
-            "arr": arr,
         }
     )
     return create_app(
@@ -119,7 +113,6 @@ def make_app(
         llm_transport=httpx.MockTransport(llm.handler) if llm else None,
         collector_registry={},
         seed_settings=settings,
-        arr_transport=world.transport() if world else None,
         telegram_transport=httpx.MockTransport(tg.handler),
     )
 
@@ -282,27 +275,26 @@ def test_id_command_is_rate_limited_per_chat(bootstrap: Bootstrap) -> None:
 
 
 def test_approval_button_executes_through_the_action_layer_and_edits_the_message(
-    bootstrap: Bootstrap,
+    bootstrap: Bootstrap, fake_action: FakeAction
 ) -> None:
-    tg, world = FakeTelegram(), FakeArrWorld()
-    world.torrents = {HASH_A: torrent(HASH_A, "Stuck.Movie", "stalledDL")}
-    app = make_app(bootstrap, tg, world=world)
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
     with TestClient(app) as client:
         ctx = app.state.ctx
         record = client.portal.call(  # type: ignore[union-attr]
             ctx.actions.request,
-            "qbit_delete_torrent",
-            {"hash": HASH_A, "title": "Stuck.Movie"},
+            NAME,
+            {"target": "alpha", "title": "Alpha"},
             "scheduler",
         )
         assert record["status"] == "pending"
         sent = wait_for(lambda: tg.of("sendMessage"))[0]
         assert sent["chat_id"] == CHAT and "Approval needed" in sent["text"]
-        assert "remove 1 torrent from qBittorrent" in sent["text"] and "Stuck.Movie" in sent["text"]
+        assert "fake: alpha" in sent["text"]
         buttons = sent["reply_markup"]["inline_keyboard"][0]
         assert [b["text"] for b in buttons] == ["✅ Approve", "❌ Reject"]
         assert all(len(b["callback_data"]) <= 64 for b in buttons)
-        assert HASH_A in world.torrents  # nothing happened yet
+        assert fake_action.calls == []  # nothing happened yet
 
         message_id = 1001
         client.portal.call(
@@ -310,7 +302,7 @@ def test_approval_button_executes_through_the_action_layer_and_edits_the_message
         )
         done = client.get("/api/actions").json()["items"][0]
         assert done["status"] == "executed" and done["decided_by"] == "telegram:alice"
-        assert HASH_A not in world.torrents  # the real work went through the action layer
+        assert fake_action.calls == ["alpha"]  # the real work went through the action layer
         edit = wait_for(lambda: tg.of("editMessageText"))[0]
         assert edit["message_id"] == message_id and "Approved by @alice: 1 executed" in edit["text"]
         assert edit["reply_markup"] == {"inline_keyboard": []}  # buttons are gone
@@ -323,14 +315,15 @@ def test_approval_button_executes_through_the_action_layer_and_edits_the_message
         assert "nothing is pending" in tg.of("answerCallbackQuery")[-1]["text"]
 
 
-def test_forged_and_malformed_callbacks_are_rejected(bootstrap: Bootstrap) -> None:
-    tg, world = FakeTelegram(), FakeArrWorld()
-    world.torrents = {HASH_A: torrent(HASH_A, "x", "stalledDL")}
-    app = make_app(bootstrap, tg, world=world)
+def test_forged_and_malformed_callbacks_are_rejected(
+    bootstrap: Bootstrap, fake_action: FakeAction
+) -> None:
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
     with TestClient(app) as client:
         ctx = app.state.ctx
         record = client.portal.call(  # type: ignore[union-attr]
-            ctx.actions.request, "qbit_delete_torrent", {"hash": HASH_A}, "scheduler"
+            ctx.actions.request, NAME, {"target": "alpha"}, "scheduler"
         )
         wait_for(lambda: tg.of("sendMessage"))
         batch = record["batch_id"]
@@ -347,7 +340,7 @@ def test_forged_and_malformed_callbacks_are_rejected(bootstrap: Bootstrap) -> No
         answers = [b["text"] for b in tg.of("answerCallbackQuery")]
         assert answers == ["Invalid button."] * 6
         assert client.get("/api/approvals").json()["items"][0]["status"] == "pending"
-        assert HASH_A in world.torrents and tg.of("editMessageText") == []
+        assert fake_action.calls == [] and tg.of("editMessageText") == []
         # A press with a valid signature from a chat that is not allowed is ignored too.
         client.portal.call(
             ctx.telegram.handle_update, press(f"ba:{batch}:{good}", 1, chat=STRANGER)
@@ -355,14 +348,15 @@ def test_forged_and_malformed_callbacks_are_rejected(bootstrap: Bootstrap) -> No
         assert len(tg.of("answerCallbackQuery")) == 6
 
 
-def test_decisions_made_elsewhere_are_reflected_in_the_message(bootstrap: Bootstrap) -> None:
-    tg, world = FakeTelegram(), FakeArrWorld()
-    world.torrents = {HASH_A: torrent(HASH_A, "x", "stalledDL")}
-    app = make_app(bootstrap, tg, world=world)
+def test_decisions_made_elsewhere_are_reflected_in_the_message(
+    bootstrap: Bootstrap, fake_action: FakeAction
+) -> None:
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
     with TestClient(app) as client:
         ctx = app.state.ctx
         record = client.portal.call(  # type: ignore[union-attr]
-            ctx.actions.request, "qbit_delete_torrent", {"hash": HASH_A}, "scheduler"
+            ctx.actions.request, NAME, {"target": "alpha"}, "scheduler"
         )
         wait_for(lambda: tg.of("sendMessage"))
         client.post(
@@ -370,54 +364,52 @@ def test_decisions_made_elsewhere_are_reflected_in_the_message(bootstrap: Bootst
         )  # the web UI
         edit = wait_for(lambda: tg.of("editMessageText"))[0]
         assert "Rejected by ui: 1 rejected" in edit["text"] and edit["message_id"] == 1001
-        assert HASH_A in world.torrents
+        assert fake_action.calls == []
 
 
-def run_stalled_cleanup(client: TestClient, app: Any) -> dict[str, Any]:
-    from ai_server_monitor.arr.automations import AutomationEnv, stalled
-
-    ctx = app.state.ctx
-    env = AutomationEnv(ctx.actions, ctx.settings)
-    return client.portal.call(stalled.run, env)  # type: ignore[union-attr,no-any-return]
-
-
-def blocked_world(n: int) -> FakeArrWorld:
-    from .test_approval_batches import blocked
-
-    world = FakeArrWorld()
-    world.queue["sonarr"] = [blocked(i) for i in range(1, n + 1)]
-    return world
+def file_run(client: TestClient, app: Any, n: int) -> list[dict[str, Any]]:
+    """What an automation run does: n items of one action from one source, in one batch."""
+    service = app.state.ctx.actions
+    return client.portal.call(  # type: ignore[union-attr,no-any-return]
+        lambda: service.request_many(
+            NAME,
+            [({"target": f"t{i}"}, None) for i in range(1, n + 1)],
+            "scheduler",
+            run_key="run:1",
+            label="Nightly run",
+        )
+    )
 
 
 def test_one_message_per_run_with_approve_all_reject_all_and_review(
-    bootstrap: Bootstrap,
+    bootstrap: Bootstrap, fake_action: FakeAction
 ) -> None:
-    tg, world = FakeTelegram(), blocked_world(40)
-    app = make_app(bootstrap, tg, world=world, telegram={"web_url": "https://asm.example.test/"})
+    tg = FakeTelegram()
+    fake_action.cap = 10  # the hourly cap applies when the items are executed
+    app = make_app(bootstrap, tg, telegram={"web_url": "https://asm.example.test/"})
     with TestClient(app) as client:
         ctx = app.state.ctx
-        assert run_stalled_cleanup(client, app)["requested"] == 40
+        assert len(file_run(client, app, 40)) == 40
         sent = wait_for(lambda: tg.of("sendMessage"))
         time.sleep(0.3)
         assert len(tg.of("sendMessage")) == 1  # 40 items, ONE message
 
         text = sent[0]["text"]
-        assert text.startswith("<b>Approval needed #1</b>\nStalled cleanup: remove 40 queue items")
-        assert "from sonarr (blocklist + re-search)" in text
+        assert text.startswith("<b>Approval needed #1</b>\nNightly run: fake_write × 40")
         assert text.count("• ") == 10 and "+30 more" in text and "asked by: scheduler" in text
         rows = sent[0]["reply_markup"]["inline_keyboard"]
         approve, reject = rows[0]
         assert (approve["text"], reject["text"]) == ("✅ Approve all", "❌ Reject all")
         assert rows[1] == [{"text": "🔍 Review", "url": "https://asm.example.test/#/approvals/1"}]
         assert all(len(b["callback_data"]) <= 64 for b in rows[0])
-        assert world.calls("sonarr.test", "DELETE") == []
+        assert fake_action.calls == []
 
         client.portal.call(ctx.telegram.handle_update, press(approve["callback_data"], 1001))
 
         # The default hourly cap of 10 applies when the items are executed: the rest of the
         # approved items waits in the queue (nobody is asked again) and the message says so.
         outcome = "Approved by @alice: 10 executed, 30 queued, next in ~60 min"
-        assert len(world.calls("sonarr.test", "DELETE")) == 10
+        assert len(fake_action.calls) == 10
         [edit] = wait_for(lambda: tg.of("editMessageText"))
         assert (
             edit["message_id"] == 1001
@@ -435,23 +427,25 @@ def test_one_message_per_run_with_approve_all_reject_all_and_review(
             clock["shift"] = hour * 3700.0
             client.portal.call(ctx.actions.drain_queue)  # type: ignore[union-attr]
         wait_for(lambda: "Approved by @alice: 40 executed" in tg.of("editMessageText")[-1]["text"])
-        assert len(world.calls("sonarr.test", "DELETE")) == 40
+        assert len(fake_action.calls) == 40
         wait_for(lambda: stored_messages(client, app) == 0)
         assert len(tg.of("sendMessage")) == 1
         assert client.get("/api/approvals").json()["batches"] == []
 
 
-def test_reject_all_button_rejects_the_whole_batch(bootstrap: Bootstrap) -> None:
-    tg, world = FakeTelegram(), blocked_world(4)
-    app = make_app(bootstrap, tg, world=world)
+def test_reject_all_button_rejects_the_whole_batch(
+    bootstrap: Bootstrap, fake_action: FakeAction
+) -> None:
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
     with TestClient(app) as client:
-        run_stalled_cleanup(client, app)
+        file_run(client, app, 4)
         sent = wait_for(lambda: tg.of("sendMessage"))[0]
         assert "Review" not in json.dumps(sent["reply_markup"])  # no web address configured
         reject = sent["reply_markup"]["inline_keyboard"][0][1]
         ctx = app.state.ctx
         client.portal.call(ctx.telegram.handle_update, press(reject["callback_data"], 1001))
-        assert world.calls("sonarr.test", "DELETE") == []
+        assert fake_action.calls == []
         edit = wait_for(lambda: tg.of("editMessageText"))[0]
         assert "Rejected by @alice: 4 rejected" in edit["text"]
         rows = client.get("/api/actions").json()["items"]
@@ -460,13 +454,12 @@ def test_reject_all_button_rejects_the_whole_batch(bootstrap: Bootstrap) -> None
 
 
 def test_a_partial_decision_in_the_web_ui_updates_the_message_and_keeps_the_buttons(
-    bootstrap: Bootstrap,
+    bootstrap: Bootstrap, fake_action: FakeAction
 ) -> None:
-    tg, world = FakeTelegram(), blocked_world(5)
-    actions = {"stalled_cleanup": {"policy": "approve", "max_per_hour": 0}}
-    app = make_app(bootstrap, tg, world=world, actions=actions)
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
     with TestClient(app) as client:
-        run_stalled_cleanup(client, app)
+        file_run(client, app, 5)
         wait_for(lambda: tg.of("sendMessage"))
         [batch] = client.get("/api/approvals").json()["batches"]
         ids = [i["id"] for i in batch["items"]]
@@ -481,25 +474,24 @@ def test_a_partial_decision_in_the_web_ui_updates_the_message_and_keeps_the_butt
         client.portal.call(ctx.telegram.handle_update, press(keyboard[0]["callback_data"], 1001))
         last = wait_for(lambda: tg.of("editMessageText"))[-1]
         assert "Approved by @alice: 5 executed" in last["text"]
-        assert len(world.calls("sonarr.test", "DELETE")) == 5
+        assert len(fake_action.calls) == 5
         wait_for(lambda: stored_messages(client, app) == 0)
 
 
 def test_requests_close_together_from_one_run_are_merged_into_one_message(
-    bootstrap: Bootstrap, monkeypatch: pytest.MonkeyPatch
+    bootstrap: Bootstrap, monkeypatch: pytest.MonkeyPatch, fake_action: FakeAction
 ) -> None:
     monkeypatch.setattr(telegram_module, "APPROVAL_DEBOUNCE", 0.6)
-    tg, world = FakeTelegram(), FakeArrWorld()
-    app = make_app(bootstrap, tg, world=world)
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
     with TestClient(app) as client:
         service = app.state.ctx.actions
 
-        def ask(queue_id: int, run: str = "turn:1") -> dict[str, Any]:
-            args = {"app": "sonarr", "instance": "sonarr", "queue_id": queue_id}
+        def ask(n: int, run: str = "turn:1") -> dict[str, Any]:
             return client.portal.call(  # type: ignore[union-attr,no-any-return]
                 lambda: service.request(
-                    "arr_remove_queue_item",
-                    {**args, "title": f"Ep {queue_id}"},
+                    NAME,
+                    {"target": f"t{n}", "title": f"Item {n}"},
                     f"telegram:{CHAT}",
                     run_key=run,
                     label="Chat",
@@ -512,13 +504,13 @@ def test_requests_close_together_from_one_run_are_merged_into_one_message(
         assert tg.of("sendMessage") == []  # still inside the window
         sent = wait_for(lambda: tg.of("sendMessage"), timeout=3)
         time.sleep(0.3)
-        assert len(tg.of("sendMessage")) == 1 and "remove 3 queue items" in sent[0]["text"]
+        assert len(tg.of("sendMessage")) == 1 and "fake_write × 3" in sent[0]["text"]
         assert sent[0]["text"].count("• ") == 3
 
         # A request of the same turn after the message went out edits it, no second message.
         ask(4)
         edit = wait_for(lambda: tg.of("editMessageText"))[0]
-        assert "remove 4 queue items" in edit["text"] and edit["message_id"] == 1001
+        assert "fake_write × 4" in edit["text"] and edit["message_id"] == 1001
         assert len(tg.of("sendMessage")) == 1
 
         # Decided inside the window: nothing is sent at all.
@@ -529,17 +521,16 @@ def test_requests_close_together_from_one_run_are_merged_into_one_message(
 
 
 def test_buttons_of_messages_sent_before_batching_still_decide_their_item(
-    bootstrap: Bootstrap,
+    bootstrap: Bootstrap, fake_action: FakeAction
 ) -> None:
-    tg, world = FakeTelegram(), FakeArrWorld()
-    world.torrents = {HASH_A: torrent(HASH_A, "x", "stalledDL")}
-    app = make_app(bootstrap, tg, world=world)
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
     with TestClient(app) as client:
         ctx = app.state.ctx
         record = _request_approval(client, app, tg)
         other = client.portal.call(  # type: ignore[union-attr]
             lambda: ctx.actions.request(
-                "qbit_delete_torrent", {"hash": "b" * 40}, "scheduler", run_key="r", label="x"
+                NAME, {"target": "beta"}, "scheduler", run_key="r", label="x"
             )
         )
         old_style = f"a:{record['id']}:{ctx.telegram.sign('a', record['id'])}"  # per-item button
@@ -548,15 +539,17 @@ def test_buttons_of_messages_sent_before_batching_still_decide_their_item(
         assert (client.portal.call(ctx.actions.get, other["id"]))["status"] == "pending"
 
 
-def test_approvals_command_shows_one_message_per_batch(bootstrap: Bootstrap) -> None:
-    tg, world = FakeTelegram(), blocked_world(6)
-    app = make_app(bootstrap, tg, world=world)
+def test_approvals_command_shows_one_message_per_batch(
+    bootstrap: Bootstrap, fake_action: FakeAction
+) -> None:
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
     with TestClient(app) as client:
-        run_stalled_cleanup(client, app)
+        file_run(client, app, 6)
         wait_for(lambda: tg.of("sendMessage"))
         client.portal.call(app.state.ctx.telegram.handle_update, message("/approvals"))
         texts = tg.texts()
-        assert len(texts) == 2 and "remove 6 queue items" in texts[1]
+        assert len(texts) == 2 and "fake_write × 6" in texts[1]
 
 
 def stored_messages(client: TestClient, app: Any) -> int:
@@ -568,20 +561,21 @@ def stored_messages(client: TestClient, app: Any) -> int:
 
 def _request_approval(client: TestClient, app: Any, tg: FakeTelegram) -> dict[str, Any]:
     record = client.portal.call(  # type: ignore[union-attr]
-        app.state.ctx.actions.request, "qbit_delete_torrent", {"hash": HASH_A}, "scheduler"
+        app.state.ctx.actions.request, NAME, {"target": "alpha"}, "scheduler"
     )
     wait_for(lambda: stored_messages(client, app) == 1)  # sent and remembered
     return record
 
 
-def test_approval_messages_are_edited_after_a_restart(bootstrap: Bootstrap) -> None:
-    tg, world = FakeTelegram(), FakeArrWorld()
-    world.torrents = {HASH_A: torrent(HASH_A, "x", "stalledDL")}
-    first = make_app(bootstrap, tg, world=world)
+def test_approval_messages_are_edited_after_a_restart(
+    bootstrap: Bootstrap, fake_action: FakeAction
+) -> None:
+    tg = FakeTelegram()
+    first = make_app(bootstrap, tg)
     with TestClient(first) as client:
         record = _request_approval(client, first, tg)
     del first  # the restart: a new app, a new bot, the same database
-    second = make_app(bootstrap, tg, world=world)
+    second = make_app(bootstrap, tg)
     with TestClient(second) as client:
         assert not tg.of("editMessageText")  # still pending: nothing to catch up
         client.post(f"/api/approvals/{record['batch_id']}", json={"decision": "reject"})
@@ -591,20 +585,19 @@ def test_approval_messages_are_edited_after_a_restart(bootstrap: Bootstrap) -> N
 
 
 def test_approvals_decided_while_the_bot_was_down_are_edited_on_start(
-    bootstrap: Bootstrap,
+    bootstrap: Bootstrap, fake_action: FakeAction
 ) -> None:
     import sqlite3
 
-    tg, world = FakeTelegram(), FakeArrWorld()
-    world.torrents = {HASH_A: torrent(HASH_A, "x", "stalledDL")}
-    first = make_app(bootstrap, tg, world=world)
+    tg = FakeTelegram()
+    first = make_app(bootstrap, tg)
     with TestClient(first) as client:
         record = _request_approval(client, first, tg)
     conn = sqlite3.connect(bootstrap.db_path)
     conn.execute("UPDATE actions SET status = 'expired' WHERE id = ?", (record["id"],))
     conn.commit()
     conn.close()
-    second = make_app(bootstrap, tg, world=world)
+    second = make_app(bootstrap, tg)
     with TestClient(second) as client:
         edit = wait_for(lambda: tg.of("editMessageText"))[0]
         assert "expired" in edit["text"] and edit["message_id"] == 1001
@@ -802,9 +795,10 @@ def test_chat_failure_is_reported_in_the_chat(bootstrap: Bootstrap) -> None:
     assert "not configured" in tg.texts()[0] and tg.texts()[0].startswith("⚠️")
 
 
-def test_chat_write_requests_carry_the_telegram_source(bootstrap: Bootstrap) -> None:
-    tg, world = FakeTelegram(), FakeArrWorld()
-    world.torrents = {HASH_A: torrent(HASH_A, "x", "stalledDL")}
+def test_chat_write_requests_carry_the_telegram_source(
+    bootstrap: Bootstrap, fake_action: FakeAction
+) -> None:
+    tg = FakeTelegram()
     llm = FakeLLM(
         {
             "content": None,
@@ -813,19 +807,19 @@ def test_chat_write_requests_carry_the_telegram_source(bootstrap: Bootstrap) -> 
                     "id": "w",
                     "type": "function",
                     "function": {
-                        "name": "qbit_delete_torrent",
-                        "arguments": json.dumps({"hash": HASH_A}),
+                        "name": NAME,
+                        "arguments": json.dumps({"target": "alpha"}),
                     },
                 }
             ],
         },
         say("I asked for approval."),
     )
-    app = make_app(bootstrap, tg, llm=llm, world=world)
+    app = make_app(bootstrap, tg, llm=llm)
     with TestClient(app) as client:
-        client.portal.call(app.state.ctx.telegram.handle_update, message("delete that torrent"))
+        client.portal.call(app.state.ctx.telegram.handle_update, message("change alpha"))
         pending = client.get("/api/approvals").json()["items"]
-        assert pending[0]["source"] == f"telegram:{CHAT}" and HASH_A in world.torrents
+        assert pending[0]["source"] == f"telegram:{CHAT}" and fake_action.calls == []
         wait_for(lambda: any("Approval needed" in t for t in tg.texts()))
 
 

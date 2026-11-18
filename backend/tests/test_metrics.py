@@ -113,16 +113,16 @@ async def test_providers_sync_async_and_broken() -> None:
     hub = MetricsHub()
     hub.add_provider(lambda: [Family("asm_pending_approvals", "gauge", "h", [Sample(2)])])
 
-    async def arr() -> list[Family]:
-        return [Family("asm_arr_queue_size", "gauge", "h", [Sample(5, {"app": "radarr"})])]
+    async def extra() -> list[Family]:
+        return [Family("asm_extra_gauge", "gauge", "h", [Sample(5, {"app": "x"})])]
 
     def broken() -> list[Family]:
         raise RuntimeError("provider bug")
 
-    hub.add_provider(arr)
+    hub.add_provider(extra)
     hub.add_provider(broken)
     s = parse(await hub.render())
-    assert s["asm_pending_approvals"] == 2 and s['asm_arr_queue_size{app="radarr"}'] == 5
+    assert s["asm_pending_approvals"] == 2 and s['asm_extra_gauge{app="x"}'] == 5
     assert "asm_reports_total{" in "".join(s)  # one bad provider does not hide the rest
 
 

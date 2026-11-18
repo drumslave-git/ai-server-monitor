@@ -1,6 +1,6 @@
-"""Who owns a path on the host: Docker bind mounts and volumes, *arr root folders, the Docker
-data root and a few well-known system locations. Pure data in, strings out; the callers fetch
-the data (Docker API, *arr clients) and hand it over."""
+"""Who owns a path on the host: Docker bind mounts and volumes, the Docker data root and a
+few well-known system locations. Pure data in, strings out; the callers fetch the data (Docker
+API) and hand it over."""
 
 from __future__ import annotations
 
@@ -129,44 +129,3 @@ def add_docker(
                     f"bind mount of container '{name}' ({dest}, {mode})",
                     "docker",
                 )
-
-
-def _arr_containers(
-    containers: list[dict[str, Any]], kind: str, instance: str
-) -> list[dict[str, Any]]:
-    kind, instance = kind.lower(), instance.lower()
-    out = []
-    for entry in containers:
-        labels = entry.get("Labels") or {}
-        haystack = " ".join(
-            [
-                _container_name(entry),
-                str(entry.get("Image", "")),
-                str(labels.get("com.docker.compose.service", "")),
-            ]
-        ).lower()
-        if kind in haystack or (instance and instance in haystack):
-            out.append(entry)
-    return out
-
-
-def add_arr(
-    locations: Locations,
-    arr_roots: list[dict[str, Any]],
-    containers: list[dict[str, Any]],
-) -> None:
-    """*arr root folders. They are paths inside the arr app's container, so each one is
-    translated through that container's bind mounts when the container can be found."""
-    for root in arr_roots:
-        kind, instance, path = root["app"], root["instance"], root["path"]
-        label = f"{kind} '{instance}' root folder {path}"
-        translated = False
-        for entry in _arr_containers(containers, kind, instance):
-            for mount in entry.get("Mounts") or []:
-                dest, source = mount.get("Destination"), mount.get("Source")
-                if dest and source and _under(_norm(path), _norm(dest)):
-                    host = posixpath.join(source, posixpath.relpath(_norm(path), _norm(dest)))
-                    locations.add(host, f"{label} (library)", "arr")
-                    translated = True
-        if not translated:
-            locations.add(path, f"{label} (library; container path, host mapping unknown)", "arr")

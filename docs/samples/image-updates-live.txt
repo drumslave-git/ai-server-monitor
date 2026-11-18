@@ -4,7 +4,7 @@ The monitor API does not expose RepoDigests; the container ImageID is used as th
 (Docker 29 with the containerd image store: image ID == digest of the top-level manifest/index.)
 
 VERDICT           IMAGE                                                LOCAL ID       REGISTRY DIGEST CONTAINERS / REASON
-up_to_date        copyparty/ac                                         b2054d65e05d   b2054d65e05d   arrs-copyparty
+up_to_date        copyparty/ac                                         b2054d65e05d   b2054d65e05d   media-copyparty
 up_to_date        docker.gitea.com/gitea-mcp-server:latest             2daf12dfa853   2daf12dfa853   gitea-mcp
 up_to_date        docker.gitea.com/gitea:28.3.0                        8967bf9deaf3   8967bf9deaf3   gitea
 unknown           downloads-monitorr-downloads-monitorr                c41966b8199c   -              downloads-monitorr | auth required (private image or no anonymous access)
@@ -15,16 +15,11 @@ up_to_date        ghcr.io/drumslave-git/hub-spotify-dashboard:latest   70aa19b0f
 up_to_date        ghcr.io/gethomepage/homepage:latest                  019d8f063a72   019d8f063a72   homepage
 update_available  ghcr.io/ggml-org/llama.cpp:server-cuda               a8cf841eef4e   cabbb32aaee5   llamacpp-embedding
 up_to_date        ghcr.io/google/cadvisor:latest                       b8e7d1093144   b8e7d1093144   grafana-stack-cadvisor-1
-up_to_date        ghcr.io/hotio/whisparr:v3                            5fca11d09ec7   5fca11d09ec7   whisparr
 up_to_date        ghcr.io/open-webui/open-webui:main                   59b912d42461   59b912d42461   open-webui
 up_to_date        ghcr.io/thephaseless/byparr:latest                   c66fa161187b   c66fa161187b   byparr
 up_to_date        grafana/grafana:latest                               0615ec4fbd40   0615ec4fbd40   grafana-stack-grafana-1
 up_to_date        gtislenko/nextjs-searcherr:latest                    5f4ba9173f89   5f4ba9173f89   searcherr
 up_to_date        lscr.io/linuxserver/homeassistant:latest             2796670c10ff   2796670c10ff   homeassistant
-up_to_date        lscr.io/linuxserver/prowlarr:latest                  6660787a99b2   6660787a99b2   prowlarr, prowlarr-adult
-up_to_date        lscr.io/linuxserver/qbittorrent:latest               3d4c4545d51a   3d4c4545d51a   qbittorrent
-up_to_date        lscr.io/linuxserver/radarr:latest                    51a9ac2a9eb4   51a9ac2a9eb4   radarr
-update_available  lscr.io/linuxserver/sonarr:latest                    673dc4609a56   c7d1df25e428   sonarr
 up_to_date        ncabatoff/process-exporter:latest                    bc2363ff7e05   bc2363ff7e05   grafana-stack-process-exporter-1
 up_to_date        nicolargo/glances:ubuntu-latest-full                 db709dd6fea3   db709dd6fea3   glances-web
 unknown           nodejs-mergerr-nodejs-mergerr                        d21a8dd25c94   -              nodejs-mergerr | auth required (private image or no anonymous access)
@@ -41,16 +36,15 @@ up_to_date        utkuozdemir/nvidia_gpu_exporter:latest-nvml          bf82122fd
 up_to_date        vikunja/vikunja:2.7.1                                f7dc8428d10a   f7dc8428d10a   projects-management-vikunja-1
 up_to_date        yanwk/comfyui-boot:cu130-slim-v2                     ad3e5eb6b791   ad3e5eb6b791   comfyui
 
-Totals: unknown=3, up_to_date=31, update_available=2
+Totals: unknown=3, up_to_date=27, update_available=1
 
 Notes
-- 31 of 36 images: container ImageID == digest the registry serves for the tag today (HEAD with the
+- 27 of 31 images: container ImageID == digest the registry serves for the tag today (HEAD with the
   OCI index / Docker manifest list Accept header). That confirms the assumption that the multi-arch
   index digest is the right thing to compare with the local RepoDigests/ID.
 - Spot-checked by hand with curl (token + HEAD /v2/<repo>/manifests/<tag>):
   ghcr.io/ggml-org/llama.cpp:server-cuda -> sha256:cabbb32aaee5... (local a8cf841eef4e: update available);
   traefik:latest on Docker Hub -> sha256:b7b1b31e6440... (equals local: up to date);
-  lscr.io/linuxserver/sonarr answers 401 with a Bearer challenge for ghcr.io, which the client follows.
 - The three "auth required" rows are locally built compose images (no registry copy exists; Docker Hub
   answers 401 for unknown repositories). The collector itself never asks the registry about them:
   with no RepoDigests on the image it reports "unknown (built or loaded locally)".

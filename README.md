@@ -2,13 +2,11 @@
 
 An AI-powered, **read-only** monitor for one self-hosted Linux server. It collects host data
 (CPU, memory, disks, network, processes, Docker, image updates, apt updates, NVIDIA GPU,
-systemd, journal, Prometheus, \*arr/qBittorrent), turns it into a compact digest, and has an LLM
+systemd, journal, Prometheus), turns it into a compact digest, and has an LLM
 behind any OpenAI-compatible API write a status report every few minutes. You read the reports
 in the web dashboard or in Telegram, ask questions in chat (the web Chat page, Telegram, or the
-`/api/chat` endpoint), and scrape `/metrics` into Grafana. Optionally it automates the \*arr stack
-(Radarr, Sonarr, Whisparr, Prowlarr) and qBittorrent: stalled-download cleanup, missing and
-upgrade searches, indexer tests, adding media on request. Every one of those writes goes
-through a per-action policy (`off`, `suggest`, `approve`, `auto`), a global dry-run switch,
+`/api/chat` endpoint), and scrape `/metrics` into Grafana. Tools of MCP servers you add can be used from chat; every write goes
+through a per-action policy (`off`, `suggest`, `approve`, `auto`),
 rate limits and a permanent audit log; the host itself is only ever read.
 
 ![Dashboard](docs/samples/ui/dashboard-desktop.png)
@@ -64,7 +62,7 @@ GHCR package is private, `docker login ghcr.io` with a token that has `read:pack
 
 Open **Settings**. The sections are tabs; **Save** applies the change without a restart. A bad
 value is shown next to the field and nothing is saved until it is fixed.
-Every connection (LLM, Prometheus, Docker, each \*arr app, qBittorrent, Telegram) has a **Test**
+Every connection (LLM, Prometheus, Docker, Telegram) has a **Test**
 button that checks what you typed, before you save, and says what answered or what is wrong.
 
 1. **LLM** (`llm`) — the one thing the monitor cannot work without.
@@ -96,14 +94,7 @@ button that checks what you typed, before you save, and says what answered or wh
      from another machine (e.g. a Windows exporter) are labelled "other host" in the digest.
    - *Image updates*: needs `IMAGES: 1` on the docker proxy. It compares each running container's image digest
      with what the registry serves for the same tag (anonymously; private images show as "unknown").
-4. **\*arr & downloads** (`arr`) — add Radarr, Sonarr, Whisparr and Prowlarr instances (name, URL,
-   API key from Settings → General in each app) and qBittorrent (URL, user, password). The `arr`
-   collector then shows queues, health, missing/upgrade counts, failing indexers and stalled torrents.
-   **Start safe:** leave *Dry run* **on** and the action policies on `suggest`. Dry run means
-   nothing is sent to your apps, even after you approve; you see in the audit log what would have
-   happened. Switch a policy to `approve` first, and `auto` only for things you trust (see
-   [the approval model](#security-and-the-approval-model)). Turn *Dry run* off last.
-5. **Outputs** (`outputs`):
+4. **Outputs** (`outputs`):
    - *Telegram*: create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`), paste the token.
      Press **Test** to check the token (it shows the bot's name). To find your chat id, open the
      bot in Telegram and send `/id`: it answers in any chat with the chat id, your user id and the
@@ -115,14 +106,14 @@ button that checks what you typed, before you save, and says what answered or wh
      whenever the health status changes.
    - *Metrics*: `/metrics` is on by default. Set a *Bearer token* if anything outside your trusted
      network can reach the port.
-6. **Data retention** (`storage`): history, reports and chats are kept 30 days by default; the
+5. **Data retention** (`storage`): history, reports and chats are kept 30 days by default; the
    action audit log is never pruned.
 
 ## Using it
 
 - **Dashboard** — live health, key numbers, top consumers, collector states. **Reports** — history
   and the full text of each report. **Approvals** — what is waiting for your decision, with the
-  audit log. **\*arr** — queues, indexers, torrents. **Chat** — ask questions about the server, with
+  audit log. **Chat** — ask questions about the server, with
   conversation history, streamed answers and approval cards for changes
   (screenshot: `docs/samples/ui/chat-desktop.png`). **Logs** — every request to the language
   model exactly as sent and received (the full messages, tool definitions, answer, reasoning, tool
@@ -131,14 +122,14 @@ button that checks what you typed, before you save, and says what answered or wh
   (screenshots: `docs/samples/ui/logs-*.png`). Each report and each chat answer links to its
   calls. Passwords, keys and tokens are removed from what is stored; retention and size limits
   are in Settings → Logs.
-- **Pause automation** — the button at the top of every page stops every scheduled job and automation (collectors, reports, the Prometheus planner, the LLM probe, *arr automations, approval sweeps, pruning) and cancels the runs in flight, so a benchmark gets a quiet host and a quiet LLM. Chat, benchmarks, approving/rejecting, the Settings test buttons, "Run report now" and the Telegram bot keep working. It survives a restart; Resume lets the jobs come due again (the overdue ones start a couple of seconds apart). `GET /api/automation`, `POST /api/automation/pause|resume`; `/api/info` shows it per job. Benchmarks pause it for their run by default (screenshots: `docs/samples/ui/automation-*.png`).
+- **Pause automation** — the button at the top of every page stops every scheduled job and automation (collectors, reports, the Prometheus planner, the LLM probe, approval sweeps, pruning) and cancels the runs in flight. Chat, approving/rejecting, the Settings test buttons, "Run report now" and the Telegram bot keep working. It survives a restart; Resume lets the jobs come due again (the overdue ones start a couple of seconds apart). `GET /api/automation`, `POST /api/automation/pause|resume`; `/api/info` shows it per job. (screenshots: `docs/samples/ui/automation-*.png`).
 - **Telegram** — reports and alerts arrive by themselves. Write a plain question to chat
   ("what is using the most disk and memory?"); the model looks at live data with read-only tools
   and answers. Commands: `/status` (health and open flags), `/report` (write one now),
   `/approvals` (open requests, with buttons), `/id` (this chat's id: works in any chat, also for
   chats that are not allowed yet, once per 10 s), `/new` (start a fresh chat), `/help`. When an
   action needs approval, the bot sends
-  ONE message per approval (all the items one automation run, or one chat turn, asked for: the
+  ONE message per approval (all the items one chat turn asked for: the
   first ten are listed, then "+N more") with **Approve all**, **Reject all** and, when
   `outputs.telegram.web_url` is set, **Review** (opens the approval in the web UI). Requests of the
   same run that arrive within 30 s end up in the same message. The message is edited to the
@@ -152,10 +143,10 @@ button that checks what you typed, before you save, and says what answered or wh
 - **Chat API** — `POST /api/chat` with `{"message": "...", "session_id": "..."}` answers as a
   server-sent-event stream (`session`, `tool_call`, `tool_result`, `token`, `done`);
   `GET /api/chat/sessions[/{id}]` and `DELETE /api/chat/sessions/{id}` manage the history.
-  Chat can ask for changes (add a movie, search, remove a stalled download) but only through the
+  Chat can ask for changes through MCP tools but only through the
   same policy and approval path as everything else.
 - **Metrics** — `/metrics` exposes health score and status, findings, collector up/duration/errors,
-  report and LLM counters, pending approvals, action counts and *arr/qBittorrent gauges
+  report and LLM counters, pending approvals, action counts
   (`asm_*`). A Grafana dashboard to import is in [docs/grafana-dashboard.json](docs/grafana-dashboard.json).
   Scrape config:
 
@@ -188,31 +179,25 @@ button that checks what you typed, before you save, and says what answered or wh
 ## Security and the approval model
 
 - **The host is read-only**: read-only mounts, a GET-only Docker proxy, no write path to anything
-  but the *arr and qBittorrent APIs.
+  but the MCP servers you add.
 - **Secrets**: API keys and tokens are stored in clear text in the SQLite file under `data/`
   (protect that directory like a credentials store) and are shown as `********` in the API and the
   UI. They are never sent to the LLM: tool results are scrubbed of configured secrets, secret-looking
   fields and common credential formats, and capped in size before the model sees them.
-- **Untrusted text**: log lines, container output, torrent names and *arr messages can say anything.
+- **Untrusted text**: log lines, container output and tool results can say anything.
   They are passed to the model as clearly delimited data, and **no write can happen because of text**:
   a model can only *request* an action, and what happens is decided by your settings.
-- **Policies**, per action group (stalled-download cleanup, missing search, upgrade search, add media,
-  indexer tests): `off` = never (the request is only logged), `suggest` = recorded and mentioned,
-  never executed, `approve` = waits for your button press (expires after `approval_ttl`, default
+- **Policies**, per MCP server and tool: `off` = never (the request is only logged), `suggest` = recorded and mentioned,
+  never executed, `approve` = waits for your button press (expires after `approvals.approval_ttl`, default
   1 day), `auto` = executes by itself within the caps. Approvals are grouped: everything one
-  automation run (or one chat turn) asks for with the same action is ONE approval with a checklist
+  chat turn asks for with the same action is ONE approval with a checklist
   on the Approvals page: approve or reject all of it, or only the items you tick. Every item
   keeps its own row in the audit log (linked by its approval number). The hourly cap is applied
   when items are executed; items beyond it stay approved as `queued` and run by themselves as the cap frees up (nobody is
-  asked a second time; the card and the Telegram message show "10 executed, 30 queued, next in ~N min"). *Max per hour* limits how often an action group
-  may run, counted from the audit log; searches also have a batch size.
-- **Dry run** (on by default) is a global brake over all of it: nothing is sent to your apps; actions
-  that would have run are logged with the status `dry_run`.
-- **Not-owned torrents** are never removed automatically: a stalled torrent that no *arr owns (for
-  example one you added by hand) is only ever suggested for removal.
+  asked a second time; the card and the Telegram message show "10 executed, 30 queued, next in ~N min"). *Max per hour* limits how often an action
+  may run, counted from the audit log.
 - **Audit log**: every request and its outcome (`suggested`, `pending`, `approved`, `rejected`,
-  `expired`, `executed`, `failed`, `queued`, `dry_run`) is kept permanently with who asked (`scheduler`,
-  `chat:<session>`, `telegram:<chat>`), who decided (`ui`, `telegram:<user>`, `policy`, `timeout`)
+  `expired`, `executed`, `failed`, `queued`, `dry_run`) is kept permanently with who asked (`chat:<session>`, `telegram:<chat>`), who decided (`ui`, `telegram:<user>`, `policy`, `timeout`)
   and the result. Read it on the Approvals page or at `GET /api/actions`.
 - **MCP servers** (Settings → MCP servers): the chat can use tools of remote MCP servers you add (Home
   Assistant, Grafana, your own), over Streamable HTTP or the older HTTP+SSE, with a bearer token or
@@ -374,10 +359,6 @@ a fresh install starts with.
 | `collectors.prometheus.auto_queries` | boolean | on | Let the LLM choose more queries from what this Prometheus scrapes (other exporters, errors, saturation, other hosts). Also reports firing alerts and down targets. The chosen queries are listed below and can be disabled, pinned, edited or deleted. |
 | `collectors.prometheus.max_auto_queries` | integer (min 1, max 40) | `12` | Most automatically chosen queries. |
 | `collectors.prometheus.replan_interval` | duration | `7d` | Choose queries again at least this often (also when the set of metrics changes). |
-| **collectors.arr** | group |  | Radarr/Sonarr/Whisparr queues and health, Prowlarr indexers, qBittorrent torrents (the apps themselves are configured under \*arr & downloads). |
-| `collectors.arr.enabled` | on / off / auto | `auto` | auto = on as soon as an \*arr app, Prowlarr or qBittorrent is configured under \*arr & downloads. |
-| `collectors.arr.interval` | duration | `2m` | How often this collector gathers fresh data. |
-| `collectors.arr.max_queue_items` | integer (min 1, max 500) | `50` | Max queue entries listed per \*arr instance (the rest is only counted). |
 
 ### Outputs (`outputs`)
 
@@ -393,57 +374,6 @@ a fresh install starts with.
 | `outputs.telegram.web_url` | string | empty | Address of this web UI as you open it, e.g. https://monitor.example.com. Approval messages get a "Review" button that opens the approval there. Empty = no button. |
 | `outputs.metrics.enabled` | boolean | on | Expose Prometheus metrics at /metrics. |
 | `outputs.metrics.bearer_token` | secret | empty | If set, scrapers must send "Authorization: Bearer &lt;token>" (Prometheus: authorization in the scrape config). Empty = open to anyone who can reach the port. |
-
-### *arr & downloads (`arr`)
-
-| Setting | Type | Default | What it does |
-|---|---|---|---|
-| `arr.dry_run` | boolean | on | Log what would be done without changing anything. |
-| `arr.timeout` | duration | `15s` | Per-request timeout for \*arr, Prowlarr and qBittorrent. |
-| **arr.radarr** | list of groups | empty |  |
-| `arr.radarr[].name` | string | required | Display name, e.g. radarr-4k. |
-| `arr.radarr[].url` | string | required | Base URL, e.g. http://radarr:7878. |
-| `arr.radarr[].api_key` | secret | required | Settings → General → API Key in the app. |
-| **arr.sonarr** | list of groups | empty |  |
-| `arr.sonarr[].name` | string | required | Display name, e.g. radarr-4k. |
-| `arr.sonarr[].url` | string | required | Base URL, e.g. http://radarr:7878. |
-| `arr.sonarr[].api_key` | secret | required | Settings → General → API Key in the app. |
-| **arr.whisparr** | list of groups | empty |  |
-| `arr.whisparr[].name` | string | required | Display name, e.g. radarr-4k. |
-| `arr.whisparr[].url` | string | required | Base URL, e.g. http://radarr:7878. |
-| `arr.whisparr[].api_key` | secret | required | Settings → General → API Key in the app. |
-| `arr.prowlarr.name` | string | required | Display name, e.g. radarr-4k. |
-| `arr.prowlarr.url` | string | required | Base URL, e.g. http://radarr:7878. |
-| `arr.prowlarr.api_key` | secret | required | Settings → General → API Key in the app. |
-| `arr.qbittorrent.url` | string | required | WebUI URL, e.g. http://qbittorrent:8080. |
-| `arr.qbittorrent.username` | string | `admin` | WebUI user name. |
-| `arr.qbittorrent.password` | secret | empty | WebUI password. |
-| **arr.actions.stalled_cleanup** | group |  | Remove stalled/failed downloads, blocklist the release and search again. |
-| `arr.actions.stalled_cleanup.policy` | off / suggest / approve / auto | `approve` | off = never; suggest = mention in reports; approve = ask you first; auto = just do it. |
-| `arr.actions.stalled_cleanup.max_per_hour` | integer (min 0) | `10` | Cap on how many downloads are cleaned up per hour (0 = no cap). |
-| `arr.actions.stalled_cleanup.interval` | duration | `30m` | How often to look for stalled downloads. |
-| `arr.actions.stalled_cleanup.stalled_after` | duration | `6h` | A download with no progress for this long counts as stalled. |
-| **arr.actions.missing_search** | group |  | Search for missing episodes/movies. |
-| `arr.actions.missing_search.policy` | off / suggest / approve / auto | `suggest` | off = never; suggest = mention in reports; approve = ask you first; auto = just do it. |
-| `arr.actions.missing_search.max_per_hour` | integer (min 0) | `30` | Cap on how many searches run per hour (0 = no cap). |
-| `arr.actions.missing_search.interval` | duration | `6h` | How often a search run starts. |
-| `arr.actions.missing_search.batch` | integer (min 1) | `10` | Items searched per run (keeps indexers from being hammered). |
-| **arr.actions.cutoff_search** | group |  | Search for quality upgrades (cutoff unmet). |
-| `arr.actions.cutoff_search.policy` | off / suggest / approve / auto | `suggest` | off = never; suggest = mention in reports; approve = ask you first; auto = just do it. |
-| `arr.actions.cutoff_search.max_per_hour` | integer (min 0) | `30` | Cap on how many searches run per hour (0 = no cap). |
-| `arr.actions.cutoff_search.interval` | duration | `1d` | How often a search run starts. |
-| `arr.actions.cutoff_search.batch` | integer (min 1) | `5` | Items searched per run (keeps indexers from being hammered). |
-| **arr.actions.add_media** | group |  | Add movies/series when asked in chat. |
-| `arr.actions.add_media.policy` | off / suggest / approve / auto | `approve` | off = never; suggest = mention in reports; approve = ask you first; auto = just do it. |
-| `arr.actions.add_media.max_per_hour` | integer (min 0) | `0` | Cap on how many of these actions run per hour (0 = no cap). |
-| **arr.actions.indexer_triage** | group |  | Test/disable failing indexers in Prowlarr. |
-| `arr.actions.indexer_triage.policy` | off / suggest / approve / auto | `suggest` | off = never; suggest = mention in reports; approve = ask you first; auto = just do it. |
-| `arr.actions.indexer_triage.max_per_hour` | integer (min 0) | `0` | Cap on how many of these actions run per hour (0 = no cap). |
-| `arr.actions.indexer_triage.interval` | duration | `1h` | How often to look for failing indexers. |
-| **arr.actions.api_call** | group |  | Any other write the chat asks for through the HTTP API of a service (POST/PUT/DELETE to Radarr, Sonarr, Whisparr, Prowlarr, qBittorrent) and searches that query every indexer. Dry-run (above) applies too. |
-| `arr.actions.api_call.policy` | off / suggest / approve / auto | `approve` | off = never; suggest = mention in reports; approve = ask you first; auto = just do it. |
-| `arr.actions.api_call.max_per_hour` | integer (min 0) | `0` | Cap on how many of these actions run per hour (0 = no cap). |
-| `arr.actions.approval_ttl` | duration | `1d` | Pending approvals expire after this. |
 
 ### MCP servers (`mcp`)
 
@@ -468,19 +398,11 @@ a fresh install starts with.
 | `mcp.max_inline_tool_tokens` | integer (min 0) | `1200` | If the schemas of all chosen tools together are bigger than this (about 4 characters per token), the chat gets two generic tools (list tools / call tool) instead of one tool per MCP tool. Small models do better with fewer schemas. 0 = always use the generic pair. |
 | `mcp.dry_run` | boolean | off | Pretend: record write calls in the action log but send nothing to the servers. |
 
-### Benchmarks (`bench`)
+### Approvals (`approvals`)
 
 | Setting | Type | Default | What it does |
 |---|---|---|---|
-| `bench.repeats` | integer (min 1, max 20) | `3` | How many times every scenario runs. More runs smooth out the model's randomness. |
-| `bench.attempt_timeout` | duration | `5m` | Time budget of one attempt; a slower one counts as failed. |
-| `bench.record_hardware` | boolean | on | Record the GPU, VRAM, power, CPU and RAM load of this host while a run goes, and show it with the results. Read from the same sources as the dashboard. |
-| `bench.hardware_interval` | duration | `1s` | How often the load is sampled during a run (between 500ms and 10s). |
-| **bench.judge** | group |  | A second model that grades the answers of a benchmark run. |
-| `bench.judge.enabled` | boolean | off | Grade every answer 1-5 against the scenario's rubric. The grade is shown next to the rule score and never mixed into it. Costs one extra model call per graded attempt. |
-| `bench.judge.base_url` | string | empty | OpenAI-compatible API base URL of the judge, e.g. https://api.openai.com/v1. |
-| `bench.judge.api_key` | secret | empty | API key of the judge, if its endpoint needs one. |
-| `bench.judge.model` | string | empty | Model name of the judge. |
+| `approvals.approval_ttl` | duration | `1d` | Pending approvals expire after this. |
 
 <!-- settings-reference:end -->
 
@@ -496,9 +418,9 @@ host never stops the service. Disable it under Settings → Collectors if you do
   the container lacks `SYS_CHROOT`/`SETUID`/`SETGID` (a `cap_drop` in the compose file) or is not
   root. Fix that, or turn `chat.shell` off.
 - **Not sure a connection is right?** Every connection in Settings (LLM, Prometheus, Docker,
-  each \*arr app, qBittorrent, Telegram) has a **Test** button that checks the values you typed
+  Telegram) has a **Test** button that checks the values you typed
   *before* you save: it names the app and version that answered, or says what is wrong (wrong
-  key, wrong password, a Radarr URL in the Sonarr slot, DNS name not found, timeout, TLS error).
+  key, DNS name not found, timeout, TLS error).
 - **Reports fail or are empty** — Settings → LLM → *Test connection*. Thinking models need
   *Max output tokens* of 4096 or more. For Ollama check `OLLAMA_CONTEXT_LENGTH`.
 - **Image updates say "auth required" or "unknown"** — the check is anonymous; private registries and
@@ -506,7 +428,7 @@ host never stops the service. Disable it under Settings → Collectors if you do
 - **Telegram does not answer** — your chat id must be in *Allowed chat ids*: send `/id` to the
   bot to see it, and use *Send test message* under Settings → Outputs → Telegram to check each
   chat. `docker logs` shows polling errors without the token.
-- **An approval or action does nothing** — with *Dry run* on, approved actions only log what they
+- **An approval or action does nothing** — with `mcp.dry_run` on, approved calls only log what they
   would have done (status `dry_run`).
 
 ## Development
@@ -521,8 +443,7 @@ cd ../frontend && npm install && npm run dev                                # UI
 Local image: `docker build -f docker/Dockerfile -t ai-server-monitor:dev .`
 
 The settings reference above is generated: after changing `backend/ai_server_monitor/config.py`
-run `python scripts/gen_settings_docs.py --write`. The *arr/qBittorrent API calls the clients rely
-on are listed in [docs/arr-api-notes.md](docs/arr-api-notes.md).
+run `python scripts/gen_settings_docs.py --write`.
 
 ## Releasing
 

@@ -25,9 +25,9 @@ async def test_record_call_keeps_the_newest_entries_and_filters_by_kind(db: Data
 
 async def test_audit_hook_files_records_under_its_kind(db: Database) -> None:
     hook = audit.audit_hook(db, "api", "sess")
-    await hook({"service": "radarr", "method": "GET", "path": "/api/v3/queue"})
+    await hook({"service": "docker", "method": "GET", "path": "/containers/json"})
     [row] = await audit.recent(db)
-    assert row["kind"] == "api" and row["session"] == "sess" and row["service"] == "radarr"
+    assert row["kind"] == "api" and row["session"] == "sess" and row["service"] == "docker"
 
 
 async def test_record_call_never_raises(db: Database) -> None:
@@ -52,18 +52,17 @@ def test_audit_endpoint(bootstrap: Bootstrap) -> None:
         assert [i["cmd"] for i in only["items"]] == ["ps aux"]
 
 
-def test_prompt_mentions_api_tools_and_auto_prometheus_queries_only_when_present() -> None:
+def test_prompt_lists_auto_prometheus_queries_only_when_present() -> None:
     queries = [
         {"name": f"q{i}", "description": f"does thing {i}", "query": "up"} for i in range(15)
     ]
     plain = system_prompt("en", tool_names={"get_status"})
-    assert "api_call" not in plain and "Prometheus queries" not in plain
+    assert "Prometheus queries" not in plain
     full = system_prompt(
         "en",
-        tool_names={"api_call", "api_endpoints", "promql_query"},
+        tool_names={"promql_query"},
         prom_queries=queries,
     )
-    assert "api_endpoints" in full and "api_call" in full
     assert "- q0: does thing 0" in full
     assert f"- q{MAX_PROM_LINES - 1}:" in full and f"- q{MAX_PROM_LINES}:" not in full
     # listed queries mean nothing without the tool to run them
@@ -74,7 +73,7 @@ def test_prompt_mentions_api_tools_and_auto_prometheus_queries_only_when_present
 
 
 def test_prompt_asks_for_named_items_not_just_counts() -> None:
-    for tools in ({"get_status"}, {"api_call", "api_endpoints"}):
+    for tools in ({"get_status"}, {"get_status", "promql_query"}):
         prompt = " ".join(system_prompt("en", tool_names=tools).split())
         assert "asks WHICH or WHAT exactly" in prompt
         assert "NAME the items" in prompt and "up to about 50" in prompt
@@ -94,11 +93,10 @@ def test_prompt_wording_rules_for_pending_writes_compact_lists_and_ranking() -> 
 
 
 def test_every_pending_note_leads_with_not_done() -> None:
-    from ai_server_monitor.apiaccess.tools import _NOTES as api_notes
     from ai_server_monitor.chat.tools import _NOTES as chat_notes
     from ai_server_monitor.mcp_client.tools import _NOTES as mcp_notes
 
-    for notes in (api_notes, chat_notes, mcp_notes):
+    for notes in (chat_notes, mcp_notes):
         pending = notes["pending"]
         assert pending.startswith("NOT DONE: waiting for")
         assert "never" in pending and "saved" in pending and "NOT been done" in pending

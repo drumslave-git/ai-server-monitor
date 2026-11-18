@@ -37,9 +37,7 @@ Nothing outside the package, `tests/` and `pyproject.toml` (`mcp>=1.27,<2`) is t
   `chat.audit.audit_hook(db, "mcp")` (`GET /api/chat/audit?kind=mcp`).
 - `actions/registry.py` + `service.py`: `ActionDef` got optional hooks `policy_of(settings, args)`,
   `max_per_hour_of(settings, args)`, `uses_dry_run(settings)`, `run(service, args)` and
-  `chat_tool=False` (documented in its docstring; the *arr actions use none of them and are
-  unchanged). `mcp_call` is registered through them. api-tools can register `api_call` the same
-  way: `policy_of`/`max_per_hour_of` to read its own settings, `run` or the old `execute`.
+  `chat_tool=False` (documented in its docstring). `mcp_call` is registered through them.
 - `chat/tools.py`: `build_tools(settings, mcp)` adds `build_mcp_tools(mcp)`. `chat/engine.py`:
   `await app.mcp.prepare()` (lazy connect, at most 8 s, dead servers just stay out) and prompt
   notes (`_mcp_notes`: servers that are down; with the generic pair also which servers/tools exist,

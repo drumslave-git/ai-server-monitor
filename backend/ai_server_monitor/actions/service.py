@@ -1,4 +1,4 @@
-"""The action layer: every *arr / qBittorrent write goes through `ActionService.request`.
+"""The action layer: every write (today: MCP tool calls) goes through `ActionService.request`.
 
 Flow for a request:  validate → policy → suggested | pending approval | execute (limits are
 checked when an item is executed). Every outcome is a row in the permanent `actions` audit table.
@@ -10,7 +10,7 @@ item stays its own audit row (`actions.batch_id`) with its own status. A single 
 just a batch of one.
 
 Only structured arguments and the configured policy decide anything. Text that came from
-logs, *arr data or an LLM can fill in `args`, but it cannot change the policy, skip the
+logs, service data or an LLM can fill in `args`, but it cannot change the policy, skip the
 approval or turn off dry-run — those are read from settings here, never from the request.
 """
 
@@ -24,10 +24,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-import httpx
 from pydantic import ValidationError
 
-from ..arr import ArrError, Clients
 from ..config import Settings
 from ..db import Database
 from .registry import REGISTRY, ActionDef, ActionError
@@ -106,34 +104,18 @@ class ActionService:
         *,
         notifiers: list[Notifier] | None = None,
         registry: dict[str, ActionDef] | None = None,
-        transport: httpx.AsyncBaseTransport | None = None,
         clock: Callable[[], float] = time.time,
         mcp: Any = None,
-        api: Any = None,
     ):
         self.db = db
         self.settings = settings
         self.notifiers = notifiers if notifiers is not None else []
         self.registry = registry if registry is not None else REGISTRY
-        self._transport = transport
         self._clock = clock
         self.mcp = mcp
         """The MCP manager (None when unused); `ActionDef.run` hooks reach it from here."""
-        self.api = api
-        """The apiaccess.ApiGateway (for the `api_call` action)."""
-        self._clients: Clients | None = None
         self._lock = asyncio.Lock()
         self._batch_lock = asyncio.Lock()
-
-    @property
-    def clients(self) -> Clients:
-        if self._clients is None:
-            self._clients = Clients(self.settings.arr, transport=self._transport)
-        return self._clients
-
-    async def close(self) -> None:
-        if self._clients is not None:
-            await self._clients.close()
 
     # ------------------------------------------------------------------ requests
 
@@ -192,11 +174,7 @@ class ActionService:
         touched: dict[int, list[Any]] = {}  # batch id -> [created by this call, items added]
         for parsed, reason in parsed_items:
             key = definition.policy_key(parsed)
-            policy = (
-                definition.policy_of(self.settings, parsed)
-                if definition.policy_of
-                else getattr(self.settings.arr.actions, key).policy
-            )
+            policy = definition.policy_of(self.settings, parsed)
             fields: dict[str, Any] = {
                 "action": action,
                 "target": definition.target(parsed),
@@ -418,8 +396,7 @@ class ActionService:
 
     @staticmethod
     def _summary(definition: ActionDef | None, items: list[dict[str, Any]]) -> str:
-        """What the batch asks for, from the arguments of its items ("remove 40 queue items
-        from sonarr (blocklist + re-search)")."""
+        """What the batch asks for, from the arguments of its items."""
         if definition is None or not items:
             return f"{len(items)} item(s)"
         try:
@@ -456,7 +433,7 @@ class ActionService:
                 )
                 if row is not None:
                     return int(row["id"]), False
-            expires = now + self.settings.arr.actions.approval_ttl.total_seconds()
+            expires = now + self.settings.approvals.approval_ttl.total_seconds()
             batch_id = await self.db.execute(
                 "INSERT INTO approval_batches (ts, updated, action, label, source, run_key, "
                 "expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -555,11 +532,7 @@ class ActionService:
         self, record: dict[str, Any], definition: ActionDef, args: Any
     ) -> tuple[int, list[float]]:
         """(hourly cap, `updated` times of this key's executions in the last hour, oldest first)."""
-        cap = (
-            definition.max_per_hour_of(self.settings, args)
-            if definition.max_per_hour_of
-            else getattr(self.settings.arr.actions, record["policy_key"]).max_per_hour
-        )
+        cap = definition.max_per_hour_of(self.settings, args)
         if not cap:
             return 0, []
         rows = await self.db.fetchall(
@@ -646,12 +619,8 @@ class ActionService:
                     {"dry_run": True, "would": f"{record['action']} → {record['target']}"},
                 )
             try:
-                if definition.run is not None:
-                    result = await definition.run(self, args)
-                else:
-                    assert definition.execute is not None
-                    result = await definition.execute(self.clients, args)
-            except (ActionError, ArrError) as exc:
+                result = await definition.run(self, args)
+            except ActionError as exc:
                 return await self._set(action_id, "failed", {"error": str(exc)})
             except Exception as exc:
                 log.exception("action %s #%s crashed", record["action"], action_id)

@@ -25,9 +25,12 @@ ID_A = "sha256:" + "a" * 64
     [
         ("nginx", ImageRef("docker.io", "library/nginx", "latest", None)),
         ("nginx:1.27", ImageRef("docker.io", "library/nginx", "1.27", None)),
-        ("linuxserver/radarr:latest", ImageRef("docker.io", "linuxserver/radarr", "latest", None)),
+        ("linuxserver/nginx:latest", ImageRef("docker.io", "linuxserver/nginx", "latest", None)),
         ("ghcr.io/owner/app:v1", ImageRef("ghcr.io", "owner/app", "v1", None)),
-        ("lscr.io/linuxserver/sonarr", ImageRef("lscr.io", "linuxserver/sonarr", "latest", None)),
+        (
+            "lscr.io/linuxserver/nginx-proxy",
+            ImageRef("lscr.io", "linuxserver/nginx-proxy", "latest", None),
+        ),
         ("localhost:5000/app:dev", ImageRef("localhost:5000", "app", "dev", None)),
         ("docker.io/library/redis:7", ImageRef("docker.io", "library/redis", "7", None)),
         ("index.docker.io/foo/bar:1", ImageRef("docker.io", "foo/bar", "1", None)),
@@ -136,14 +139,14 @@ async def test_verdicts_for_up_to_date_update_and_hub_normalization() -> None:
         [
             container("web", "nginx:1.27", "sha256:" + "b" * 64),
             container("web2", "nginx:1.27", "sha256:" + "b" * 64),
-            container("radarr", "lscr.io/linuxserver/radarr:latest", "sha256:" + "c" * 64),
+            container("nginx", "lscr.io/linuxserver/nginx:latest", "sha256:" + "c" * 64),
         ],
         {
             "sha256:" + "b" * 64: {"RepoDigests": [f"nginx@{D_OLD}"]},
-            "sha256:" + "c" * 64: {"RepoDigests": [f"lscr.io/linuxserver/radarr@{D_OLD}"]},
+            "sha256:" + "c" * 64: {"RepoDigests": [f"lscr.io/linuxserver/nginx@{D_OLD}"]},
         },
     )
-    registry = FakeRegistry({"library/nginx:1.27": D_OLD, "linuxserver/radarr:latest": D_NEW})
+    registry = FakeRegistry({"library/nginx:1.27": D_OLD, "linuxserver/nginx:latest": D_NEW})
     collector = make(docker, registry)
     data = await collector.collect()
     await collector.close()
@@ -151,10 +154,10 @@ async def test_verdicts_for_up_to_date_update_and_hub_normalization() -> None:
     nginx = images["nginx:1.27"]
     assert nginx["status"] == "up_to_date" and nginx["containers"] == ["web", "web2"]
     assert nginx["remote_digest"] == D_OLD
-    radarr = images["lscr.io/linuxserver/radarr:latest"]
-    assert radarr["status"] == "update_available" and radarr["remote_digest"] == D_NEW
+    nginx = images["lscr.io/linuxserver/nginx:latest"]
+    assert nginx["status"] == "update_available" and nginx["remote_digest"] == D_NEW
     assert data["summary"] == {"total": 2, "up_to_date": 1, "update_available": 1, "unknown": 0}
-    assert data["updates_available"] == ["lscr.io/linuxserver/radarr:latest"]
+    assert data["updates_available"] == ["lscr.io/linuxserver/nginx:latest"]
     assert data["images"][0]["status"] == "update_available"  # updates sort first
     # Hub name normalized to library/..., registry hosts are the real API hosts.
     hosts = {r.url.host for r in registry.requests}

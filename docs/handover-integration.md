@@ -9,12 +9,11 @@ wiring commit. Neither source branch was rewritten.
 - `0002_placeholder_m4.sql` removed: migrations are `0001_initial`, `0002_reports`, `0003_actions`.
 - `manager.py`/`config.py`/`DESIGN.md` merged automatically.
 
-**Wiring** (`outputs/action_events.py`, `outputs/arr_metrics.py`)
+**Wiring** (`outputs/action_events.py`)
 - Action notifiers -> event bus (`action.suggested`, `approval.pending|decided|expired`, `action.result`; compact payloads) and `asm_actions_total`.
-- `asm_pending_approvals`, `asm_arr_up|queue_size|stalled_downloads{app}`, `asm_qbittorrent_torrents{state}` as a `MetricsHub` provider (arr collector's in-memory result + one COUNT).
-- Digest: `*arr and downloads` section (priority 45) + flags from the collector's `findings`, capped at `warn`; pending-approvals info flag. Omitted when *arr is not configured.
+- `asm_pending_approvals` as a `MetricsHub` provider (one COUNT).
+- Digest: pending-approvals info flag.
 - `/api/status.pending_approvals`; `frontend/src/api-types.ts` regenerated.
 
 **Notes**
 - `approval.decided` is derived: published before `action.result` when `decided_by` is a human/timeout (not `policy*`).
-- The arr collector has no transport injection, so the e2e test feeds its result into `collectors.latest`.

@@ -8,16 +8,12 @@ Two ways to get numbers in:
 * **Providers**: `hub.add_provider(fn)` where `fn()` returns `Family` objects (sync or
   async), evaluated at scrape time. Other modules plug in this way.
 
-The action layer / *arr series are added by `outputs/arr_metrics.py` (a provider) and
+The action layer series are added by `AppContext` (a provider for the two gauges) and
 `outputs/action_events.py` (the `asm_actions_total` counter):
 
     asm_actions_total{action,result}          counter  actions by type and status
     asm_pending_approvals                     gauge    action items waiting for a decision
     asm_pending_approval_batches              gauge    approvals (batches of items) waiting
-    asm_arr_queue_size{app}                   gauge    items in each *arr queue
-    asm_arr_stalled_downloads{app}            gauge    stalled/failed downloads found
-    asm_arr_up{app}                           gauge    1 if the app's API answered
-    asm_qbittorrent_torrents{state}           gauge    torrents by state
 """
 
 from __future__ import annotations

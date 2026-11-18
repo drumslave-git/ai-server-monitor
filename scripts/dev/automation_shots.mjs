@@ -1,5 +1,4 @@
-// Screenshots of the global automation switch: the toggle, the paused banner (Dashboard) and the
-// Bench start panel with its "Pause automation during this run" tick, at 1280 and 375 px.
+// Screenshots of the global automation switch: the toggle and the paused banner (Dashboard), at 1280 and 375 px.
 //   node scripts/dev/automation_shots.mjs <out-dir> <base-url>
 // Drives a local server through its own API (pauses it for the paused shots, resumes at the end).
 // Needs Chrome at the usual Windows path or CHROME_PATH. Development only.
@@ -14,12 +13,8 @@ const chrome = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Applic
 mkdirSync(out, { recursive: true });
 
 const all = [
-  { name: "automation-running-bench-1280", route: "bench", width: 1280, height: 900, paused: false },
-  { name: "automation-running-bench-375", route: "bench", width: 375, height: 1300, mobile: true, paused: false },
   { name: "automation-paused-dashboard-1280", route: "dashboard", width: 1280, height: 900, paused: true },
   { name: "automation-paused-dashboard-375", route: "dashboard", width: 375, height: 1300, mobile: true, paused: true },
-  { name: "automation-paused-bench-1280", route: "bench", width: 1280, height: 900, paused: true },
-  { name: "automation-paused-bench-375", route: "bench", width: 375, height: 1300, mobile: true, paused: true },
 ];
 const shots = process.env.ONLY ? all.filter((s) => process.env.ONLY.split(",").includes(s.name)) : all;
 

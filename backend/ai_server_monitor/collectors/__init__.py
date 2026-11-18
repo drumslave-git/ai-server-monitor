@@ -1,7 +1,6 @@
 """Read-only data collectors."""
 
 from .apt import AptCollector
-from .arr import ArrCollector
 from .base import Collector, CollectorResult, CollectorUnavailable, HostEnv
 from .docker import DockerCollector
 from .gpu import GPUCollector
@@ -22,7 +21,6 @@ REGISTRY: dict[str, type[Collector]] = {
         SystemdCollector,
         JournalCollector,
         AptCollector,
-        ArrCollector,
         ImageUpdatesCollector,
         PrometheusCollector,
     )

@@ -104,11 +104,11 @@ def test_hosts_heuristic() -> None:
 
 
 def test_extract_json_array_forms() -> None:
-    arr = '[{"name": "a", "query": "up"}]'
-    assert extract_json_array(arr) == [{"name": "a", "query": "up"}]
-    assert extract_json_array(f"Sure!\n```json\n{arr}\n```\nHope it helps") is not None
-    assert extract_json_array(f"<think>hmm [1]</think>{arr}") == [{"name": "a", "query": "up"}]
-    assert extract_json_array(f"Here you go: {arr} bye") is not None
+    rows = '[{"name": "a", "query": "up"}]'
+    assert extract_json_array(rows) == [{"name": "a", "query": "up"}]
+    assert extract_json_array(f"Sure!\n```json\n{rows}\n```\nHope it helps") is not None
+    assert extract_json_array(f"<think>hmm [1]</think>{rows}") == [{"name": "a", "query": "up"}]
+    assert extract_json_array(f"Here you go: {rows} bye") is not None
     assert extract_json_array('{"queries": [{"name": "a", "query": "up"}]}') is not None
     assert extract_json_array('{"name": "a", "query": "up"}') == [{"name": "a", "query": "up"}]
     assert extract_json_array("no json here") is None

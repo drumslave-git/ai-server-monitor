@@ -26,24 +26,14 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from .arr import qbit_auth
-from .arr.base import denied_text
 from .collectors.base import HostEnv
 from .collectors.docker import DEFAULT_SOCKET
-from .config import (
-    ArrInstance,
-    McpServerSettings,
-    OptionalHttpUrl,
-    QbitSettings,
-    Secret,
-    Settings,
-)
+from .config import McpServerSettings, OptionalHttpUrl, Secret, Settings
 from .mcp_client.discovery import check_mcp_server
 from .settings_store import merge_secrets
 
 TEST_TIMEOUT = 10.0
-ARR_APPS = ("radarr", "sonarr", "whisparr", "prowlarr")
-KINDS = ("prometheus", "docker", *ARR_APPS, "qbittorrent", "telegram", "mcp")
+KINDS = ("prometheus", "docker", "telegram", "mcp")
 TELEGRAM_API = "https://api.telegram.org"
 TELEGRAM_TEST_TEXT = (
     "✅ AI Server Monitor: test message. This chat is set up to receive reports and alerts."
@@ -207,8 +197,7 @@ def _redirect_failure(response: httpx.Response) -> ConnFailure | None:
 def _not_the_app(response: httpx.Response, what: str) -> ConnFailure:
     if response.status_code == 404:
         return ConnFailure(
-            f"HTTP 404: this is not {what}. "
-            "Check the URL (a URL base such as /sonarr may be needed)."
+            f"HTTP 404: this is not {what}. Check the URL (a URL base path may be needed)."
         )
     return ConnFailure(
         f"HTTP {response.status_code}: this does not look like {what}. Check the URL and port."
@@ -217,101 +206,6 @@ def _not_the_app(response: httpx.Response, what: str) -> ConnFailure:
 
 def _latency(ms: float) -> int:
     return round(ms)
-
-
-# --------------------------------------------------------------------------- *arr
-
-
-async def check_arr(kind: str, cfg: ArrInstance) -> ConnResult:
-    base = cfg.url.strip().rstrip("/")
-    api = "/api/v1" if kind == "prowlarr" else "/api/v3"
-    label = kind.capitalize()
-    async with _client(headers={"X-Api-Key": cfg.api_key.get_secret_value()}) as client:
-        response, ms = await _request(client, "GET", f"{base}{api}/system/status")
-    if failure := _redirect_failure(response):
-        raise failure
-    if response.status_code in (401, 403):
-        raise ConnFailure(
-            denied_text(response, label),
-            {"http_status": response.status_code, "url": f"{base}{api}/system/status"},
-        )
-    if response.status_code != 200:
-        raise _not_the_app(response, label)
-    body = _json(response)
-    if not isinstance(body, dict):
-        raise ConnFailure(
-            f"The reply is not {label}'s API (it is not JSON). The URL probably points at "
-            "a web page or a proxy login; check the URL and any URL base."
-        )
-    app_name = str(body.get("appName") or "").strip()
-    version = str(body.get("version") or "").strip()
-    details = {"app": app_name or label, "version": version, "latency_ms": _latency(ms)}
-    if app_name and kind not in app_name.lower():
-        return ConnResult(
-            False,
-            f"Wrong application: this URL is {app_name}{' ' + version if version else ''}, "
-            f"not {label}. Check which URL goes in this slot.",
-            details,
-        )
-    name = app_name or label
-    return ConnResult(True, f"Connected: {name}{' ' + version if version else ''}.", details)
-
-
-# --------------------------------------------------------------------------- qBittorrent
-
-
-async def check_qbittorrent(cfg: QbitSettings) -> ConnResult:
-    base = cfg.url.strip().rstrip("/")
-    password = cfg.password.get_secret_value()
-    key = qbit_auth.backoff_key(base, cfg.username, password)
-    state = qbit_auth.state_of(key)
-    if state["paused"] and state.get("last_failure_kind") in ("bad_credentials", "banned"):
-        # Trying again with the same credentials would only add a failed attempt (and extend
-        # a ban); changing the URL or the credentials makes a new key and a fresh test.
-        raise ConnFailure(
-            f"Not tried again: the last login with these credentials failed and retries are "
-            f"paused until {state['paused_until']}, so this IP is not banned or kept banned. "
-            f"Last failure: {state['last_failure']}",
-            {"retry_state": state},
-        )
-    async with _client(headers=qbit_auth.request_headers(base)) as client:
-        login, _ = await _request(
-            client,
-            "POST",
-            f"{base}/api/v2/auth/login",
-            data={"username": cfg.username, "password": password},
-        )
-        diagnosis = qbit_auth.diagnose_login(login, base)
-        if not diagnosis.accepted:
-            until = qbit_auth.record_failure(key, diagnosis)
-            raise ConnFailure(
-                diagnosis.message() + qbit_auth.pause_note(until), diagnosis.details()
-            )
-        version, ms = await _request(client, "GET", f"{base}/api/v2/app/version")
-        # (an `unverified` login, 2xx with no body and no cookie, is proved by the version call)
-        failure = (
-            qbit_auth.after_probe(diagnosis, version.status_code)
-            if (diagnosis.kind == "unverified")
-            else None
-        )
-        if failure:
-            qbit_auth.record_failure(key, failure)
-            raise ConnFailure(failure.message(), failure.details())
-        qbit_auth.record_success(key)
-    if version.status_code != 200:
-        excerpt = " ".join(version.text.split())[:200]
-        raise ConnFailure(
-            f"Logged in, but asking for the version was refused (HTTP {version.status_code}, "
-            f'body "{excerpt}"). Check the WebUI security settings of qBittorrent '
-            "(CSRF protection, host header validation).",
-            {"http_status": version.status_code},
-        )
-    number = version.text.strip()
-    return ConnResult(
-        True,
-        f"Connected: qBittorrent {number}, login OK.",
-        {"app": "qBittorrent", "version": number, "latency_ms": _latency(ms)},
-    )
 
 
 # --------------------------------------------------------------------------- Prometheus
@@ -533,15 +427,6 @@ def _current_node(
     kind: str, stored: dict[str, Any], body: dict[str, Any], index: int | None
 ) -> Any:
     """The stored counterpart of the tested form node, used to un-mask secrets."""
-    arr = stored["arr"]
-    if kind in ("radarr", "sonarr", "whisparr"):
-        items = arr[kind]
-        for item in items:
-            if item.get("name") == body.get("name"):
-                return item
-        return items[index] if index is not None and 0 <= index < len(items) else {}
-    if kind in ("prowlarr", "qbittorrent"):
-        return arr[kind] or {}
     if kind == "mcp":
         items = stored["mcp"]["servers"]
         for item in items:
@@ -591,13 +476,7 @@ async def run_test(
     ]
     run: Awaitable[ConnResult]
     try:
-        if kind in ARR_APPS:
-            arr_cfg = ArrInstance.model_validate(_pick(merged, ("name", "url", "api_key")))
-            run = check_arr(kind, arr_cfg)
-        elif kind == "qbittorrent":
-            qbit_cfg = QbitSettings.model_validate(_pick(merged, ("url", "username", "password")))
-            run = check_qbittorrent(qbit_cfg)
-        elif kind == "prometheus":
+        if kind == "prometheus":
             prom_cfg = PrometheusConn.model_validate(
                 _pick(merged, ("url", "token", "username", "password"))
             )

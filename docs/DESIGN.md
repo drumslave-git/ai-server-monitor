@@ -4,15 +4,14 @@ An AI-powered monitor for a single self-hosted Linux server. It continuously col
 read-only information about the host (resources, hardware, Docker, updates, logs,
 Prometheus), has an LLM (any OpenAI-compatible API) write a status report every N
 minutes, streams that report to a web UI and Telegram, answers questions in chat, and
-can optionally automate the *arr stack (Radarr, Sonarr, Prowlarr, Whisparr) and
-qBittorrent under per-action policy.
+can call tools of external MCP servers under per-action policy.
 
 ## Goals and non-goals
 
 **Goals**
 - Works with *any* OpenAI-compatible endpoint, including small local models (7–14B)
   with weak or no tool-calling, as well as strong cloud models.
-- Strictly read-only towards the host. The only write access is to *arr/qBit APIs,
+- Strictly read-only towards the host. The only write access is MCP tool calls,
   and every write is policy-gated and audited.
 - Single container, simple config, no external database.
 - Useful output: what is happening, what is eating resources, health, pending updates,
@@ -50,7 +49,7 @@ qBittorrent under per-action policy.
  journal ─────► │   gpu, systemd/journal,         │               ▼                │
  apt state ───► │   prometheus, image-updates     │         Report engine ──► LLM  │
  Prometheus ──► │                                 │               │  (stream)      │
-                │ *arr / qBit clients ◄── Action layer (policy, limits, audit)     │
+                │ MCP client ◄─────────── Action layer (policy, limits, audit)     │
                 │        ▲                        ▲               │                │
                 │        └──── Tool registry ─────┴── Chat engine ┤                │
                 │                                                 ▼                │
@@ -73,7 +72,7 @@ qBittorrent under per-action policy.
   compact, pre-analyzed text/JSON digest *before* the LLM sees it:
   top-N processes and containers by CPU/RAM/IO, deltas since the last report,
   threshold breaches, rule-based anomaly flags, trend summaries, pending updates,
-  failed units, log error bursts, *arr queue/health summary. Has a token budget and
+  failed units, log error bursts. Has a token budget and
   truncates by priority.
 - **Report engine** — one streamed chat-completion call per interval with a fixed
   system prompt + digest + the previous report's summary (for continuity). No
@@ -88,13 +87,12 @@ qBittorrent under per-action policy.
     (`{"tool": ..., "args": ...}`) parsed and validated by us.
   - Mode is auto-detected at startup with a probe, overridable in config.
 - **Tool registry** — single source of truth for everything the LLM can call: read
-  tools (query metrics, list containers, read logs, PromQL query, *arr search/lookup)
-  and write tools (*arr/qBit actions). Each tool has a JSON schema, a description, and
+  tools (query metrics, list containers, read logs, PromQL query)
+  and write tools (MCP tool calls). Each tool has a JSON schema, a description, and
   a `kind: read|write`. Write tools always go through the action layer.
-- **Action layer** — every *arr/qBit write passes through here:
+- **Action layer** — every write passes through here:
   - Per-action policy: `off | suggest | approve | auto`.
-  - Rate limits / caps (e.g. max N torrent removals per hour, max N searches per run).
-  - Global `dry_run` switch.
+  - Rate limits / caps (e.g. max N calls per hour).
   - Pending approvals are stored and surfaced as buttons in the UI and Telegram
     inline keyboards; they expire after a configurable time.
   - Everything (suggested, approved, rejected, executed, failed) is written to the
@@ -103,11 +101,11 @@ qBittorrent under per-action policy.
   and action results are published once and fanned out to SSE, Telegram, and metrics.
 - **Outputs**
   - **Web UI** — dashboard (live metrics, health, top consumers), live report stream,
-    report history, chat, approvals queue, action audit log, *arr overview, settings view.
+    report history, chat, approvals queue, action audit log, settings view.
   - **Telegram** — report every interval (or configurable: every Nth / only on status
     change), alerts, chat, approval inline buttons. Restricted to an allowlist of chat IDs.
   - **Prometheus `/metrics`** — health score, finding counts by severity, collector
-    success/latency, LLM latency/tokens/errors, *arr queue sizes, stalled downloads,
+    success/latency, LLM latency/tokens/errors,
     actions by type/result, pending approvals.
 
 ## Data sources
@@ -126,7 +124,6 @@ Docker API access through a GET-only socket proxy (see `docker/compose.example.y
 | systemd units | `dbus-fast` → `/host/run/dbus/system_bus_socket`: `ListUnits`, failed units with result + since, `NRestarts` deltas, `SystemState` |
 | Journal | `journalctl --directory=/host/var/log/journal -o json -p warning`, continued by cursor: counts by priority/source, grouped normalized messages, notable kernel events (OOM, I/O, FS errors, segfaults, MCE, thermal, GPU Xid) |
 | Prometheus | PromQL HTTP API (`promql.py`: instant/range queries, normalized and capped results); configured named queries run by the collector, free-form `promql_query` chat tool comes later |
-| *arr / qBit | (M9) Radarr/Sonarr/Whisparr v3 API, Prowlarr v1 API, qBittorrent WebUI API v2 |
 
 Collector results are kept in memory (latest per collector, served at
 `/api/collectors[/{name}]`) and persisted to `collector_samples` at most every
@@ -134,18 +131,6 @@ Collector results are kept in memory (latest per collector, served at
 
 Every collector can be disabled in config, and missing mounts or devices degrade
 gracefully (the collector reports "unavailable").
-
-## *arr / qBittorrent automation (v1)
-
-| Automation | Description | Default policy |
-|---|---|---|
-| Stalled/failed cleanup | Find torrents that are stalled (no progress for X h, no seeds, `metaDL` stuck, error state) or *arr queue items with import failures; remove them from the client, blocklist the release in the owning *arr, trigger a re-search | `approve` |
-| Missing / cutoff search | Periodically trigger searches for missing items and cutoff-unmet upgrades in small batches (rate-limited so indexers aren't hammered) | `suggest` |
-| Add via chat | "Add Dune Part Two in 4K" → lookup → candidate list → choose quality profile / root folder → confirm → add + search | `approve` |
-| Health / indexer triage | Read *arr health checks and Prowlarr indexer status; explain issues in reports; suggest/apply fixes such as testing or disabling a failing indexer | `suggest` |
-
-Each automation is a write tool in the registry, so the same actions are available to
-the scheduler (rule-driven), the report engine (as suggestions), and chat.
 
 ## Configuration
 
@@ -197,7 +182,6 @@ There are no config files.
   the next report would be written from, `?format=text` for plain text).
 - `POST /api/chat` (SSE response), `GET /api/chat/sessions`.
 - `GET /api/actions`, `GET /api/approvals`, `POST /api/approvals/{id}` (approve/reject).
-- `GET /api/arr/overview`.
 - There is no separate `/api/config`: `GET /api/settings` already returns the settings with secrets masked.
 - `GET /metrics` (Prometheus text format, hand-rolled in `outputs/metrics.py`; on/off and an
   optional scrape bearer token in Settings → Outputs → metrics), `GET /healthz`. Series (prefix
@@ -206,8 +190,7 @@ There are no config files.
   `collector_up|duration_seconds|errors_total|last_success_timestamp_seconds{collector}`,
   `llm_request_duration_seconds` (histogram), `llm_requests_total{result}`,
   `llm_tokens_total{direction}`, `llm_errors_total{type}`, `build_info{version}`, and for the
-  action layer / *arr: `actions_total{action,result}`, `pending_approvals`, `arr_up{app}`,
-  `arr_queue_size{app}`, `arr_stalled_downloads{app}`, `qbittorrent_torrents{state}`. Other modules
+  action layer: `actions_total{action,result}`, `pending_approvals`, `pending_approval_batches`. Other modules
   add series with `MetricsHub.add_provider` (the action layer lists its names in `metrics.py`).
   An example Grafana dashboard is in `docs/grafana-dashboard.json`.
 
@@ -216,7 +199,7 @@ There are no config files.
 - Host mounts are read-only; the Docker socket should go through a GET-only socket
   proxy where possible (documented in the compose example).
 - Secrets are never sent to the LLM; tool outputs are scrubbed of API keys/passwords.
-- Log lines and *arr data are untrusted input for the LLM: they are clearly delimited
+- Log lines and tool results are untrusted input for the LLM: they are clearly delimited
   in prompts, and no write action can be executed solely because of text found in
   data — writes always go through the policy layer.
 - Telegram restricted to allowlisted chat IDs. No built-in web auth: the docs require a
@@ -242,7 +225,6 @@ backend/
     report/            # report engine, prompts, output parsing
     chat/              # chat engine
     tools/             # tool registry + read tools
-    arr/               # API clients (radarr, sonarr, whisparr, prowlarr, qbit) + automations
     actions/           # policy, limits, approvals, audit
     outputs/           # sse (+ live metric ticks); telegram, metrics later
   tests/
@@ -263,7 +245,6 @@ docs/
 6. **Web UI** — dashboard, live report, history, chat, approvals, audit log.
 7. **Telegram bot** — reports, alerts, chat, approval buttons.
 8. **Prometheus `/metrics` exporter**.
-9. ***arr / qBit clients + action layer** — clients, policy, limits, approvals, audit.
-10. ***arr automations** — stalled cleanup, missing/cutoff search, add via chat, indexer triage.
-11. **Chat tool-calling** — tool registry, native + JSON fallback modes.
-12. **Packaging & docs** — compose example, README, GitHub Actions image publish.
+9. **Action layer** — policy, limits, approvals, audit.
+10. **Chat tool-calling** — tool registry, native + JSON fallback modes.
+11. **Packaging & docs** — compose example, README, GitHub Actions image publish.

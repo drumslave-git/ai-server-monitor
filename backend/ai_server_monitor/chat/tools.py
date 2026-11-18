@@ -18,7 +18,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..actions import REGISTRY as ACTIONS
 from ..actions import ActionError
-from ..arr import ArrApp, ArrError
 from ..config import Settings
 from ..digest.snapshot import sanitize
 from ..promql import PromQL, PromQLError
@@ -129,7 +128,7 @@ async def _get_status(ctx: ToolContext, args: NoArgs) -> Any:
 
 class CollectorArgs(_Args):
     collector: str = Field(
-        description="system, docker, gpu, systemd, journal, apt, image_updates, prometheus or arr"
+        description="system, docker, gpu, systemd, journal, apt, image_updates or prometheus"
     )
     section: str | None = Field(
         default=None,
@@ -178,7 +177,6 @@ FALLBACKS = {
     "run_command": "the matching tool: get_collector_data, disk_usage, container_inspect",
     "get_collector_data": "run_command (e.g. `df -h`, `free -h`, `ps aux`) or get_status",
     "metric_history": "get_collector_data for the current value",
-    "diagnose_service": "container_logs and the service's settings, one at a time",
 }
 """What to try when a tool fails (appended to its error, so a small model does not stop at
 'unable to retrieve')."""
@@ -359,124 +357,6 @@ async def _promql(ctx: ToolContext, args: PromQLArgs) -> Any:
     return result.to_dict()
 
 
-ArrKind = Literal["radarr", "sonarr", "whisparr"]
-
-
-class ArrTarget(_Args):
-    app: ArrKind
-    instance: str | None = Field(
-        default=None, description="Instance name; optional when only one is configured."
-    )
-
-
-class ArrLookupArgs(ArrTarget):
-    term: str = Field(min_length=1, max_length=100, description="Title to search for.")
-
-
-def _arr_app(ctx: ToolContext, args: ArrTarget) -> ArrApp:
-    apps = ctx.app.actions.clients.apps
-    names = [name for (kind, name) in apps if kind == args.app]
-    if not names:
-        raise ToolError(f"no {args.app} instance is configured")
-    name = args.instance or (names[0] if len(names) == 1 else None)
-    if name is None or (args.app, name) not in apps:
-        raise ToolError(f"choose an instance: {', '.join(names)}")
-    return apps[(args.app, name)]
-
-
-def _guard(exc: ArrError) -> ToolError:
-    return ToolError(str(exc))
-
-
-async def _arr_lookup(ctx: ToolContext, args: ArrLookupArgs) -> Any:
-    app = _arr_app(ctx, args)
-    try:
-        found = await app.lookup(args.term)
-    except ArrError as exc:
-        raise _guard(exc) from exc
-    keep = ("title", "year", "tmdbId", "tvdbId", "imdbId", "status", "overview")
-    return {
-        "instance": app.name,
-        "candidates": [
-            {
-                **{k: c[k] for k in keep if c.get(k) not in (None, "")},
-                "in_library": bool(c.get("id")),
-            }
-            for c in found[:LOOKUP_RESULTS]
-        ],
-        "shown": min(len(found), LOOKUP_RESULTS),
-        "found": len(found),
-    }
-
-
-async def _quality_profiles(ctx: ToolContext, args: ArrTarget) -> Any:
-    app = _arr_app(ctx, args)
-    try:
-        return {
-            "instance": app.name,
-            "quality_profiles": [
-                {"id": p.get("id"), "name": p.get("name")} for p in await app.quality_profiles()
-            ],
-        }
-    except ArrError as exc:
-        raise _guard(exc) from exc
-
-
-async def _root_folders(ctx: ToolContext, args: ArrTarget) -> Any:
-    app = _arr_app(ctx, args)
-    try:
-        return {
-            "instance": app.name,
-            "root_folders": [
-                {"path": f.get("path"), "free_bytes": f.get("freeSpace")}
-                for f in await app.root_folders()
-            ],
-        }
-    except ArrError as exc:
-        raise _guard(exc) from exc
-
-
-async def _arr_overview(ctx: ToolContext, args: NoArgs) -> Any:
-    result = ctx.app.collectors.latest.get("arr")
-    if result is None or not result.ok:
-        raise ToolError("no *arr/qBittorrent data yet (not configured, or not collected yet)")
-    data = result.data
-    apps = [
-        {
-            "type": a["type"],
-            "name": a["name"],
-            "ok": a["ok"],
-            "error": a.get("error"),
-            "queue": {k: v for k, v in (a.get("queue") or {}).items() if k != "items"},
-            "queue_problems": [
-                {k: r.get(k) for k in ("id", "title", "tracked_state", "messages")}
-                for r in (a.get("queue") or {}).get("items", [])
-                if r["problem"]
-            ][:8],
-            "wanted": a.get("wanted"),
-            "health": a.get("health"),
-        }
-        for a in data.get("apps", [])
-    ]
-    qbit = data.get("qbittorrent") or {}
-    return {
-        "summary": data.get("summary"),
-        "findings": data.get("findings"),
-        "apps": apps,
-        "failing_indexers": [
-            i for i in (data.get("prowlarr") or {}).get("indexers", []) if i.get("failing")
-        ],
-        "qbittorrent": {
-            "summary": qbit.get("summary"),
-            "stalled_total": qbit.get("stalled_total"),
-            "stalled": [
-                {k: t.get(k) for k in ("hash", "name", "state", "progress", "inactive_s")}
-                for t in qbit.get("stalled", [])[:10]
-            ],
-        },
-    }
-
-
 class RecentActionsArgs(_Args):
     limit: int = Field(default=10, ge=1, le=30)
     status: str | None = Field(
@@ -531,36 +411,9 @@ _NOTES = {
 }
 
 
-async def _resolve_torrent(ctx: ToolContext, name: str) -> tuple[str, str]:
-    """(hash, full name) of the one torrent whose name matches `name`; the model gives a name
-    instead of fumbling with a query to find the hash."""
-    qbit = ctx.app.actions.clients.qbit
-    if qbit is None:
-        raise ToolError("qBittorrent is not configured")
-    try:
-        torrents = await qbit.torrents()
-    except Exception as exc:
-        raise ToolError(f"cannot list the torrents: {exc}"[:300]) from exc
-    needle = name.strip().lower()
-    hits = [t for t in torrents if needle in str(t.get("name", "")).lower()]
-    exact = [t for t in hits if str(t.get("name", "")).lower() == needle]
-    hits = exact or hits
-    if not hits:
-        raise ToolError(f"no torrent in qBittorrent matches {name!r}")
-    if len(hits) > 1:
-        shown = "; ".join(str(t.get("name"))[:80] for t in hits[:8])
-        raise ToolError(
-            f"{len(hits)} torrents match {name!r}: {shown}. Ask which one (or call again with "
-            "more of the name)."
-        )
-    return str(hits[0]["hash"]), str(hits[0].get("name") or name)
-
-
 def _write_handler(action: str) -> Handler:
     async def handler(ctx: ToolContext, args: BaseModel) -> Any:
         payload = args.model_dump(exclude_none=True)
-        if action == "qbit_delete_torrent" and not payload.get("hash"):
-            payload["hash"], payload["title"] = await _resolve_torrent(ctx, payload["name"])
         try:
             record = await ctx.app.actions.request(
                 action,
@@ -585,15 +438,6 @@ def _write_handler(action: str) -> Handler:
     return handler
 
 
-_WRITE_CONFIG: dict[str, Callable[[Settings], bool]] = {
-    "qbit_delete_torrent": lambda s: s.arr.qbittorrent is not None,
-    "arr_remove_queue_item": lambda s: bool(s.arr.radarr or s.arr.sonarr or s.arr.whisparr),
-    "arr_search": lambda s: bool(s.arr.radarr or s.arr.sonarr or s.arr.whisparr),
-    "arr_add_media": lambda s: bool(s.arr.radarr or s.arr.sonarr or s.arr.whisparr),
-    "prowlarr_test_indexer": lambda s: s.arr.prowlarr is not None,
-}
-
-
 def _write_tools() -> list[Tool]:
     tools = []
     for name, definition in ACTIONS.items():
@@ -604,10 +448,7 @@ def _write_tools() -> list[Tool]:
         def enabled(
             settings: Settings, name: str = name, definition: Any = definition, sample: Any = sample
         ) -> bool:
-            if not _WRITE_CONFIG[name](settings):
-                return False
-            policy_key = definition.policy_key(sample)
-            return getattr(settings.arr.actions, policy_key).policy != "off"
+            return definition.policy_of(settings, sample) != "off"
 
         tools.append(
             Tool(
@@ -629,28 +470,13 @@ def _write_tools() -> list[Tool]:
 
 
 def _sample_args(definition: Any) -> Any:
-    """An instance of the action's args to ask `policy_key` which policy applies. The key
-    only depends on `purpose` (searches); the default is enough for the on/off check."""
+    """An instance of the action's args to ask `policy_of` whether the action is on at all."""
     fields = definition.args_model.model_fields
     values: dict[str, Any] = {}
     for key, info in fields.items():
         if info.is_required():
-            values[key] = _PLACEHOLDERS.get(key, "x")
+            values[key] = "x"
     return definition.args_model.model_construct(**values)
-
-
-_PLACEHOLDERS: dict[str, Any] = {
-    "app": "radarr",
-    "ids": [1],
-    "hash": "0" * 40,
-    "queue_id": 1,
-    "indexer_id": 1,
-    "quality_profile_id": 1,
-}
-
-
-def _arr_configured(settings: Settings) -> bool:
-    return bool(settings.arr.radarr or settings.arr.sonarr or settings.arr.whisparr)
 
 
 READ_TOOLS: list[Tool] = [
@@ -690,40 +516,6 @@ READ_TOOLS: list[Tool] = [
         enabled=lambda s: bool(s.collectors.prometheus.url),
     ),
     Tool(
-        "arr_lookup",
-        "Search Radarr/Sonarr/Whisparr for a movie or series to add. Returns candidates "
-        "with their TMDB/TVDB ids.",
-        ArrLookupArgs,
-        "read",
-        _arr_lookup,
-        enabled=_arr_configured,
-    ),
-    Tool(
-        "arr_quality_profiles",
-        "Quality profiles of a Radarr/Sonarr/Whisparr instance (needed to add media).",
-        ArrTarget,
-        "read",
-        _quality_profiles,
-        enabled=_arr_configured,
-    ),
-    Tool(
-        "arr_root_folders",
-        "Root folders of a Radarr/Sonarr/Whisparr instance (needed to add media).",
-        ArrTarget,
-        "read",
-        _root_folders,
-        enabled=_arr_configured,
-    ),
-    Tool(
-        "get_arr_overview",
-        "Download queues, problems, stalled torrents and failing indexers across the "
-        "*arr apps, Prowlarr and qBittorrent.",
-        NoArgs,
-        "read",
-        _arr_overview,
-        enabled=lambda s: _arr_configured(s) or bool(s.arr.qbittorrent or s.arr.prowlarr),
-    ),
-    Tool(
         "list_pending_approvals",
         "Actions waiting for the owner's approval.",
         NoArgs,
@@ -749,15 +541,6 @@ def build_tools(
 
     tools = [*READ_TOOLS, *host_tools(assume_linux), *_write_tools()]
     found = {t.name: t for t in tools if t.enabled(settings)}
-    from ..apiaccess import api_tool_specs  # (the specs are plain data; keep imports local)
-
-    for spec in api_tool_specs(settings, error_cls=ToolError):
-        found.setdefault(spec.name, Tool(**spec.as_kwargs()))
-    from ..apiaccess.diagnose import diagnose_tool_spec  # (imports conntest: late)
-
-    diagnose = diagnose_tool_spec(ToolError)
-    if diagnose.enabled(settings):
-        found.setdefault(diagnose.name, Tool(**diagnose.as_kwargs()))
     if mcp is not None:
         from ..mcp_client import build_mcp_tools  # (imports this module: not at the top)
 

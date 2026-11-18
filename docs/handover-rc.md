@@ -10,7 +10,7 @@ line, inline approval cards for write tools, stop button, errors, phone layout);
 
 **Run the demo**: `npm run build` in `frontend/`, then
 `cd backend && python ../scripts/dev/demo_server.py --llm-url https://ollama.tcloud.monster/v1 --llm-model gemma4:e4b --tool-mode auto`
-(port 8099; fixture collectors + fake *arr world; one approval seeded). Screenshots:
+(port 8099; fixture collectors). Screenshots:
 `node scripts/dev/screenshots.mjs docs/samples/ui http://127.0.0.1:8099 [name,name]`
 (headless Chrome over DevTools; `CHAT_WAIT`/`SHOT_WAIT` env in ms; chat shots send a real question to the LLM).
 

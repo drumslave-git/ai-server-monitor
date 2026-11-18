@@ -428,7 +428,6 @@ const SOURCE_LABELS: Record<string, string> = {
   apt: "apt",
   image_updates: "Image updates",
   prometheus: "Prometheus",
-  arr: "*arr",
 };
 
 function SourcesPanel({ collectors, now, paused }: { collectors: Collectors; now: number; paused: boolean }) {

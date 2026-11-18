@@ -98,8 +98,7 @@ class ChatEngine:
         promql_transport: Any = None,
         tools_builder: Callable[[Settings, Any], dict[str, Tool]] | None = None,
     ):
-        """`tools_builder(settings, mcp)` replaces `build_tools` (the model benchmarks swap the
-        executors of the real tools for a frozen world)."""
+        """`tools_builder(settings, mcp)` replaces `build_tools` (tests swap the tool set)."""
         self.app = app
         self.store = ChatStore(app.db)
         self._promql_transport = promql_transport

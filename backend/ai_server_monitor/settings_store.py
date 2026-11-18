@@ -23,7 +23,7 @@ def merge_secrets(incoming: Any, current: Any) -> Any:
 
     The API never returns secrets, only SECRET_MASK; a client sending the mask back
     means "keep what is stored". List items are matched by their `name` when they have
-    one (so deleting/reordering *arr instances keeps the right keys), else by index.
+    one (so deleting/reordering MCP servers keeps the right keys), else by index.
     """
     if incoming == SECRET_MASK:
         return current if isinstance(current, str) else ""
@@ -108,7 +108,7 @@ def lenient_validate(raw: dict[str, Any]) -> tuple[Settings, list[str]]:
             loc = tuple(err["loc"])
             problems.append(f"{'.'.join(map(str, loc))}: {err['msg']}")
             # Drop the offending value; if it can't be dropped (a *missing* required
-            # field), drop its parent instead, e.g. the incomplete *arr instance.
+            # field), drop its parent instead, e.g. the incomplete MCP server.
             if not any(_delete_path(data, loc[:depth]) for depth in range(len(loc), 0, -1)):
                 break
     return Settings(), [*problems, "stored settings unusable; using defaults"]

@@ -12,8 +12,6 @@ const EVENT_TYPES = [
   "report.cancelled",
   "automation.changed",
   "llm.call",
-  "bench.progress",
-  "bench.done",
   "metrics.tick",
   "collector.status",
   "action.suggested",

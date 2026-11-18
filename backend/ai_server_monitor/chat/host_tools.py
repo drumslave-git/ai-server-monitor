@@ -40,7 +40,7 @@ RESULT_SHARE = 0.7
 """Share of `chat.max_tool_result_chars` a command's output may use (the rest is JSON framing
 and escaping), so the engine's own trimming never has to cut command output."""
 ATTRIBUTION_TIMEOUT_S = 60.0
-"""Owner lookup (Docker / *arr API calls) next to a disk scan: it may only add information, so
+"""Owner lookup (Docker API calls) next to a disk scan: it may only add information, so
 it never fails the answer; generous because the scan may be long anyway."""
 SCAN_CPU_S = 3600
 """CPU-time limit of one `du` of a disk scan (the sandbox default of 60 s is for ordinary
@@ -144,7 +144,7 @@ async def _docker_api(ctx: ToolContext) -> Any:
 
 
 async def _locations(ctx: ToolContext) -> attribution.Locations:
-    """Everything known about who owns which host path, from Docker and the *arr apps.
+    """Everything known about who owns which host path, from Docker.
     Failures are noted, never raised: a breakdown without owners is still useful."""
     locations = attribution.Locations()
     containers: list[dict[str, Any]] = []
@@ -155,25 +155,12 @@ async def _locations(ctx: ToolContext) -> attribution.Locations:
         attribution.add_docker(locations, containers, info)
     except (ToolError, CollectorUnavailable, PermissionError, httpx.HTTPError) as exc:
         locations.errors.append(f"docker: {exc}"[:200])
-    roots: list[dict[str, Any]] = []
-    try:
-        apps = ctx.app.actions.clients.apps
-    except AttributeError:
-        apps = {}
-    for (kind, name), app in apps.items():
-        try:
-            for folder in await app.root_folders():
-                if folder.get("path"):
-                    roots.append({"app": kind, "instance": name, "path": folder["path"]})
-        except Exception as exc:
-            locations.errors.append(f"{kind} {name}: {exc}"[:200])
-    attribution.add_arr(locations, roots, containers)
     return locations
 
 
 def _scan_runner(sandbox: Sandbox) -> Any:
     """The sandbox as a disk scan uses it: enough CPU time, and an IO priority that is not
-    starved for as long as anything else (a torrent client) keeps the disk busy."""
+    starved for as long as anything else (a download client) keeps the disk busy."""
 
     def run(stages: list[list[str]], **kwargs: Any) -> Any:
         return sandbox.run(stages, cpu_s=SCAN_CPU_S, io_best_effort=True, **kwargs)
@@ -452,7 +439,7 @@ async def _container_logs(ctx: ToolContext, args: ContainerLogsArgs) -> Any:
 
 
 class MetricHistoryArgs(_Args):
-    collector: str = Field(description="system, docker, gpu, systemd, journal, arr, ...")
+    collector: str = Field(description="system, docker, gpu, systemd, journal, ...")
     metric: str = Field(
         description="Dotted path into the collector data, e.g. filesystems.used, "
         "memory.percent, load.load1."
@@ -477,8 +464,7 @@ async def _metric_history_tool(ctx: ToolContext, args: MetricHistoryArgs) -> Any
 
 
 def host_tools(assume_linux: bool = False) -> list[Tool]:
-    """`assume_linux`: offer the tools whatever this machine is (the model benchmarks put the
-    real tool set in front of the model on a development PC, with the executors swapped)."""
+    """`assume_linux`: offer the tools whatever this machine is (tests on a development PC)."""
     linux = lambda s: assume_linux or os.name == "posix"  # noqa: E731
     return [
         Tool(
@@ -496,7 +482,7 @@ def host_tools(assume_linux: bool = False) -> list[Tool]:
         Tool(
             "disk_usage",
             "What takes the space under a host path: biggest directories (or files) with sizes "
-            "and what owns them (Docker volume or bind mount, *arr library, Docker data...). "
+            "and what owns them (Docker volume or bind mount, Docker data...). "
             "Use this for 'what is on that disk?'. Slow on huge disks: gives partial results.",
             DiskUsageArgs,
             "read",
@@ -515,7 +501,7 @@ def host_tools(assume_linux: bool = False) -> list[Tool]:
         Tool(
             "listening_ports",
             "Which port is open and WHO owns it: the host's listening sockets joined with the "
-            "Docker containers that publish them (e.g. 8080 -> qbittorrent). Use this for 'what "
+            "Docker containers that publish them (e.g. 8080 -> nginx). Use this for 'what "
             "is listening on port X' instead of `ss`, which cannot name other users' processes.",
             ListeningPortsArgs,
             "read",

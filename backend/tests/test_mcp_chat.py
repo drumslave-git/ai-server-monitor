@@ -107,7 +107,7 @@ async def test_write_tool_becomes_a_pending_approval_then_runs_on_approve(
         assert record["action"] == "mcp_call" and record["source"].startswith("chat:")
         assert record["target"] == "home · set_heating"
         assert record["args"]["arguments"] == {"room": "bedroom", "on": False}
-        # approve → executed on the server, although arr.dry_run (default on) says otherwise
+        # approve → executed on the server (mcp.dry_run is off by default)
         done = await app.actions.decide(record["id"], "approve")
         assert done["status"] == "executed", done
         assert done["result"]["result"] == {"text": "heating in bedroom is now off"}

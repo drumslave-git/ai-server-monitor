@@ -256,7 +256,7 @@ async def test_image_updates_from_the_m3_collector(db: Database) -> None:
                 "summary": {"total": 3, "up_to_date": 1, "update_available": 2, "unknown": 0},
                 "updates_available": [
                     "ghcr.io/ggml-org/llama.cpp:server-cuda",
-                    "lscr.io/linuxserver/sonarr:latest",
+                    "lscr.io/linuxserver/nginx:latest",
                 ],
                 "images": [
                     {
@@ -266,8 +266,8 @@ async def test_image_updates_from_the_m3_collector(db: Database) -> None:
                         "reason": None,
                     },
                     {
-                        "image": "lscr.io/linuxserver/sonarr:latest",
-                        "containers": ["sonarr"],
+                        "image": "lscr.io/linuxserver/nginx:latest",
+                        "containers": ["nginx"],
                         "status": "update_available",
                         "reason": None,
                     },
@@ -280,7 +280,7 @@ async def test_image_updates_from_the_m3_collector(db: Database) -> None:
     assert ("info", "2 container images have updates") in titles(d)
     assert (
         "container images with newer builds: 2 of 3 — ghcr.io/ggml-org/llama.cpp:server-cuda "
-        "(llamacpp-embedding), lscr.io/linuxserver/sonarr:latest (sonarr)"
+        "(llamacpp-embedding), lscr.io/linuxserver/nginx:latest (nginx)"
     ) in d.text
     ok = await digest_of(
         db,

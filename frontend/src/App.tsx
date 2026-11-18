@@ -1,11 +1,9 @@
-import { Activity, Download, FileText, Gauge, MessageSquare, ScrollText, Settings, ShieldCheck, type LucideIcon } from "lucide-react";
+import { Activity, FileText, MessageSquare, ScrollText, Settings, ShieldCheck, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, type StatusResponse } from "./api";
 import { AutomationBar, AutomationProvider } from "./automation";
 import { useConnected, useStream } from "./live";
 import { ApprovalsPage } from "./pages/Approvals";
-import { ArrPage } from "./pages/Arr";
-import { BenchmarksPage } from "./pages/Benchmarks";
 import { ChatPage } from "./pages/Chat";
 import { DashboardPage } from "./pages/Dashboard";
 import { LogsPage } from "./pages/Logs";
@@ -16,10 +14,8 @@ const PAGES: { key: string; title: string; icon: LucideIcon }[] = [
   { key: "dashboard", title: "Dashboard", icon: Activity },
   { key: "reports", title: "Reports", icon: FileText },
   { key: "approvals", title: "Approvals", icon: ShieldCheck },
-  { key: "arr", title: "*arr", icon: Download },
   { key: "chat", title: "Chat", icon: MessageSquare },
   { key: "logs", title: "Logs", icon: ScrollText },
-  { key: "bench", title: "Bench", icon: Gauge },
   { key: "settings", title: "Settings", icon: Settings },
 ];
 
@@ -104,14 +100,10 @@ export function App() {
           <ReportsPage params={params} />
         ) : page === "approvals" ? (
           <ApprovalsPage params={params} />
-        ) : page === "arr" ? (
-          <ArrPage />
         ) : page === "chat" ? (
           <ChatPage />
         ) : page === "logs" ? (
           <LogsPage params={params} />
-        ) : page === "bench" ? (
-          <BenchmarksPage params={params} />
         ) : page === "settings" ? (
           <SettingsPage />
         ) : (

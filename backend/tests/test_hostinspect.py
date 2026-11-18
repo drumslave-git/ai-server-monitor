@@ -354,8 +354,8 @@ CONTAINERS: list[dict[str, Any]] = [
     },
     {
         "Id": "b" * 64,
-        "Names": ["/radarr"],
-        "Image": "lscr.io/linuxserver/radarr",
+        "Names": ["/nginx"],
+        "Image": "lscr.io/linuxserver/nginx",
         "Labels": {},
         "Mounts": [
             {"Type": "bind", "Source": "/mnt/disks/disk14TB", "Destination": "/data", "RW": True},
@@ -367,19 +367,14 @@ CONTAINERS: list[dict[str, Any]] = [
 def _locations() -> attribution.Locations:
     loc = attribution.Locations()
     attribution.add_docker(loc, CONTAINERS, {"DockerRootDir": "/var/lib/docker"})
-    attribution.add_arr(
-        loc, [{"app": "radarr", "instance": "main", "path": "/data/movies"}], CONTAINERS
-    )
     return loc
 
 
-def test_attribution_docker_mounts_volumes_and_arr_roots() -> None:
+def test_attribution_docker_mounts_and_volumes() -> None:
     loc = _locations()
     media = loc.owners("/mnt/disks/disk14TB/media")
     assert any("bind mount of container 'jellyfin'" in o and "read-only" in o for o in media)
-    assert any("inside bind mount of container 'radarr'" in o for o in media)
-    movies = loc.owners("/mnt/disks/disk14TB/movies")
-    assert any("radarr 'main' root folder /data/movies" in o for o in movies)
+    assert any("inside bind mount of container 'nginx'" in o for o in media)
     vol = loc.owners("/var/lib/docker/volumes/jf_config/_data")
     assert any("Docker volume 'jf_config'" in o and "jellyfin" in o for o in vol)
     assert any("Docker data root" in o for o in loc.owners("/var/lib/docker/overlay2/x"))
@@ -387,17 +382,10 @@ def test_attribution_docker_mounts_volumes_and_arr_roots() -> None:
     assert loc.owners("/home/nobody-knows") == []
 
 
-def test_attribution_arr_root_without_a_matching_container() -> None:
-    loc = attribution.Locations()
-    attribution.add_arr(loc, [{"app": "sonarr", "instance": "tv", "path": "/tv"}], CONTAINERS)
-    assert "host mapping unknown" in loc.owners("/tv")[0]
-
-
 def test_attribution_inside_lists_owners_below_a_path() -> None:
     below = _locations().inside("/mnt/disks/disk14TB")
     paths = [r["path"] for r in below]
     assert "/mnt/disks/disk14TB/media" in paths
-    assert "/mnt/disks/disk14TB/movies" in paths
     assert "/var/lib/docker" not in paths
 
 
@@ -538,7 +526,7 @@ def test_largest_files_sorted_and_flagged_when_partial() -> None:
 def test_container_inspect_hides_env_values_and_summarises() -> None:
     raw = {
         "Id": "c" * 64,
-        "Name": "/radarr",
+        "Name": "/nginx",
         "Created": "2026-01-01T00:00:00Z",
         "RestartCount": 3,
         "State": {
@@ -548,26 +536,26 @@ def test_container_inspect_hides_env_values_and_summarises() -> None:
                 {"ExitCode": 1, "Output": "curl: (7) connection refused"}]},
         },
         "Config": {
-            "Image": "lscr.io/linuxserver/radarr",
-            "Env": ["RADARR__AUTH__APIKEY=topsecretvalue", "TZ=Europe/Berlin", "PUID=1000"],
+            "Image": "lscr.io/linuxserver/nginx",
+            "Env": ["NGINX__AUTH__APIKEY=topsecretvalue", "TZ=Europe/Berlin", "PUID=1000"],
             "Labels": {"com.docker.compose.project": "media",
-                       "com.docker.compose.service": "radarr"},
+                       "com.docker.compose.service": "nginx"},
             "Cmd": ["/init"],
         },
         "HostConfig": {"RestartPolicy": {"Name": "unless-stopped"}, "NetworkMode": "media_default"},
-        "Mounts": [{"Type": "bind", "Source": "/srv/radarr", "Destination": "/config", "RW": True}],
+        "Mounts": [{"Type": "bind", "Source": "/srv/nginx", "Destination": "/config", "RW": True}],
         "NetworkSettings": {
-            "Ports": {"7878/tcp": [{"HostIp": "0.0.0.0", "HostPort": "7878"}], "9/udp": None},
+            "Ports": {"8081/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8081"}], "9/udp": None},
             "Networks": {"media_default": {}},
         },
     }  # fmt: skip
     out = summarize_inspect(raw)
     text = json.dumps(out)
     assert "topsecretvalue" not in text and "Europe/Berlin" not in text
-    assert out["env_names"] == ["PUID", "RADARR__AUTH__APIKEY", "TZ"]
-    assert out["ports"] == ["7878->7878/tcp"]
-    assert out["mounts"] == ["bind: /srv/radarr -> /config (rw)"]
-    assert out["compose_service"] == "radarr"
+    assert out["env_names"] == ["NGINX__AUTH__APIKEY", "PUID", "TZ"]
+    assert out["ports"] == ["8081->8081/tcp"]
+    assert out["mounts"] == ["bind: /srv/nginx -> /config (rw)"]
+    assert out["compose_service"] == "nginx"
     assert out["health"] == "unhealthy"
     assert out["health_log"][0]["output"].startswith("curl")
     assert out["restart_count"] == 3
@@ -630,29 +618,3 @@ async def test_metric_history_trend_from_samples(db: Database) -> None:
     assert len(out["series"]) <= history.MAX_POINTS + 1
     empty = await history.metric_history(db, "system", "memory.percent", None, 24, now=now)
     assert empty["samples"] == 0
-
-
-QBIT_CONF = r"""[Preferences]
-WebUI\Address=*
-WebUI\CSRFProtection=true
-WebUI\HostHeaderValidation=true
-WebUI\Password_PBKDF2="@ByteArray(Zq3t1xT5Zm9YkQ==:Qm9ndXNIYXNoVmFsdWU9PQ==)"
-WebUI\Port=8080
-WebUI\ServerDomains=qb.example.test
-WebUI\Username=admin
-"""
-
-
-def test_qbittorrent_conf_is_readable_but_its_password_hash_is_scrubbed() -> None:
-    """The chat looks at the WebUI settings (host header validation, server domains) of the
-    qBittorrent container through its bind mount; the password hash must not reach the model."""
-    path = "/srv/qbit/config/qBittorrent/qBittorrent.conf"
-    plan = parse_pipeline(f"grep -i webui {path}")
-    assert path in plan.stages[0]  # not on the deny list
-    shown = scrub_output(QBIT_CONF)
-    assert "ByteArray" not in shown and "Zq3t1x" not in shown
-    assert r"WebUI\HostHeaderValidation=true" in shown
-    assert r"WebUI\ServerDomains=qb.example.test" in shown
-    assert r"WebUI\Username=admin" in shown
-    unquoted = scrub_output("WebUI\\Password_PBKDF2=@ByteArray(abc:def)\n")
-    assert "abc" not in unquoted
