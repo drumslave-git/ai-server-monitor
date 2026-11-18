@@ -39,6 +39,15 @@ async def list_actions(
     )
 
 
+@router.get("/api/actions/{action_id}")
+async def get_action(action_id: int, request: Request) -> dict[str, Any]:
+    """One audit row, in the same shape as an item of `/api/actions`."""
+    try:
+        return await _ctx(request).actions.get(action_id)
+    except NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/api/approvals")
 async def list_approvals(request: Request) -> dict[str, Any]:
     """Approvals waiting for a decision (expired ones are swept first): `batches` has one

@@ -23,8 +23,9 @@ from dataclasses import dataclass
 from .shell import SEARCH_PATH, ShellResult, run_process
 
 COMPOSE_HINT = (
-    "add SYS_ADMIN and SYS_PTRACE to cap_add of the ai-server-monitor service in "
-    "compose.yaml (they are commented out in the example), then recreate the container"
+    "add the lines `- SYS_ADMIN` and `- SYS_PTRACE` under `cap_add:` of the "
+    "ai-server-monitor service in compose.yaml (next to `- DAC_READ_SEARCH`), "
+    "then run `docker compose up -d`"
 )
 PROBE_TIMEOUT_S = 10.0
 

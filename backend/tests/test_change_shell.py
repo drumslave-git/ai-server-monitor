@@ -64,13 +64,32 @@ def test_approved_command_runs_and_the_chat_continues_by_itself(
         assert "nginx restarted" in models.requests[-1]["text"]
         assert "exit code 0" in models.requests[-1]["text"]
         assert messages[-1]["meta"]["continued"] is True
+        # "chat.message" also matches "chat.message.updated" (the note, published first)
+        updated = client.portal.call(sub.__anext__)  # type: ignore[union-attr]
+        assert updated.type == "chat.message.updated"
         event = client.portal.call(sub.__anext__)  # type: ignore[union-attr]
-        assert event.data["session_id"] == done["session_id"]
+        assert event.type == "chat.message" and event.data["session_id"] == done["session_id"]
         assert event.data["text"] == "Restarted: nginx is running again."
         # the permanent audit row: command, reason, exit code, output
         [row] = client.get("/api/actions", params={"action": "host_command"}).json()["items"]
         assert row["status"] == "executed" and row["result"]["exit_code"] == 0
         assert row["result"]["output"] == "nginx restarted\n"
+        # one action by id, the same shape as in the list; 404 for an unknown id
+        assert client.get(f"/api/actions/{row['id']}").json() == row
+        assert client.get("/api/actions/99999").status_code == 404
+        # the approval's title is short; the command stays in the item's arguments
+        approval = client.get(f"/api/approvals/{batch['id']}").json()
+        assert approval["summary"] == "command on the host"
+        assert COMMAND not in approval["title"]
+        # the waiting note was updated to the outcome, and an open page was told
+        note = next(m for m in messages if m["id"] == done["message_id"])
+        assert (
+            note["content"] == f"Approval #{batch['id']}: {COMMAND}: approved and run, exit code 0."
+        )
+        assert note["meta"]["outcome"] == {str(row["id"]): "executed"}
+        assert note["meta"]["waiting_for"] == [row["id"]]
+        assert updated.data["message_id"] == done["message_id"]
+        assert updated.data["text"] == note["content"]
 
 
 def test_the_approve_call_returns_before_a_long_command_has_finished(
@@ -126,11 +145,20 @@ def test_a_rejected_or_expired_command_is_reported_back(
 
             client.portal.call(expire)  # type: ignore[union-attr]
             told = "expired"
-        wait_for_answer(client, done["session_id"], "Understood, nginx was not restarted.")
+        messages = wait_for_answer(
+            client, done["session_id"], "Understood, nginx was not restarted."
+        )
         assert root_shell == []
         assert told in models.requests[-1]["text"]
         [row] = client.get("/api/actions", params={"action": "host_command"}).json()["items"]
         assert row["status"] == ("rejected" if outcome == "reject" else "expired")
+        # the stored waiting note now says what happened
+        note = next(m for m in messages if m["id"] == done["message_id"])
+        assert note["content"] == (
+            f"Approval #{batch['id']}: {COMMAND}: "
+            + ("rejected." if outcome == "reject" else "expired without a decision.")
+        )
+        assert note["meta"]["outcome"] == {str(row["id"]): row["status"]}
 
 
 def test_auto_policy_runs_at_once_in_the_same_answer(
@@ -187,3 +215,10 @@ def test_never_offered_to_jobs_or_the_worker(
         ask(client, "have a look")
         main, worker, _ = models.requests[-3:]
         assert "bash_write" in main["tools"] and worker["tools"] == ["bash"]
+
+
+def test_the_missing_capabilities_reason_names_the_compose_lines() -> None:
+    from ai_server_monitor.agent.change_shell import COMPOSE_HINT
+
+    assert "`- SYS_ADMIN`" in COMPOSE_HINT and "`- SYS_PTRACE`" in COMPOSE_HINT
+    assert "`cap_add:`" in COMPOSE_HINT and "docker compose up -d" in COMPOSE_HINT

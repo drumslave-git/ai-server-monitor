@@ -147,7 +147,8 @@ working. It survives a restart. `GET /api/automation`, `POST /api/automation/pau
 - **Chat** — ask about the server ("what is using the most disk?"). Answers stream in; each tool
   call is shown with its command and output. The model sees the last `chat.history_messages`
   messages of a conversation.
-- **Approvals** — what waits for your decision, and the permanent audit log of every action.
+- **Approvals** — what waits for your decision, and the permanent audit log of every action
+  (`GET /api/approvals`, `GET /api/actions`, one action at `GET /api/actions/{id}`).
 - **Logs** — every request to a model exactly as sent and received (messages, tool definitions,
   answer, reasoning, token counts, timings), a timeline per chat question and per job run, and
   the app's own log with a live tail. Secrets are removed from what is stored; limits are in

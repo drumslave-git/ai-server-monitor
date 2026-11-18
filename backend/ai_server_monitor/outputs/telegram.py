@@ -668,7 +668,7 @@ class TelegramBot:
                     error = event["message"]
         finally:
             typing.cancel()
-        await self.send(chat_id, answer or f"⚠️ {error or 'No answer.'}")
+        await self.send(chat_id, answer or (error or "No answer."))
 
     async def _typing(self, chat_id: int) -> None:
         while True:

@@ -818,7 +818,7 @@ def test_chat_failure_is_reported_in_the_chat(bootstrap: Bootstrap) -> None:
     app = make_app(bootstrap, tg)  # no LLM configured
     with running(app, tg) as client:
         texts = ask(client, tg, message("hello?"), 1)
-    assert "not configured" in texts[0] and texts[0].startswith("⚠️")
+    assert "not configured" in texts[0] and not texts[0].startswith("⚠")  # plain words
 
 
 # --------------------------------------------------------------------------- jobs

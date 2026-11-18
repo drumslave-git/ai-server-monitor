@@ -33,7 +33,8 @@ TEST_TIMEOUT = 10.0
 KINDS = ("telegram", "mcp")
 TELEGRAM_API = "https://api.telegram.org"
 TELEGRAM_TEST_TEXT = (
-    "✅ AI Server Monitor: test message. This chat is set up to receive reports and alerts."
+    "AI Server Monitor: test message. This chat is set up to receive the summary and "
+    "approval requests."
 )
 
 

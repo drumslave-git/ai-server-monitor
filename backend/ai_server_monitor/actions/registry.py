@@ -102,6 +102,7 @@ _ACTIONS = (
         run=host_command.execute,
         chat_tool=False,
         background=True,
+        summary=host_command.summary,
     ),
 )
 

@@ -81,8 +81,9 @@ In the chat, an approval-required call is deferred by Pydantic AI (`DeferredTool
 `chat_pending_actions`, and the answer is the waiting note. `ChatEngine.on_action` resumes the
 run when every action of it is executed, failed, dry-run, rejected or expired: approved calls get
 the action's stored result (they are not run again), the others a `ToolDenied` with the reason.
-The new answer is stored and published as `chat.message`; Telegram sends it to the chat that
-asked. The generic `mcp_call` is deferred the same way when it reaches a write tool.
+Before that, the stored waiting note is rewritten to the outcome ("Approval #3: … approved and
+run, exit code 0.", `meta.outcome`) and published as `chat.message.updated`. The new answer is
+stored and published as `chat.message`; Telegram sends it to the chat that asked. The generic `mcp_call` is deferred the same way when it reaches a write tool.
 
 `host_command` (`bash_write`) runs `nsenter --target 1 --mount --uts --ipc --net --pid -- bash
 -c CMD` as root; `ChangeShell.probe()` checks at start whether that works, and

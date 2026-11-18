@@ -383,13 +383,34 @@ class ChatEngine:
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
+    async def _settle_note(self, session_id: str, records: list[dict[str, Any]]) -> None:
+        """The stored waiting note says what was decided (text, and `meta.outcome`: action id
+        → status), so a reloaded session does not show a stale "waiting"; an open page gets
+        `chat.message.updated`."""
+        try:
+            note = await self.store.waiting_note(session_id, {int(r["id"]) for r in records})
+            if note is None:
+                return
+            text = "\n".join(outcome_line(r) for r in records)
+            meta = {**(note["meta"] or {}), "outcome": {str(r["id"]): r["status"] for r in records}}
+            await self.store.update_message(int(note["id"]), text, meta)
+            self.app.events.publish(
+                "chat.message.updated",
+                {"session_id": session_id, "message_id": note["id"], "text": text, "meta": meta},
+            )
+        except Exception:
+            log.exception("chat: could not update the waiting note in %s", session_id)
+
     async def _resume(self, run: dict[str, Any], items: list[dict[str, Any]]) -> None:
         session_id, source = run["session_id"], run["source"]
         suspended = Suspended.from_json(json.loads(run["state"]))
         settled: dict[str, tuple[bool, str]] = {}
+        records = []
         for item in items:
             record = await self.app.actions.get(int(item["action_id"]))
+            records.append(record)
             settled[item["call_id"]] = settled_outcome(record)
+        await self._settle_note(session_id, records)
         results, resolved = resume_results(suspended, settled)
         final, failed = "", None
         lock = self._locks.setdefault(session_id, asyncio.Lock())
@@ -413,7 +434,7 @@ class ChatEngine:
                         final, message_id = event["text"], event["message_id"]
             except Exception as exc:
                 log.warning("chat: could not continue after the approval: %s", exc)
-                failed = f"⚠️ Could not continue after the approval: {exc}"
+                failed = f"Could not continue after the approval: {exc}"
                 message_id = await self.store.add_message(
                     session_id, "assistant", failed, meta={"continued": True, "error": True}
                 )
@@ -426,6 +447,25 @@ class ChatEngine:
                 "text": failed or final,
             },
         )
+
+
+_DECIDED = {
+    "executed": "approved and run",
+    "failed": "approved, but it failed",
+    "dry_run": "approved; dry run, nothing was done",
+    "rejected": "rejected",
+    "expired": "expired without a decision",
+}
+
+
+def outcome_line(record: dict[str, Any]) -> str:
+    """ "Approval #3: systemctl restart nginx: approved and run, exit code 0." """
+    words = _DECIDED.get(record["status"], record["status"])
+    result = record.get("result") or {}
+    if record["status"] == "executed" and result.get("exit_code") is not None:
+        words += f", exit code {result['exit_code']}"
+    approval = f"Approval #{record['batch_id']}: " if record.get("batch_id") else ""
+    return f"{approval}{record['target']}: {words}."
 
 
 def change_shell_offered(app: AppContext) -> bool:

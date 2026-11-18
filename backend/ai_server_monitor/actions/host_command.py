@@ -32,6 +32,11 @@ def target(args: HostCommandArgs) -> str:
     return command if len(command) <= 120 else command[:119] + "…"
 
 
+def summary(items: list[HostCommandArgs]) -> str:
+    """The approval's title: short and fixed (the command itself is shown with each item)."""
+    return "command on the host" if len(items) == 1 else f"{len(items)} commands on the host"
+
+
 def check(service: Any) -> str | None:
     shell = getattr(service, "change_shell", None)
     if shell is None or not shell.status.available:

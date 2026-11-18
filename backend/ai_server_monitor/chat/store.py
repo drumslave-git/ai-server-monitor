@@ -92,6 +92,25 @@ class ChatStore:
         )
         return message_id
 
+    async def update_message(self, message_id: int, content: str, meta: dict[str, Any]) -> None:
+        await self.db.execute(
+            "UPDATE chat_messages SET content = ?, meta = ? WHERE id = ?",
+            (content, json.dumps(meta), message_id),
+        )
+
+    async def waiting_note(self, session_id: str, action_ids: set[int]) -> dict[str, Any] | None:
+        """The newest assistant message of the session that waits for one of these actions."""
+        rows = await self.db.fetchall(
+            "SELECT * FROM chat_messages WHERE session_id = ? AND role = 'assistant' "
+            "AND meta LIKE '%waiting_for%' ORDER BY id DESC LIMIT 20",
+            (session_id,),
+        )
+        for row in rows:
+            message = _message(row)
+            if set((message["meta"] or {}).get("waiting_for") or []) & action_ids:
+                return message
+        return None
+
     async def history(self, session_id: str, limit: int) -> list[dict[str, str]]:
         """The last `limit` user/assistant texts as LLM messages (tool traffic of earlier
         turns is kept in the database for display but not replayed to the model)."""
