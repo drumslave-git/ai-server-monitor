@@ -3,7 +3,7 @@ import { api, ApiError, type ActionRecord, type Schemas } from "../api";
 import { HostCommand } from "../components/HostCommand";
 import { ago } from "../fmt";
 import { useStream } from "../live";
-import { Dot, Empty, Markdown, PageHead, useNow, usePoll } from "../ui";
+import { Dot, Empty, Markdown, PageHead, useNow, usePoll, type Level } from "../ui";
 
 type SessionList = Schemas["ChatSessionList"];
 type SessionDoc = Schemas["ChatSession"];
@@ -30,6 +30,8 @@ type Turn =
       stopped?: boolean;
       /** The run stopped for these approvals (action ids); `text` is the waiting note. */
       waiting?: number[];
+      /** Set once the note was rewritten to what was decided: action id → final status. */
+      outcome?: Record<string, string>;
       /** Logs page link: the session and the turn id of this answer. */
       session?: string;
       trace?: string;
@@ -68,6 +70,8 @@ function toTurns(doc: SessionDoc): Turn[] {
         turn.text = m.content;
         const waiting = (m.meta as any)?.waiting_for;
         if (Array.isArray(waiting) && waiting.length) turn.waiting = waiting.map(Number);
+        const outcome = (m.meta as any)?.outcome;
+        if (outcome && typeof outcome === "object") turn.outcome = outcome;
         const traceTurn = (m.meta as any)?.trace_turn;
         if (typeof traceTurn === "string") {
           turn.trace = traceTurn;
@@ -132,7 +136,8 @@ export function ChatPage() {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [turns]);
 
-  // A run that waited for an approval continues on the server; its answer arrives as an event.
+  // A run that waited for an approval continues on the server: its answer arrives as
+  // chat.message, the rewritten waiting note as chat.message.updated (prefix match).
   useStream(["chat.message"], (event) => {
     if (busy || !sessionId.current || event.data.session_id !== sessionId.current) return;
     void load(sessionId.current);
@@ -388,7 +393,7 @@ function AssistantBubble({ turn }: { turn: Extract<Turn, { role: "assistant" }> 
       ))}
       {turn.waiting && turn.text ? (
         <p className="waiting-note muted small">
-          <Dot level="off" /> {turn.text.trim()}
+          <Dot level={outcomeLevel(turn.outcome)} /> <span className="waiting-text">{turn.text.trim()}</span>
         </p>
       ) : turn.text ? (
         <Markdown text={turn.text} />
@@ -407,9 +412,19 @@ function AssistantBubble({ turn }: { turn: Extract<Turn, { role: "assistant" }> 
   );
 }
 
+/** Dot of a waiting note: amber while waiting, then by what happened to its actions. */
+function outcomeLevel(outcome: Record<string, string> | undefined): Level {
+  if (!outcome) return "warn";
+  const all = Object.values(outcome);
+  if (all.some((s) => s === "failed")) return "crit";
+  if (all.length && all.every((s) => s === "executed")) return "ok";
+  return "off";
+}
+
 const STATUS_TEXT: Record<string, string> = {
   pending: "Waiting for your approval",
   queued: "Approved; queued",
+  approved: "Approved; running",
   executed: "Approved and run",
   failed: "Approved; failed",
   rejected: "Denied",
@@ -419,14 +434,16 @@ const STATUS_TEXT: Record<string, string> = {
 
 /** One action a chat answer filed: what it is, Approve / Deny while pending, the outcome after. */
 function ApprovalCard({ id }: { id: number }) {
-  // The audit log holds the action with its arguments and result (there is no single-action read).
-  const actions = usePoll(() => api.get<{ items: ActionRecord[] }>("/api/actions?limit=200"), 30_000);
+  const action = usePoll(() => api.get<ActionRecord>(`/api/actions/${id}`), 60_000);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useStream(["approval", "action"], () => actions.reload());
-  const row = actions.data?.items.find((a) => a.id === id);
-  if (!actions.data) return null;
-  if (!row) return <div className="approval-card muted small">Approval item #{id} is no longer in the recent audit log.</div>;
+  useStream(["approval", "action"], (event) => {
+    // events carry the action id (actions) or the batch (approvals): reload on ours or any batch
+    if (event.data.id === id || event.type.startsWith("approval")) action.reload();
+  });
+  const row = action.data;
+  if (action.error && !row) return <div className="approval-card muted small">Approval item #{id}: {action.error}</div>;
+  if (!row) return null;
   const pending = row.status === "pending";
   const decide = async (decision: "approve" | "reject") => {
     setBusy(true);
@@ -437,9 +454,9 @@ function ApprovalCard({ id }: { id: number }) {
       setError(e instanceof ApiError ? String(e.detail) : (e as Error).message);
     }
     setBusy(false);
-    actions.reload();
+    action.reload();
   };
-  const level = pending || row.status === "queued" ? "warn" : row.status === "executed" ? "ok" : row.status === "failed" ? "crit" : "off";
+  const level = pending || row.status === "queued" ? "warn" : row.status === "approved" ? "info" : row.status === "executed" ? "ok" : row.status === "failed" ? "crit" : "off";
   return (
     <div className={`approval-card${pending ? "" : " settled"}`}>
       <div className="approval-card-body">

@@ -24,6 +24,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/actions/{action_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Action
+         * @description One audit row, in the same shape as an item of `/api/actions`.
+         */
+        get: operations["get_action_api_actions__action_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/approvals": {
         parameters: {
             query?: never;
@@ -61,7 +81,8 @@ export interface paths {
         /**
          * Decide
          * @description Approve (→ executes the items now) or reject an approval batch: all its pending items,
-         *     or only `items`. The answer is the batch with the outcome of every item.
+         *     or only `items`. The answer is the batch with the outcome of every item; changing shell
+         *     commands answer "approved" at once and report their outcome by event when they finish.
          */
         post: operations["decide_api_approvals__batch_id__post"];
         delete?: never;
@@ -2209,6 +2230,39 @@ export interface operations {
             };
             header?: never;
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_action_api_actions__action_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                action_id: number;
+            };
             cookie?: never;
         };
         requestBody?: never;

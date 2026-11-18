@@ -32,6 +32,15 @@ What it does:
 - [Settings reference](#settings-reference) · [Upgrading from 0.6.x](#upgrading-from-06x)
 - [Troubleshooting](#troubleshooting) · [Development](#development) · [Design notes](docs/DESIGN.md)
 
+## Screenshots
+
+| | |
+|---|---|
+| [![Dashboard: the overall status from the summary job and one card per topic job](docs/samples/ui/dashboard.png)](docs/samples/ui/dashboard.png) | [![Jobs: schedules, models, last results, Run now](docs/samples/ui/jobs.png)](docs/samples/ui/jobs.png) |
+| **Dashboard**: the summary job's overall status, then one card per topic job | **Jobs**: turn jobs on and off, edit them, run one now |
+| [![A run of the Docker job with its summary and findings](docs/samples/ui/job-run.png)](docs/samples/ui/job-run.png) | [![Chat asking to approve a command on the host](docs/samples/ui/chat-approval.png)](docs/samples/ui/chat-approval.png) |
+| **A job run**: what the model found, with findings by severity | **Chat**: a change runs only after you approve the command |
+
 ## Quick start
 
 Debian/Ubuntu (or any Linux) host with Docker and the compose plugin:

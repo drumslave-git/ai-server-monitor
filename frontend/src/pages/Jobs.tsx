@@ -4,7 +4,6 @@ import { useAutomation } from "../automation";
 import { api } from "../api";
 import { ago, clock, until } from "../fmt";
 import {
-  capitalize,
   originText,
   cronText,
   errorText,
@@ -555,7 +554,7 @@ export function Findings({ findings }: { findings: Finding[] }) {
               <span className="sr-only">{SEVERITY_TEXT[f.severity]}: </span>
               <strong>{f.title}</strong>
             </Badge>
-            {f.detail && <p className="finding-detail">{capitalize(f.detail)}</p>}
+            {f.detail && <p className="finding-detail">{f.detail}</p>}
           </li>
         ))}
       </ul>

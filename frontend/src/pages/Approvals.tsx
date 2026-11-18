@@ -18,7 +18,7 @@ const statusLevel = (s: string): Level =>
       ? "crit"
       : s === "pending" || s === "queued" || s === "deferred"
         ? "warn"
-        : s === "dry_run" || s === "suggested"
+        : s === "dry_run" || s === "suggested" || s === "approved"
           ? "info"
           : "off";
 
@@ -259,6 +259,11 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
           </p>
         </div>
       )}
+      {extra && (
+        <Panel title={`Approval #${extra.id}`} aside={<a href="#/approvals" className="small">Close</a>}>
+          <BatchCard batch={extra} now={now} focused={false} busy={busy === extra.id} onDecide={decide} onAudit={showAudit} />
+        </Panel>
+      )}
       <Panel
         title="Waiting for you"
         aside={
@@ -270,10 +275,7 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
         }
       >
         {error && <p className="error">{error}</p>}
-        {extra && (
-          <BatchCard batch={extra} now={now} focused busy={busy === extra.id} onDecide={decide} onAudit={showAudit} />
-        )}
-        {pending.data && batches.length === 0 && !extra ? (
+        {pending.data && batches.length === 0 ? (
           <Empty>Nothing is waiting. Actions set to “approve” in Settings appear here.</Empty>
         ) : (
           <div className="batches">
