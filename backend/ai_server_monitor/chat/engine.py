@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -25,15 +24,19 @@ from pydantic_ai.messages import TextPart
 from pydantic_ai.models.openai import OpenAIChatModelSettings
 
 from ..agent.models import ModelHub
-from ..agent.prompts import chat_prompt, host_line, worker_prompt
-from ..agent.runtime import AgentConfig, AgentTool, history_messages, run_agent
+from ..agent.prompts import chat_prompt, host_line
+from ..agent.runtime import AgentConfig, history_messages, run_agent
 from ..agent.safety import Scrubber
-from ..agent.shell import HostShell
-from ..agent.tools import bash_tool, delegate_tool, file_for_approval, mcp_agent_tools
+from ..agent.tools import (
+    app_bash,
+    app_delegate,
+    app_shell,
+    file_for_approval,
+    mcp_agent_tools,
+)
 from ..llm.text import strip_reasoning
 from ..tracing import trace_scope
 from ..tracing.parse import empty_answer_message
-from .audit import record_call
 from .store import ChatStore
 from .title import TITLE_MAX_TOKENS, TITLE_SYSTEM, TITLE_TIMEOUT_S, clean_title, title_prompt
 from .tools import ToolContext
@@ -152,54 +155,6 @@ class ChatEngine:
 
     # ------------------------------------------------------------------ tools
 
-    def _shell(self) -> HostShell:
-        settings = self.app.settings
-        docker = settings.general.docker_url.strip() or os.environ.get("DOCKER_HOST")
-        return HostShell(self.app.host_env.root, docker_host=docker or None)
-
-    def _bash(self, session_id: str, shell: HostShell) -> AgentTool:
-        chat = self.app.settings.chat
-
-        async def audit(**fields: Any) -> None:
-            await record_call(self.app.db, "shell", session_id, **fields)
-
-        return bash_tool(
-            shell,
-            default_timeout_s=min(
-                chat.command_timeout.total_seconds(), chat.tool_timeout.total_seconds()
-            ),
-            max_timeout_s=chat.tool_timeout.total_seconds(),
-            max_chars=max(chat.max_tool_result_chars - 400, 400),
-            audit=audit,
-        )
-
-    def _worker(self, session_id: str, shell: HostShell, scrub: Scrubber, host: str) -> AgentTool:
-        app = self.app
-        settings = app.settings
-
-        async def run_worker(task: str) -> str:
-            cfg = AgentConfig(
-                model=app.models.model("worker"),
-                instructions=worker_prompt(host, settings.general.language),
-                tools=[self._bash(session_id, shell)],
-                max_steps=settings.chat.worker_max_steps,
-                tool_timeout_s=settings.chat.tool_timeout.total_seconds(),
-                result_chars=settings.chat.max_tool_result_chars,
-                scrub=scrub,
-                tracing=app.tracing,
-                trace={"purpose": "subagent"},
-                trace_tool_prefix="worker:",
-            )
-            output, steps, stopped = "", 0, None
-            async for event in run_agent(cfg, task):
-                if event["type"] == "end":
-                    output, steps, stopped = event["output"], event["steps"], event["stopped"]
-            text = strip_reasoning(str(output)) or "(the worker gave no answer)"
-            limit = ", stopped at its step limit" if stopped else ""
-            return f"{text}\n[worker model {app.models.name('worker')}: {steps} steps{limit}]"
-
-        return delegate_tool(run_worker)
-
     # ------------------------------------------------------------------ one question
 
     async def _answer(
@@ -221,12 +176,12 @@ class ChatEngine:
         from ..mcp_client import build_mcp_tools
 
         ctx = ToolContext(app, session_id, source)
-        shell = self._shell()
+        shell = app_shell(app)
         mcp = build_mcp_tools(app.mcp)
         kinds = {t.name: t.kind for t in mcp}
         tools = [
-            self._bash(session_id, shell),
-            self._worker(session_id, shell, scrub, host),
+            app_bash(app, session_id, shell),
+            app_delegate(app, session_id, scrub, host, shell),
             *mcp_agent_tools(mcp, ctx),
         ]
         instructions = chat_prompt(host, language)

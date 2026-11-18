@@ -57,6 +57,7 @@ async def test_prune_respects_retention_and_keeps_actions(db: Database) -> None:
         "chat_messages": 1,
         "chat_sessions": 1,
         "telegram_batch_messages": 1,
+        "job_runs": 0,
     }
     assert (await db.fetchone("SELECT COUNT(*) FROM chat_messages"))[0] == 0  # cascade
     assert (await db.fetchone("SELECT COUNT(*) FROM actions"))[0] == 2  # audit log kept
@@ -136,7 +137,7 @@ async def test_database_at_schema_4_migrates_to_latest(tmp_path: Path) -> None:
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 14
+        assert await db.schema_version() == 15
         info = await db.fetchall("PRAGMA table_info(telegram_batch_messages)")
         cols = {r["name"] for r in info}
         assert cols == {"batch_id", "chat_id", "message_id", "created_ts"}
@@ -159,7 +160,7 @@ async def test_database_at_schema_5_loses_the_prometheus_query_table(tmp_path: P
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 14
+        assert await db.schema_version() == 15
         assert not await db.fetchall("PRAGMA table_info(prom_queries)")
     finally:
         await db.close()

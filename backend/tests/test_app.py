@@ -144,10 +144,14 @@ def test_status_shape(bootstrap: Bootstrap, settings: Settings) -> None:
         "worker_model",
         "pending_approvals",
         "automation",
+        "overall",
+        "jobs",
     }
     assert status["llm_configured"] is True and status["main_model"] == "test-model"
     assert status["worker_model"] == "test-model" and status["pending_approvals"] == 0
     assert status["automation"]["paused"] is False
+    assert status["overall"] is None  # the summary job has not run yet
+    assert {j["slug"] for j in status["jobs"]} >= {"summary", "storage"}
 
 
 def test_settings_responses_are_typed_and_still_mask_secrets(bootstrap: Bootstrap) -> None:

@@ -39,6 +39,7 @@ def test_migrations_are_contiguous_and_complete() -> None:
         (12, "0012_bench_thinking.sql"),
         (13, "0013_remove_arr_bench_api.sql"),
         (14, "0014_remove_collection.sql"),
+        (15, "0015_jobs.sql"),
     ]
     names = {e.name for e in resources.files("ai_server_monitor.migrations").iterdir()}
     assert not any("placeholder" in n for n in names)
@@ -48,12 +49,12 @@ async def test_fresh_database_migrates_to_latest(tmp_path: Path) -> None:
     db = Database(tmp_path / "fresh.db")
     await db.connect()
     try:
-        assert await db.schema_version() == 14
+        assert await db.schema_version() == 15
         tables = {
             r["name"]
             for r in await db.fetchall("SELECT name FROM sqlite_master WHERE type='table'")
         }
-        assert {"actions", "chat_sessions", "llm_calls"} <= tables
+        assert {"actions", "chat_sessions", "llm_calls", "jobs", "job_runs"} <= tables
         assert not {"collector_samples", "reports", "prom_queries"} & tables
         action_cols = {r["name"] for r in await db.fetchall("PRAGMA table_info(actions)")}
         assert {"status", "policy_key"} <= action_cols or "status" in action_cols
@@ -75,7 +76,7 @@ async def test_database_at_the_old_main_schema_upgrades(tmp_path: Path) -> None:
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 14
+        assert await db.schema_version() == 15
         assert await db.kv_get("keep") == 1  # data survives
         await db.execute(
             "INSERT INTO actions (ts, updated, action, policy, status, source) "

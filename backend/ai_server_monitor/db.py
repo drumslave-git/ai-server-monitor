@@ -28,6 +28,7 @@ _PRUNABLE: dict[str, str] = {
     "chat_messages": "ts",
     "chat_sessions": "updated",
     "telegram_batch_messages": "created_ts",
+    "job_runs": "started",
 }
 
 

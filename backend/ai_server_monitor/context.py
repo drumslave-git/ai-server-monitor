@@ -26,6 +26,7 @@ from .config import Bootstrap, Settings
 from .db import Database
 from .events import EventBus
 from .hostenv import HostEnv
+from .jobs import JobRunner
 from .mcp_client import McpManager
 from .outputs.action_events import ActionEventBridge
 from .outputs.metrics import Family, MetricsHub, Sample
@@ -86,6 +87,8 @@ class AppContext:
             mcp=self.mcp,
         )
         self.chat = ChatEngine(self)
+        self.jobs = JobRunner(self)
+        """Runs scheduled LLM jobs; lives as long as the app (runs survive settings changes)."""
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -100,11 +103,15 @@ class AppContext:
         self.automation = AutomationState.from_stored(await self.db.kv_get(AUTOMATION_KEY))
         if self.automation.paused:
             log.warning("automation is paused: nothing runs by itself until it is resumed")
+        await self.jobs.store.seed_builtins()
+        if interrupted := await self.jobs.store.mark_interrupted():
+            log.warning("%d job run(s) were interrupted by the last stop", interrupted)
         await self._start_services()
         log.info("started (data=%s, host root=%s)", self.bootstrap.data_dir, self.host_env.root)
 
     async def stop(self) -> None:
         await self._stop_services()
+        await self.jobs.close()
         self.events.close()
         if self._metrics_task is not None:
             self._metrics_task.cancel()
@@ -133,6 +140,7 @@ class AppContext:
             self.scheduler.hold(self.automation.since)
         self.tracing.apply_settings(s.logs)
         self.models = ModelHub(s, tracing=self.tracing, transport=self._llm_transport)
+        self.jobs.apply_settings(s)
         self.scheduler.add(
             "prune",
             lambda: self.db.prune(s.storage.retention),
@@ -159,6 +167,13 @@ class AppContext:
         if tg.enabled and tg.token.get_secret_value():
             self.telegram = TelegramBot(self, tg, transport=self._telegram_transport)
             await self.telegram.start()
+
+    async def jobs_changed(self) -> None:
+        """A job was created, changed or deleted: bring the schedule in line."""
+
+    def job_next_run(self, slug: str) -> float | None:
+        """When the scheduler runs `slug` next (None: not scheduled)."""
+        return None
 
     async def pending_approvals_count(self) -> int:
         row = await self.db.fetchone("SELECT COUNT(*) AS n FROM actions WHERE status = 'pending'")

@@ -107,3 +107,6 @@ def shell(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     monkeypatch.setattr(HostShell, "run", run)
     return commands
+
+
+from .jobfakes import models  # noqa: E402, F401  (the scripted-models fixture)

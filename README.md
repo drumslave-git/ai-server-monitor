@@ -250,11 +250,19 @@ a fresh install starts with.
 | `chat.max_tool_result_chars` | integer (min 500, max 50000) | `6000` | Longest tool result passed to the model; bigger results are trimmed. |
 | `chat.tool_timeout` | duration | `1h` | Longest one tool call (a disk scan, a command, an API call) may run before the chat gives up on it. The answer waits for the tool; the chat shows what is running and for how long. |
 
+### Jobs (`jobs`)
+
+| Setting | Type | Default | What it does |
+|---|---|---|---|
+| `jobs.max_concurrent_runs` | integer (min 1, max 8) | `1` | How many job runs may use the models at the same time. 1 suits one local GPU: runs that come due together wait for each other. |
+| `jobs.timeout` | duration | `15m` | Longest one job run may take (a job can set its own). A run over it is stored as error. |
+| `jobs.max_steps` | integer (min 1, max 60) | `12` | Most tool-use rounds of one job run (a job can set its own). |
+
 ### Data retention (`storage`)
 
 | Setting | Type | Default | What it does |
 |---|---|---|---|
-| `storage.retention` | duration | `30d` | How long chat messages are kept. The action log is permanent. |
+| `storage.retention` | duration | `30d` | How long chat messages and job runs are kept. The action log is permanent. |
 | `storage.prune_interval` | duration | `1h` | How often old data is deleted. |
 
 ### Logs (`logs`)

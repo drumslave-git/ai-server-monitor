@@ -216,6 +216,20 @@ class WorkerLLMSettings(LLMSettings):
     main model's endpoint and API key with this model name (e.g. a second Ollama model)."""
 
 
+class JobsSettings(_Model):
+    """Scheduled checks by the language model: one topic each (storage, journal, docker, ...) on
+    the worker model, and a summary of them all on the main model. The jobs themselves are on
+    the Jobs page."""
+
+    max_concurrent_runs: int = Field(default=1, ge=1, le=8)
+    """How many job runs may use the models at the same time. 1 suits one local GPU: runs that
+    come due together wait for each other."""
+    timeout: Duration = timedelta(minutes=15)
+    """Longest one job run may take (a job can set its own). A run over it is stored as error."""
+    max_steps: int = Field(default=12, ge=1, le=60)
+    """Most tool-use rounds of one job run (a job can set its own)."""
+
+
 class ChatSettings(_Model):
     max_steps: int = Field(default=15, ge=1, le=60)
     """Most tool-use rounds of the main model per question before it must answer with what it
@@ -238,7 +252,7 @@ class ChatSettings(_Model):
 
 class StorageSettings(_Model):
     retention: Duration = timedelta(days=30)
-    """How long chat messages are kept. The action log is permanent."""
+    """How long chat messages and job runs are kept. The action log is permanent."""
     prune_interval: Duration = timedelta(hours=1)
     """How often old data is deleted."""
 
@@ -425,6 +439,7 @@ class Settings(_Model):
     llm: LLMSettings = LLMSettings()
     worker: WorkerLLMSettings = WorkerLLMSettings()
     chat: ChatSettings = ChatSettings()
+    jobs: JobsSettings = JobsSettings()
     storage: StorageSettings = StorageSettings()
     logs: LogsSettings = LogsSettings()
     outputs: OutputsSettings = OutputsSettings()

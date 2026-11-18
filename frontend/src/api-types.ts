@@ -230,6 +230,134 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Jobs
+         * @description Every job (builtins first) with its newest finished run and next scheduled time.
+         */
+        get: operations["list_jobs_api_jobs_get"];
+        put?: never;
+        /**
+         * Create Job
+         * @description A custom topic job (runs on the worker model unless `model` is `main`).
+         */
+        post: operations["create_job_api_jobs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run */
+        get: operations["get_run_api_jobs_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Job */
+        get: operations["get_job_api_jobs__slug__get"];
+        /**
+         * Update Job
+         * @description Change the given fields. Editing a builtin's prompt, schedule, model or limits marks it
+         *     edited; `POST /api/jobs/{slug}/reset` restores the release's version.
+         */
+        put: operations["update_job_api_jobs__slug__put"];
+        post?: never;
+        /**
+         * Delete Job
+         * @description Custom jobs only (and their runs); builtins can be disabled instead.
+         */
+        delete: operations["delete_job_api_jobs__slug__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{slug}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset Job
+         * @description A builtin back to the release's name, prompt, schedule, model and limits.
+         */
+        post: operations["reset_job_api_jobs__slug__reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{slug}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Job
+         * @description Start a run now (also when the job is disabled or automation is paused). Returns the run
+         *     id at once; `job.started` / `job.finished` events follow on /api/stream.
+         */
+        post: operations["run_job_api_jobs__slug__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{slug}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Runs
+         * @description The job's runs, newest first (a running one included).
+         */
+        get: operations["list_runs_api_jobs__slug__runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/logs/app": {
         parameters: {
             query?: never;
@@ -747,6 +875,21 @@ export interface components {
             /** Items */
             items?: number[] | null;
         };
+        /** Finding */
+        Finding: {
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "info" | "warn" | "crit";
+            /** Title */
+            title: string;
+        };
         /** GeneralSettings */
         GeneralSettings: {
             /**
@@ -775,6 +918,205 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** Job */
+        Job: {
+            /** Builtin */
+            builtin: boolean;
+            /** Created */
+            created: number;
+            /**
+             * Created By
+             * @enum {string}
+             */
+            created_by: "builtin" | "user" | "llm";
+            /** Cron */
+            cron?: string | null;
+            /** Edited */
+            edited: boolean;
+            /** Enabled */
+            enabled: boolean;
+            /** Interval S */
+            interval_s?: number | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "topic" | "summary";
+            last_run?: components["schemas"]["JobRun"] | null;
+            /** Max Steps */
+            max_steps?: number | null;
+            /**
+             * Model
+             * @enum {string}
+             */
+            model: "worker" | "main";
+            /** Name */
+            name: string;
+            /** Next Run */
+            next_run?: number | null;
+            /** Prompt */
+            prompt: string;
+            /** Slug */
+            slug: string;
+            /** Timeout S */
+            timeout_s?: number | null;
+            /** Updated */
+            updated: number;
+        };
+        /** JobCreate */
+        JobCreate: {
+            /** Cron */
+            cron?: string | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Interval S */
+            interval_s?: number | null;
+            /** Max Steps */
+            max_steps?: number | null;
+            /**
+             * Model
+             * @default worker
+             * @enum {string}
+             */
+            model: "worker" | "main";
+            /** Name */
+            name: string;
+            /** Prompt */
+            prompt: string;
+            /** Slug */
+            slug: string;
+            /** Timeout S */
+            timeout_s?: number | null;
+        };
+        /** JobList */
+        JobList: {
+            /** Items */
+            items: components["schemas"]["Job"][];
+        };
+        /** JobRun */
+        JobRun: {
+            /** Completion Tokens */
+            completion_tokens?: number | null;
+            /** Duration S */
+            duration_s?: number | null;
+            /** Error */
+            error?: string | null;
+            /**
+             * Findings
+             * @default []
+             */
+            findings: components["schemas"]["Finding"][];
+            /** Finished */
+            finished?: number | null;
+            /** Id */
+            id: number;
+            /** Job Slug */
+            job_slug: string;
+            /** Model */
+            model?: string | null;
+            /** Prompt Tokens */
+            prompt_tokens?: number | null;
+            /** Started */
+            started: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "ok" | "warn" | "crit" | "error";
+            /** Steps */
+            steps?: number | null;
+            /** Summary */
+            summary?: string | null;
+            /** Trace Turn */
+            trace_turn?: string | null;
+            /**
+             * Trigger
+             * @enum {string}
+             */
+            trigger: "schedule" | "manual" | "llm";
+        };
+        /** JobRunList */
+        JobRunList: {
+            /** Items */
+            items: components["schemas"]["JobRun"][];
+        };
+        /** JobStatus */
+        JobStatus: {
+            /** Enabled */
+            enabled: boolean;
+            /** Finished */
+            finished: number | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "topic" | "summary";
+            /** Name */
+            name: string;
+            /** Run Id */
+            run_id: number | null;
+            /** Slug */
+            slug: string;
+            /** Status */
+            status: ("ok" | "warn" | "crit" | "error") | null;
+        };
+        /**
+         * JobUpdate
+         * @description Only the fields given are changed. Setting interval_s clears cron and vice versa.
+         */
+        JobUpdate: {
+            /** Cron */
+            cron?: string | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Interval S */
+            interval_s?: number | null;
+            /** Max Steps */
+            max_steps?: number | null;
+            /** Model */
+            model?: ("worker" | "main") | null;
+            /** Name */
+            name?: string | null;
+            /** Prompt */
+            prompt?: string | null;
+            /** Timeout S */
+            timeout_s?: number | null;
+        };
+        /**
+         * JobsSettings
+         * @description Scheduled checks by the language model: one topic each (storage, journal, docker, ...) on
+         *     the worker model, and a summary of them all on the main model. The jobs themselves are on
+         *     the Jobs page.
+         */
+        JobsSettings: {
+            /**
+             * Max Concurrent Runs
+             * @description How many job runs may use the models at the same time. 1 suits one local GPU: runs that
+             *     come due together wait for each other.
+             * @default 1
+             */
+            max_concurrent_runs: number;
+            /**
+             * Max Steps
+             * @description Most tool-use rounds of one job run (a job can set its own).
+             * @default 12
+             */
+            max_steps: number;
+            /**
+             * Timeout
+             * Format: duration
+             * @description Longest one job run may take (a job can set its own). A run over it is stored as error.
+             * @default 15m
+             * @example 30s
+             * @example 5m
+             * @example 6h
+             * @example 30d
+             */
+            timeout: string;
         };
         /**
          * LLMSettings
@@ -1316,12 +1658,34 @@ export interface components {
              */
             telegram: components["schemas"]["TelegramSettings"];
         };
+        /**
+         * OverallStatus
+         * @description The newest finished run of the summary job.
+         */
+        OverallStatus: {
+            /** Finished */
+            finished: number | null;
+            /** Headline */
+            headline: string;
+            /** Run Id */
+            run_id: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "warn" | "crit" | "error";
+        };
         /** PurposeCount */
         PurposeCount: {
             /** Count */
             count: number;
             /** Purpose */
             purpose: string;
+        };
+        /** RunStarted */
+        RunStarted: {
+            /** Run Id */
+            run_id: number;
         };
         /**
          * Settings
@@ -1353,6 +1717,14 @@ export interface components {
              *     }
              */
             general: components["schemas"]["GeneralSettings"];
+            /**
+             * @default {
+             *       "max_concurrent_runs": 1,
+             *       "max_steps": 12,
+             *       "timeout": "15m"
+             *     }
+             */
+            jobs: components["schemas"]["JobsSettings"];
             /**
              * @default {
              *       "api_key": "",
@@ -1450,12 +1822,18 @@ export interface components {
             automation: {
                 [key: string]: unknown;
             };
+            /**
+             * Jobs
+             * @default []
+             */
+            jobs: components["schemas"]["JobStatus"][];
             /** Llm Configured */
             llm_configured: boolean;
             /** Main Model */
             main_model: string;
             /** Now */
             now: number;
+            overall?: components["schemas"]["OverallStatus"] | null;
             /** Pending Approvals */
             pending_approvals: number;
             /** Uptime S */
@@ -1481,7 +1859,7 @@ export interface components {
             /**
              * Retention
              * Format: duration
-             * @description How long chat messages are kept. The action log is permanent.
+             * @description How long chat messages and job runs are kept. The action log is permanent.
              * @default 30d
              * @example 30s
              * @example 5m
@@ -2136,6 +2514,280 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    list_jobs_api_jobs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobList"];
+                };
+            };
+        };
+    };
+    create_job_api_jobs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JobCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_api_jobs_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRun"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_job_api_jobs__slug__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_job_api_jobs__slug__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JobUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_job_api_jobs__slug__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_job_api_jobs__slug__reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_job_api_jobs__slug__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_runs_api_jobs__slug__runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRunList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

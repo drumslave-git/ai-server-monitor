@@ -2,11 +2,32 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import Settings
+
+
+class OverallStatus(BaseModel):
+    """The newest finished run of the summary job."""
+
+    status: Literal["ok", "warn", "crit", "error"]
+    headline: str
+    """The first line of the summary (or the error)."""
+    finished: float | None
+    run_id: int
+
+
+class JobStatus(BaseModel):
+    slug: str
+    name: str
+    kind: Literal["topic", "summary"]
+    enabled: bool
+    status: Literal["ok", "warn", "crit", "error"] | None
+    """Of the newest finished run; None = never ran."""
+    finished: float | None
+    run_id: int | None
 
 
 class StatusResponse(BaseModel):
@@ -21,6 +42,10 @@ class StatusResponse(BaseModel):
     """Actions waiting for a human decision (GET /api/approvals lists them)."""
     automation: dict[str, Any]
     """The global pause switch (GET /api/automation)."""
+    overall: OverallStatus | None = None
+    """From the newest summary run; None until the summary job has run."""
+    jobs: list[JobStatus] = []
+    """The newest finished run of every job (GET /api/jobs has the details)."""
 
 
 class SettingsResponse(BaseModel):
