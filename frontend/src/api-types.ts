@@ -701,6 +701,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp/tools/switch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch Tools
+         * @description Switch several tools on or off in one settings write (the page's Select all /
+         *     Deselect all). Returns the page data.
+         */
+        post: operations["switch_tools_api_mcp_tools_switch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/mcp/tools/{server}/{tool}": {
         parameters: {
             query?: never;
@@ -2454,6 +2475,20 @@ export interface components {
              */
             enabled?: boolean | null;
         };
+        /** ToolRef */
+        ToolRef: {
+            /** Server */
+            server: string;
+            /** Tool */
+            tool: string;
+        };
+        /** ToolSwitch */
+        ToolSwitch: {
+            /** Enabled */
+            enabled: boolean;
+            /** Tools */
+            tools: components["schemas"]["ToolRef"][];
+        };
         /** TopicLine */
         TopicLine: {
             /** Clause */
@@ -3823,6 +3858,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["McpToolsPage"];
+                };
+            };
+        };
+    };
+    switch_tools_api_mcp_tools_switch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolSwitch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpToolsPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

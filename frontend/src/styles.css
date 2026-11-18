@@ -493,6 +493,9 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .mt-ddesc { color: var(--muted); font-size: 13px; }
 .mt-dmeta { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; }
 .mt-unsorted { border-left: 3px solid var(--warn); }
+.mt-bulk { display: inline-flex; gap: 8px; margin-left: auto; }
+.mt-dswitch { font-size: 12px; margin-left: 6px; }
+.mt-dswitch:disabled { color: var(--faint); cursor: default; }
 .mt-unsorted .mt-dname { font-family: inherit; font-size: inherit; }
 .btn-icon {
   display: inline-flex; padding: 4px; border: 0; border-radius: var(--radius-sm); background: transparent;
@@ -532,7 +535,8 @@ select.mt-move:hover, select.mt-move:focus { border-color: var(--border); color:
 .mt-check input { width: auto; }
 @media (max-width: 640px) {
   .mt-domain > summary { grid-template-columns: 16px minmax(0, 1fr); padding: 12px 16px; }
-  .mt-dmeta { grid-column: 2; }
+  .mt-dmeta { grid-column: 2; flex-wrap: wrap; white-space: normal; row-gap: 2px; }
+  .mt-bulk { margin-left: 0; }
   .mt-empty-line { grid-template-columns: minmax(0, 1fr); padding: 8px 16px; }
   .mt-tool { gap: 8px; padding: 10px 12px 10px 16px; }
   select.mt-move { width: 92px; padding: 2px 4px; }

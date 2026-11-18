@@ -237,6 +237,36 @@ async def test_a_save_lists_and_sorts_and_the_page_shows_it(
             bulk = next(t for t in page["tools"] if t["tool"] == "bulk_01")
             assert bulk["kind"] == "read" and not bulk["enabled"]
 
+            # several at once, one settings write
+            r = await http.post(
+                "/api/mcp/tools/switch",
+                json={
+                    "tools": [{"server": "home", "tool": f"bulk_0{i}"} for i in range(3, 6)],
+                    "enabled": True,
+                },
+            )
+            assert r.status_code == 200
+            assert {"bulk_03", "bulk_04", "bulk_05"} <= set(app.settings.mcp.servers[0].tool_filter)
+            r = await http.post(
+                "/api/mcp/tools/switch",
+                json={
+                    "tools": [
+                        {"server": "home", "tool": "bulk_04"},
+                        {"server": "home", "tool": "get_temperature"},
+                    ],
+                    "enabled": False,
+                },
+            )
+            chosen = app.settings.mcp.servers[0].tool_filter
+            assert (
+                "bulk_04" not in chosen and "get_temperature" not in chosen and "bulk_03" in chosen
+            )
+            assert sum(t["enabled"] for t in r.json()["tools"]) == len(chosen)
+            r = await http.post(
+                "/api/mcp/tools/switch",
+                json={"tools": [{"server": "x", "tool": "y"}], "enabled": True},
+            )
+            assert r.status_code == 404
             # on/off writes the server's tool_filter (the Settings table's value)
             r = await http.patch("/api/mcp/tools/home/bulk_01", json={"enabled": True})
             assert r.status_code == 200 and r.json()["enabled"]

@@ -42,6 +42,9 @@ export function McpToolsPage() {
     return () => clearInterval(timer);
   }, [page?.sorting, load]);
 
+  /** One request for several tools (the same tool_filter as the single switch). */
+  const switchAll = (list: Tool[], on: boolean) =>
+    void act(api.post("/api/mcp/tools/switch", { tools: list.map((t) => ({ server: t.server, tool: t.tool })), enabled: on })).catch(() => undefined);
   const act = (p: Promise<unknown>) => {
     const done = p.then(load);
     done.catch((e) => setError(errorText(e)));
@@ -71,6 +74,8 @@ export function McpToolsPage() {
   const nServers = new Set(tools.map((t) => t.server)).size;
   const down = servers.filter((s) => s.error);
   const allNames = ["unsorted", ...page.domains.map((d) => d.name)];
+  const toOn = shown.filter((t) => !t.enabled);
+  const toOff = shown.filter((t) => t.enabled);
 
   return (
     <div className="stack mt-page">
@@ -121,6 +126,16 @@ export function McpToolsPage() {
             <button type="button" className="btn btn-quiet btn-sm" onClick={() => setClosed(closed.size ? new Set() : new Set(allNames))}>
               {closed.size ? "Expand all" : "Collapse all"}
             </button>
+            <span className="mt-bulk">
+              <button type="button" className="btn btn-sm" disabled={toOn.length === 0} onClick={() => switchAll(toOn, true)}
+                title={filtering ? "Switches on every tool the search and filters show" : "Switches on every tool"}>
+                Select all ({toOn.length})
+              </button>
+              <button type="button" className="btn btn-sm" disabled={toOff.length === 0} onClick={() => switchAll(toOff, false)}
+                title={filtering ? "Switches off every tool the search and filters show" : "Switches off every tool"}>
+                Deselect all ({toOff.length})
+              </button>
+            </span>
           </div>
           {filtering && shown.length === 0 && <Empty>No tool matches.</Empty>}
           {unsorted.length > 0 && (
@@ -132,6 +147,7 @@ export function McpToolsPage() {
               total={tools.filter((t) => t.domain_id == null)}
               open={!closed.has("unsorted")}
               onToggle={(o) => setClosed(toggle(closed, "unsorted", o))}
+              onSwitch={(on) => switchAll(tools.filter((t) => t.domain_id == null), on)}
               warn
             >
               {unsorted.map((t) => <Row key={t.name} tool={t} domains={page.domains} servers={servers} act={act} reason />)}
@@ -152,6 +168,7 @@ export function McpToolsPage() {
                 total={all}
                 open={filtering || !closed.has(d.name)}
                 onToggle={(o) => setClosed(toggle(closed, d.name, o))}
+                onSwitch={(on) => switchAll(all, on)}
                 domain={d}
                 act={act}
               >
@@ -181,10 +198,10 @@ function toggle(set: Set<string>, key: string, open: boolean): Set<string> {
 }
 
 function Section({
-  id, title, description, count, total, open, onToggle, domain, act, warn, children,
+  id, title, description, count, total, open, onToggle, onSwitch, domain, act, warn, children,
 }: {
   id: string; title: string; description: string; count: Tool[]; total: Tool[]; open: boolean;
-  onToggle: (open: boolean) => void; domain?: Domain; act?: (p: Promise<unknown>) => Promise<unknown>; warn?: boolean;
+  onToggle: (open: boolean) => void; onSwitch: (on: boolean) => void; domain?: Domain; act?: (p: Promise<unknown>) => Promise<unknown>; warn?: boolean;
   children: React.ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
@@ -201,6 +218,12 @@ function Section({
         <span className="mt-dmeta">
           {count.length !== total.length && <span>{count.length} shown · </span>}
           {on} of {total.length} on
+          <button type="button" className="link-btn mt-dswitch" disabled={on === total.length} onClick={(e) => { e.preventDefault(); onSwitch(true); }}>
+            Select all
+          </button>
+          <button type="button" className="link-btn mt-dswitch" disabled={on === 0} onClick={(e) => { e.preventDefault(); onSwitch(false); }}>
+            Deselect all
+          </button>
           {domain && domain.used_by.length > 0 && <span title={domain.used_by.join(", ")}> · {domain.used_by.length} job{domain.used_by.length === 1 ? "" : "s"}</span>}
           {domain && (
             <button type="button" className="btn-icon" aria-label={`Rename or describe ${domain.name}`} onClick={(e) => { e.preventDefault(); setEditing(true); }}>

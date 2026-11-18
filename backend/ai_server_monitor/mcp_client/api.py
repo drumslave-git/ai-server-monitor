@@ -79,6 +79,16 @@ class DomainEdit(BaseModel):
     description: str = ""
 
 
+class ToolRef(BaseModel):
+    server: str
+    tool: str
+
+
+class ToolSwitch(BaseModel):
+    tools: list[ToolRef] = Field(min_length=1)
+    enabled: bool
+
+
 class ToolEdit(BaseModel):
     domain_id: int | None = Field(default=None, description="Move the tool to this domain.")
     enabled: bool | None = Field(default=None, description="Switch the tool on or off.")
@@ -187,15 +197,28 @@ async def edit_tool(request: Request, server: str, tool: str, body: ToolEdit) ->
     return found[0]
 
 
+@router.post("/api/mcp/tools/switch")
+async def switch_tools(request: Request, body: ToolSwitch) -> McpToolsPage:
+    """Switch several tools on or off in one settings write (the page's Select all /
+    Deselect all). Returns the page data."""
+    ctx = _ctx(request)
+    await _switch_many(ctx, [(t.server, t.tool) for t in body.tools], body.enabled)
+    return await page(ctx)
+
+
 async def _switch(ctx: AppContext, server: str, tool: str, on: bool) -> None:
+    await _switch_many(ctx, [(server, tool)], on)
+
+
+async def _switch_many(ctx: AppContext, tools: list[tuple[str, str]], on: bool) -> None:
     data = ctx.settings.storage_dict()
-    for entry in data["mcp"]["servers"]:
-        if entry["name"] == server:
-            chosen = [t for t in entry.get("tool_filter") or [] if t != tool]
-            entry["tool_filter"] = [*chosen, tool] if on else chosen
-            break
-    else:
-        raise HTTPException(404, f"no MCP server {server!r}")
+    entries = {e["name"]: e for e in data["mcp"]["servers"]}
+    for server in {s for s, _ in tools}:
+        if server not in entries:
+            raise HTTPException(404, f"no MCP server {server!r}")
+        names = {t for s, t in tools if s == server}
+        chosen = [t for t in entries[server].get("tool_filter") or [] if t not in names]
+        entries[server]["tool_filter"] = [*chosen, *sorted(names)] if on else chosen
     try:
         new = Settings.model_validate(data)
     except ValidationError as exc:
