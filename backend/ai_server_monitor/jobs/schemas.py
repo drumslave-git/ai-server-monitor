@@ -119,6 +119,8 @@ class Job(BaseModel):
     """When the scheduler runs it next (None: disabled or automation paused)."""
     last_run: JobRun | None = None
     """The newest finished run."""
+    running_run_id: int | None = None
+    """The run in progress right now (None: not running)."""
 
 
 class JobList(BaseModel):
@@ -133,5 +135,12 @@ class RunStarted(BaseModel):
     run_id: int
 
 
-def job_out(job: dict[str, Any], last: dict[str, Any] | None, next_run: float | None) -> Job:
-    return Job.model_validate({**job, "last_run": last, "next_run": next_run})
+def job_out(
+    job: dict[str, Any],
+    last: dict[str, Any] | None,
+    next_run: float | None,
+    running_run_id: int | None = None,
+) -> Job:
+    return Job.model_validate(
+        {**job, "last_run": last, "next_run": next_run, "running_run_id": running_run_id}
+    )

@@ -109,8 +109,16 @@ button that checks what you typed, before you save, and says what answered or wh
 - **Pause automation** — the button at the top of every page stops every scheduled job and automation (approval sweeps, pruning) and cancels the runs in flight. Chat, approving/rejecting, the Settings test buttons and the Telegram bot keep working. It survives a restart; Resume lets the jobs come due again (the overdue ones start a couple of seconds apart). `GET /api/automation`, `POST /api/automation/pause|resume`; `/api/info` shows it per job.
 - **Telegram** — write a plain question to chat
   ("what is using the most disk and memory?"); the model looks at the host with its read-only
-  shell and answers. Commands: `/approvals` (open requests, with buttons), `/id` (this chat's id: works in any chat, also for
-  chats that are not allowed yet, once per 10 s), `/new` (start a fresh chat), `/help`. When an
+  shell and answers. Commands: `/status` (overall status with its headline, then one line per
+  job: its last status and how long ago), `/jobs` (every job: builtin or custom, on or off, next
+  run), `/run <job>` (runs that job now and answers in the same chat when it is done; an unknown
+  name lists the valid ones), `/summary` (the same for the summary job), `/approvals` (open
+  requests, with buttons), `/id` (this chat's id: works in any chat, also for
+  chats that are not allowed yet, once per 10 s), `/new` (start a fresh chat), `/help`. The
+  **summary** of the Summary job (status, headline and its warnings; info findings are left out)
+  goes to every allowed chat as `outputs.telegram.send_summary` says: `changed` (default: when
+  the status or the list of warnings differs from the last summary), `every` (after every run)
+  or `never`. What was sent last is remembered, so a restart does not repeat it. When an
   action needs approval, the bot sends
   ONE message per approval (all the items one chat turn asked for: the
   first ten are listed, then "+N more") with **Approve all**, **Reject all** and, when
@@ -285,6 +293,7 @@ a fresh install starts with.
 | `outputs.telegram.token` | secret | empty | Bot token from @BotFather. |
 | `outputs.telegram.allowed_chat_ids` | list of integer | empty | Only these chats may talk to the bot. Don't know a chat id? Send /id to the bot: it answers in any chat. |
 | `outputs.telegram.new_session_after` | duration | `6h` | Start a fresh chat after this long without a message in a Telegram chat (the old one stays in the Chat list on the web page). 0 = never: one chat until you send /new. |
+| `outputs.telegram.send_summary` | changed / every / never | `changed` | When to send the result of the Summary job to the allowed chats (status, headline and the warnings). changed = when the overall status or the list of warnings differs from the last summary; every = after every summary run; never = only on request (/summary). |
 | `outputs.telegram.api_url` | string | empty | Bot API server. Empty = https://api.telegram.org. |
 | `outputs.telegram.web_url` | string | empty | Address of this web UI as you open it, e.g. https://monitor.example.com. Approval messages get a "Review" button that opens the approval there. Empty = no button. |
 | `outputs.metrics.enabled` | boolean | on | Expose Prometheus metrics at /metrics. |
@@ -334,7 +343,8 @@ a fresh install starts with.
   key, DNS name not found, timeout, TLS error).
 - **Telegram does not answer** — your chat id must be in *Allowed chat ids*: send `/id` to the
   bot to see it, and use *Send test message* under Settings → Outputs → Telegram to check each
-  chat. `docker logs` shows polling errors without the token.
+  chat. `docker logs` shows polling errors without the token. The bot uses python-telegram-bot and
+  keeps retrying while Telegram cannot be reached.
 - **An approval or action does nothing** — with `mcp.dry_run` on, approved calls only log what they
   would have done (status `dry_run`).
 

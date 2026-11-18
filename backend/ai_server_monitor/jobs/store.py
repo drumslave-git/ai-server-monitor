@@ -205,6 +205,14 @@ class JobStore:
         )
         return {r["job_slug"]: run_dict(r) for r in rows}
 
+    async def running_runs(self) -> dict[str, int]:
+        """slug -> id of its run in progress (at most one per job: the runner holds a lock)."""
+        rows = await self.db.fetchall(
+            "SELECT job_slug, MAX(id) AS id FROM job_runs WHERE status = 'running' "
+            "GROUP BY job_slug"
+        )
+        return {r["job_slug"]: int(r["id"]) for r in rows}
+
     async def mark_interrupted(self) -> int:
         """Runs still 'running' from before a restart: stored as error, never left dangling."""
         return await self.db.execute(

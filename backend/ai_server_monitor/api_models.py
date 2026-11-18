@@ -28,6 +28,8 @@ class JobStatus(BaseModel):
     """Of the newest finished run; None = never ran."""
     finished: float | None
     run_id: int | None
+    running_run_id: int | None = None
+    """The run in progress right now (None: not running)."""
 
 
 class StatusResponse(BaseModel):

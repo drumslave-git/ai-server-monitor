@@ -5,8 +5,8 @@
 -- 1. Tables: collector samples, reports, the planner's Prometheus queries.
 -- 2. Stored settings (live and the backups `settings.backup.<ts>`): the `report` and
 --    `collectors` sections, the LLM knobs only the old client used (tool_mode,
---    max_context_tokens, stream_usage; main and worker model), storage.sample_interval and the
---    Telegram report/alert switches. Two values move first: report.language becomes
+--    max_context_tokens, stream_usage; main and worker model) and storage.sample_interval
+--    (the Telegram report switches are mapped by 0016). Two values move first: report.language becomes
 --    general.language, collectors.docker.url becomes general.docker_url (the shell's Docker).
 -- 3. kv state of the removed parts: the tool-mode probe, the planner, Telegram report counters.
 
@@ -44,9 +44,7 @@ SET value = json_remove(
         '$.worker.tool_mode',
         '$.worker.max_context_tokens',
         '$.worker.stream_usage',
-        '$.storage.sample_interval',
-        '$.outputs.telegram.report_every',
-        '$.outputs.telegram.alerts'
+        '$.storage.sample_interval'
     )
 WHERE (key = 'settings' OR key LIKE 'settings.backup.%')
   AND json_valid(value)

@@ -110,6 +110,8 @@ def test_upgrade_drops_removed_features_and_starts_clean(bootstrap: Bootstrap) -
     assert values["general"]["language"] == "de"
     assert values["general"]["docker_url"] == "tcp://docker-proxy:2375"
     assert values["llm"]["model"] == "test-model"
+    assert values["outputs"]["telegram"]["send_summary"] == "changed"  # from report_every = 3
+    assert "report_every" not in values["outputs"]["telegram"]
     assert "tool_mode" not in values["llm"] and "tool_mode" not in values["worker"]
     assert status.status_code == 200 and status.json()["pending_approvals"] == 0
     # the old actions stay readable in the audit log
@@ -144,6 +146,7 @@ def test_upgrade_drops_removed_features_and_starts_clean(bootstrap: Bootstrap) -
             for gone in ("tool_mode", "max_context_tokens", "stream_usage", "sample_interval"):
                 assert gone not in text, (key, gone)
             assert "report_every" not in text and '"alerts"' not in text, key
+            assert value["outputs"]["telegram"]["send_summary"] == "changed", key
     assert not {t for t in tables if t.startswith("bench_")}
     assert not tables & {"collector_samples", "reports", "prom_queries"}
     assert "actions" in tables and "approval_batches" in tables
@@ -153,3 +156,34 @@ def test_upgrade_drops_removed_features_and_starts_clean(bootstrap: Bootstrap) -
     assert statuses == {"expired": "arr_search", "executed": "arr_search"}
     assert expired[1] == "upgrade"
     assert "removed" in json.loads(expired[0])["detail"]
+
+
+def _send_summary_after_migration(telegram: dict[str, object]) -> object:
+    """Run migration 0016 on a stored settings row (and a backup) and read the new field."""
+    sql = dict((name, text) for _v, name, text in load_migrations())["0016_telegram_summary.sql"]
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT, updated REAL)")
+    for key in ("settings", "settings.backup.7"):
+        value = json.dumps({"outputs": {"telegram": {"enabled": True, **telegram}}})
+        conn.execute("INSERT INTO kv VALUES (?, ?, 1)", (key, value))
+    conn.executescript(sql)
+    rows = [json.loads(v)["outputs"]["telegram"] for (v,) in conn.execute("SELECT value FROM kv")]
+    conn.close()
+    assert rows[0] == rows[1]
+    assert "report_every" not in rows[0] and "alerts" not in rows[0]
+    return rows[0].get("send_summary")
+
+
+def test_telegram_report_switches_map_to_send_summary() -> None:
+    cases = [
+        ({"report_every": 0, "alerts": True}, "changed"),
+        ({"report_every": 0, "alerts": False}, "never"),
+        ({"report_every": 1, "alerts": False}, "every"),
+        ({"report_every": 1}, "every"),
+        ({"report_every": 4, "alerts": False}, "changed"),
+        ({"alerts": False}, "never"),
+        ({"alerts": True}, "changed"),
+        ({}, None),  # nothing stored: the default applies
+    ]
+    for old, expected in cases:
+        assert _send_summary_after_migration(old) == expected, old

@@ -24,6 +24,7 @@ from .conntest import KINDS as TEST_KINDS
 from .conntest import run_test
 from .context import AppContext
 from .jobs.api import router as jobs_router
+from .jobs.status import job_status
 from .llm.check import check_model
 from .llm.modelinfo import read_model_info
 from .outputs.metrics import CONTENT_TYPE
@@ -51,36 +52,6 @@ def _build_commit() -> str | None:
     """Short git commit the image was built from, None for dev runs / unknown builds."""
     raw = os.environ.get("ASM_BUILD_COMMIT", "").strip()
     return None if not raw or raw == "unknown" else raw[:7]
-
-
-async def _job_status(ctx: AppContext) -> dict[str, Any]:
-    """`overall` (newest summary run) and the newest run of every job, for /api/status."""
-    jobs = await ctx.jobs.store.list()
-    latest = await ctx.jobs.store.latest_runs()
-    items = []
-    overall = None
-    for job in jobs:
-        run = latest.get(job["slug"])
-        items.append(
-            api_models.JobStatus(
-                slug=job["slug"],
-                name=job["name"],
-                kind=job["kind"],
-                enabled=job["enabled"],
-                status=run["status"] if run else None,
-                finished=run["finished"] if run else None,
-                run_id=run["id"] if run else None,
-            )
-        )
-        if job["kind"] == "summary" and run and (overall is None or run["id"] > overall.run_id):
-            text = (run.get("summary") or run.get("error") or "").strip()
-            overall = api_models.OverallStatus(
-                status=run["status"],
-                headline=text.splitlines()[0].lstrip("# ").strip() if text else "",
-                finished=run["finished"],
-                run_id=run["id"],
-            )
-    return {"overall": overall, "jobs": items}
 
 
 def get_ctx(request: Request) -> AppContext:
@@ -211,7 +182,7 @@ def create_app(
             worker_model=ctx.models.name("worker"),
             pending_approvals=await ctx.pending_approvals_count(),
             automation=await ctx.automation_status(),
-            **await _job_status(ctx),
+            **await job_status(ctx),
         )
 
     @app.get("/api/stream")

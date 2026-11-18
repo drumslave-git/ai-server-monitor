@@ -225,3 +225,18 @@ def test_run_now_returns_at_once_and_the_run_finishes(
         assert done["status"] == "ok" and done["trigger"] == "manual"
         assert client.post("/api/jobs/nope/run").status_code == 404
         assert client.get("/api/jobs/runs/999").status_code == 404
+
+
+def test_a_run_in_progress_is_shown_on_the_job_and_in_status(bootstrap: Bootstrap) -> None:
+    with TestClient(make_app(bootstrap)) as client:
+        store = client.app.state.ctx.jobs.store  # type: ignore[attr-defined]
+        assert client.get("/api/jobs/storage").json()["running_run_id"] is None
+        run_id = client.portal.call(store.start_run, "storage", "manual", "small")
+        jobs = {j["slug"]: j for j in client.get("/api/jobs").json()["items"]}
+        assert jobs["storage"]["running_run_id"] == run_id
+        assert jobs["docker"]["running_run_id"] is None
+        assert client.get("/api/jobs/storage").json()["running_run_id"] == run_id
+        status = {j["slug"]: j for j in client.get("/api/status").json()["jobs"]}
+        assert status["storage"]["running_run_id"] == run_id
+        client.portal.call(lambda: store.finish_run(run_id, status="ok", finished=time.time()))
+        assert client.get("/api/jobs/storage").json()["running_run_id"] is None

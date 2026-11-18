@@ -22,7 +22,8 @@ async def _job(ctx: AppContext, slug: str) -> Job:
     if job is None:
         raise HTTPException(status_code=404, detail=f"no job {slug!r}")
     latest = await ctx.jobs.store.latest_runs()
-    return job_out(job, latest.get(slug), ctx.job_next_run(slug))
+    running = await ctx.jobs.store.running_runs()
+    return job_out(job, latest.get(slug), ctx.job_next_run(slug), running.get(slug))
 
 
 @router.get("/api/jobs")
@@ -30,9 +31,10 @@ async def list_jobs(request: Request) -> JobList:
     """Every job (builtins first) with its newest finished run and next scheduled time."""
     ctx = _ctx(request)
     latest = await ctx.jobs.store.latest_runs()
+    running = await ctx.jobs.store.running_runs()
     return JobList(
         items=[
-            job_out(j, latest.get(j["slug"]), ctx.job_next_run(j["slug"]))
+            job_out(j, latest.get(j["slug"]), ctx.job_next_run(j["slug"]), running.get(j["slug"]))
             for j in await ctx.jobs.store.list()
         ]
     )

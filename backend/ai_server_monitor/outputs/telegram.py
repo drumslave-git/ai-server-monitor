@@ -1,11 +1,11 @@
-"""Telegram bot: chat, approval buttons, a few commands.
+"""Telegram bot: chat, approval buttons, job commands, the summary.
 
-Plain long polling against the Bot API with httpx (no webhook: the server sits behind a
-reverse proxy, and nothing needs to be reachable from outside). Only chats on the allowlist
-are served; everything else is ignored without a reply. The one exception is `/id`: it
-answers in any chat (so the id to put on the allowlist can be found), at most once per
-`ID_COOLDOWN` seconds per chat. The bot token is only ever used to
-build request URLs: it is not logged, and errors never contain request URLs.
+Built on python-telegram-bot, run inside the app's own event loop (no `run_polling()`): long
+polling, no webhook, because the server sits behind a reverse proxy and nothing needs to be
+reachable from outside. Only chats on the allowlist are served; everything else is ignored
+without a reply. The one exception is `/id`: it answers in any chat (so the id to put on the
+allowlist can be found), at most once per `ID_COOLDOWN` seconds per chat. The bot token is only
+ever used to build request URLs: it is not logged, and errors never contain request URLs.
 
 Messages are sent as HTML (only `&`, `<`, `>` need escaping, unlike MarkdownV2) and split
 below Telegram's 4096-character limit on paragraph boundaries.
@@ -24,17 +24,40 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from telegram import (
+    BotCommand,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    Update,
+)
+from telegram.constants import ParseMode
+from telegram.error import BadRequest, InvalidToken, TelegramError
+from telegram.ext import (
+    Application,
+    ApplicationBuilder,
+    ApplicationHandlerStop,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    TypeHandler,
+    filters,
+)
+from telegram.request import HTTPXRequest
 
 from ..actions import ActionError, Conflict, NotFound
 from ..actions.service import outcome_text
 from ..config import TelegramSettings
+from ..jobs.status import headline, job_status
 
 if TYPE_CHECKING:
     from ..context import AppContext
 
 log = logging.getLogger(__name__)
+# httpx logs every request URL at INFO, and a Telegram URL contains the bot token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
-API_URL = "https://api.telegram.org"
 MESSAGE_LIMIT = 4096
 POLL_TIMEOUT = 25
 BACKOFF_MAX = 60.0
@@ -44,23 +67,40 @@ APPROVAL_DEBOUNCE = 30.0
 this window end up in one message instead of several."""
 MESSAGE_ITEMS = 10
 """How many items an approval message lists (the rest is "+N more")."""
+SUMMARY_ITEMS = 8
+"""How many warnings a summary message lists (the rest is "+N more")."""
+SUMMARY_KEY = "telegram.summary_seen"
+"""kv key: status and warnings of the last summary seen, so a restart does not resend it."""
+STOP_GRACE = 10.0
+"""Seconds a stopping bot lets running handlers finish before they are cancelled."""
 HELP = (
     "<b>AI Server Monitor</b>\n"
     "Just write a question to chat about the server.\n\n"
+    "/status — overall status and the last result of every job\n"
+    "/jobs — the jobs and when they run next\n"
+    "/run &lt;job&gt; — run one job now and show its result\n"
+    "/summary — run the summary now and show it\n"
     "/approvals — actions waiting for your decision\n"
     "/new — start a fresh chat (the old one stays in the web Chat list)\n"
     "/id — this chat's id (works in any chat)\n"
     "/help — this text"
 )
+COMMANDS = [
+    BotCommand("status", "Overall status and last job results"),
+    BotCommand("jobs", "List the jobs and their next runs"),
+    BotCommand("run", "Run a job now: /run <job>"),
+    BotCommand("summary", "Run the summary now"),
+    BotCommand("approvals", "Actions waiting for approval"),
+    BotCommand("new", "Start a fresh chat"),
+    BotCommand("id", "Show this chat's id"),
+    BotCommand("help", "What I can do"),
+]
 ID_COOLDOWN = 10.0
 """Seconds between two /id answers in the same chat: it works for everybody, so it is limited."""
-
-
-class TelegramError(Exception):
-    def __init__(self, message: str, code: int | None = None, retry_after: float | None = None):
-        super().__init__(message)
-        self.code = code
-        self.retry_after = retry_after
+ICONS = {"ok": "✅", "warn": "⚠️", "crit": "🔴", "error": "❗"}
+ORIGINS = {"builtin": "Builtin", "user": "Custom, by user", "llm": "Custom, by LLM"}
+"""Where a job comes from, in the words of the web UI."""
+WORDS = {"ok": "OK", "warn": "Warning", "crit": "Critical", "error": "Error"}
 
 
 # --------------------------------------------------------------------------- formatting
@@ -143,45 +183,111 @@ def html_messages(markdown: str, limit: int = MESSAGE_LIMIT) -> list[str]:
     return split_message("\n\n".join(blocks), limit) if blocks else [""]
 
 
-# --------------------------------------------------------------------------- Bot API
+def _one_line(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-class BotAPI:
-    def __init__(
-        self,
-        token: str,
-        *,
-        base_url: str = "",
-        poll_timeout: int = POLL_TIMEOUT,
-        transport: httpx.AsyncBaseTransport | None = None,
-    ):
-        self._base = f"{(base_url or API_URL).rstrip('/')}/bot{token}/"
-        self.poll_timeout = poll_timeout
-        self._http = httpx.AsyncClient(
-            transport=transport, timeout=httpx.Timeout(poll_timeout + 15.0, connect=10.0)
+def _command(text: str) -> tuple[str, str] | None:
+    """("id", "") for "/ID", ("id", "mybot") for "/id@mybot args"; None for plain text."""
+    if not text.startswith("/"):
+        return None
+    word = text.split(maxsplit=1)[0][1:]
+    name, _, target = word.partition("@")
+    return name.lower(), target
+
+
+def _age(ts: float | None, now: float) -> str:
+    if ts is None:
+        return "never"
+    seconds = max(now - ts, 0)
+    if seconds < 90:
+        return "just now"
+    if seconds < 5400:
+        return f"{round(seconds / 60)} min ago"
+    if seconds < 172800:
+        return f"{round(seconds / 3600)} h ago"
+    return f"{round(seconds / 86400)} d ago"
+
+
+def _in(ts: float | None, now: float) -> str:
+    seconds = (ts or now) - now
+    if seconds < 90:
+        return "in under 2 min"
+    if seconds < 5400:
+        return f"in {round(seconds / 60)} min"
+    if seconds < 172800:
+        return f"in {round(seconds / 3600)} h"
+    return f"in {round(seconds / 86400)} d"
+
+
+def _outcome_line(view: dict[str, Any]) -> str:
+    """ "Approved by @name: 37 executed, 2 failed, 1 deferred". The same text whichever path
+    (button callback or bus event) edits the message."""
+    decision = str(view.get("decision") or "")
+    decided_by = str(view.get("decided_by") or "")
+    by = f"@{decided_by[9:]}" if decided_by.startswith("telegram:") else decided_by
+    verb = {"approve": "Approved", "reject": "Rejected", "expired": "Expired"}.get(decision, "Done")
+    counts = {k: v for k, v in (view.get("counts") or {}).items() if k != "pending"}
+    tail = f": {outcome_text(counts)}{view.get('queue_note') or ''}" if counts else ""
+    who = f" by {by}" if by and decision != "expired" else ""
+    return f"{verb}{who}{tail}"
+
+
+def _attention(run: dict[str, Any]) -> list[dict[str, Any]]:
+    """The findings that need attention (warn, crit); info is left out."""
+    return [f for f in run.get("findings") or [] if f.get("severity") in ("warn", "crit")]
+
+
+def _finding_lines(findings: list[dict[str, Any]], limit: int) -> list[str]:
+    lines = []
+    for f in findings[:limit]:
+        icon = ICONS["crit"] if f.get("severity") == "crit" else ICONS["warn"]
+        detail = _one_line(str(f.get("detail") or ""), 120)
+        lines.append(
+            f"• {icon} {html.escape(_one_line(str(f.get('title') or ''), 120))}"
+            + (f" — {html.escape(detail)}" if detail else "")
         )
+    if len(findings) > limit:
+        lines.append(f"+{len(findings) - limit} more")
+    return lines
 
-    async def close(self) -> None:
-        await self._http.aclose()
 
-    async def call(self, method: str, **params: Any) -> Any:
-        try:
-            response = await self._http.post(self._base + method, json=params)
-        except httpx.HTTPError as exc:
-            # No str(exc): it can contain the URL, which contains the token.
-            raise TelegramError(f"{method}: {type(exc).__name__}") from None
-        try:
-            body = response.json()
-        except ValueError:
-            body = {}
-        if response.status_code != 200 or not body.get("ok"):
-            retry = (body.get("parameters") or {}).get("retry_after")
-            raise TelegramError(
-                f"{method}: {body.get('description') or f'HTTP {response.status_code}'}",
-                code=body.get("error_code") or response.status_code,
-                retry_after=float(retry) if retry else None,
-            )
-        return body.get("result")
+def summary_message(run: dict[str, Any]) -> str:
+    """Status, headline and the warnings of a summary run (HTML)."""
+    status = str(run.get("status") or "error")
+    first = html.escape(_one_line(headline(run), 300))
+    lines = [
+        f"{ICONS.get(status, '❔')} <b>{WORDS.get(status, status)}</b>"
+        + (f" — {first}" if first else "")
+    ]
+    attention = _attention(run)
+    if attention:
+        lines.append("")
+        lines.extend(_finding_lines(attention, SUMMARY_ITEMS))
+    return "\n".join(lines)
+
+
+def run_message(name: str, run: dict[str, Any]) -> str:
+    """The result of a run a person asked for: its summary text and all findings (HTML)."""
+    status = str(run.get("status") or "error")
+    lines = [f"{ICONS.get(status, '❔')} <b>{html.escape(name)}</b> — {WORDS.get(status, status)}"]
+    text = (run.get("summary") or run.get("error") or "").strip()
+    if text:
+        lines += ["", md_to_html(text)]
+    findings = run.get("findings") or []
+    if findings:
+        lines.append("")
+        lines.extend(_finding_lines(findings, 15))
+    return "\n".join(lines)
+
+
+def summary_signature(run: dict[str, Any]) -> dict[str, Any]:
+    """What "changed" compares: the overall status and the (severity, title) of the warnings."""
+    return {
+        "status": run.get("status"),
+        "findings": sorted([f["severity"], f.get("title", "")] for f in _attention(run)),
+    }
 
 
 # --------------------------------------------------------------------------- the bot
@@ -199,76 +305,132 @@ class TelegramBot:
         self.app = app
         self.cfg = cfg
         token = cfg.token.get_secret_value()
-        self.api = BotAPI(
-            token, base_url=cfg.api_url, poll_timeout=poll_timeout, transport=transport
-        )
+        self.poll_timeout = poll_timeout
         self._key = hashlib.sha256(f"asm-telegram|{token}".encode()).digest()
         self.allowed = set(cfg.allowed_chat_ids)
         self._ignored: set[int] = set()
         self._id_replied: dict[int, float] = {}
         self._tasks: set[asyncio.Task[None]] = set()
-        self._runners: list[asyncio.Task[None]] = []
-        self._offset = 0
-        self._stopping = False
+        self._supervisor: asyncio.Task[None] | None = None
+        self._events: asyncio.Task[None] | None = None
         self.debounce = APPROVAL_DEBOUNCE
         self._announcing: dict[int, asyncio.Task[None]] = {}
+        self._own_runs: dict[int, int] = {}
+        """Runs started by a command: run id → the chat that asked and gets the result."""
+        self.ready = asyncio.Event()
+        """Set once the bot is polling."""
+        self._initialized = False
+        self.ptb = self._build(token, transport)
+
+    def _build(self, token: str, transport: httpx.AsyncBaseTransport | None) -> Application:  # type: ignore[type-arg]
+        extra: dict[str, Any] = {"httpx_kwargs": {"transport": transport}} if transport else {}
+        builder = (
+            ApplicationBuilder()
+            .token(token)
+            .request(HTTPXRequest(read_timeout=20.0, write_timeout=20.0, **extra))
+            .get_updates_request(
+                HTTPXRequest(
+                    connection_pool_size=1,
+                    read_timeout=self.poll_timeout + 10.0,
+                    write_timeout=20.0,
+                    **extra,
+                )
+            )
+            .concurrent_updates(True)  # a long chat answer must not hold up a button press
+            .job_queue(None)  # the app has its own scheduler
+        )
+        base = self.cfg.api_url.strip().rstrip("/")
+        if base:
+            builder = builder.base_url(f"{base}/bot").base_file_url(f"{base}/file/bot")
+        application = builder.build()
+        application.add_handler(CommandHandler("id", self._id_command), group=-2)
+        application.add_handler(TypeHandler(Update, self._gate), group=-1)
+        for names, callback in (
+            (("start", "help"), self._help),
+            (("new",), self._new),
+            (("approvals",), self._approvals),
+            (("status",), self._status),
+            (("jobs",), self._jobs),
+            (("run",), self._run),
+            (("summary",), self._summary),
+        ):
+            application.add_handler(CommandHandler(names, callback))
+        application.add_handler(MessageHandler(filters.COMMAND, self._unknown))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._chat))
+        application.add_handler(CallbackQueryHandler(self._on_callback))
+        application.add_error_handler(self._on_error)
+        return application
+
+    @property
+    def bot(self) -> Any:
+        return self.ptb.bot
 
     # ------------------------------------------------------------------ lifecycle
 
     async def start(self) -> None:
+        """Start in the background: a Telegram that cannot be reached yet must not hold up
+        (or break) the app; the bot retries until it gets through."""
         if not self.allowed:
             log.warning("telegram: no allowed chat IDs are set, so the bot ignores everyone")
-        self._runners = [
-            asyncio.create_task(self._poll_loop(), name="telegram-poll"),
-            asyncio.create_task(self._event_loop(), name="telegram-events"),
-        ]
-        self._spawn(self._catch_up())
+        self._supervisor = asyncio.create_task(self._supervise(), name="telegram-start")
+
+    async def _supervise(self) -> None:
+        delay = 1.0
+        while True:
+            try:
+                await self.ptb.initialize()  # getMe
+                break
+            except InvalidToken:
+                log.error("telegram: the bot token was rejected; the bot is off")
+                return
+            except (TelegramError, OSError) as exc:
+                log.warning("telegram: cannot reach Telegram (%s); retrying in %.0fs", exc, delay)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, BACKOFF_MAX)
+        self._initialized = True
+        try:
+            await self.ptb.start()
+            await self.ptb.updater.start_polling(  # type: ignore[union-attr]
+                timeout=self.poll_timeout,
+                allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY],
+                bootstrap_retries=-1,
+            )
+            self._events = asyncio.create_task(self._event_loop(), name="telegram-events")
+            self._spawn(self._catch_up())
+            with contextlib.suppress(TelegramError):
+                await self.bot.set_my_commands(COMMANDS)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("telegram: could not start polling")
+            return
+        self.ready.set()
         log.info("telegram: bot started (%d allowed chat(s))", len(self.allowed))
 
     async def stop(self) -> None:
-        self._stopping = True
-        for task in [*self._runners, *self._tasks]:
+        for task in (self._supervisor, self._events):
+            if task is not None:
+                task.cancel()
+        await asyncio.gather(
+            *(t for t in (self._supervisor, self._events) if t), return_exceptions=True
+        )
+        for task in list(self._tasks):
             task.cancel()
-        await asyncio.gather(*self._runners, *self._tasks, return_exceptions=True)
-        await self.api.close()
-
-    # ------------------------------------------------------------------ polling
-
-    async def _poll_loop(self) -> None:
-        delay = 1.0
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        ptb = self.ptb
         try:
-            await self.api.call(
-                "setMyCommands",
-                commands=[
-                    {"command": "approvals", "description": "Actions waiting for approval"},
-                    {"command": "new", "description": "Start a fresh chat"},
-                    {"command": "id", "description": "Show this chat's id"},
-                    {"command": "help", "description": "What I can do"},
-                ],
-            )
-        except TelegramError as exc:
-            log.info("telegram: could not register commands: %s", exc)
-        while not self._stopping:
-            started = time.monotonic()
-            try:
-                updates = await self.api.call(
-                    "getUpdates",
-                    offset=self._offset,
-                    timeout=self.api.poll_timeout,
-                    allowed_updates=["message", "callback_query"],
-                )
-                delay = 1.0
-            except TelegramError as exc:
-                wait = exc.retry_after or delay
-                log.warning("telegram: polling failed (%s); retrying in %.0fs", exc, wait)
-                await asyncio.sleep(wait)
-                delay = min(delay * 2, BACKOFF_MAX)
-                continue
-            for update in updates or []:
-                self._offset = max(self._offset, int(update["update_id"]) + 1)
-                self._spawn(self.handle_update(update))
-            if not updates and time.monotonic() - started < 0.5:
-                await asyncio.sleep(0.2)  # a server that answers instantly must not spin us
+            if ptb.updater is not None and ptb.updater.running:
+                await ptb.updater.stop()
+            if ptb.running:
+                try:
+                    async with asyncio.timeout(STOP_GRACE):
+                        await ptb.stop()  # lets running handlers finish, up to the grace time
+                except TimeoutError:
+                    log.info("telegram: cancelled handlers that were still running")
+            if self._initialized:
+                await ptb.shutdown()
+        except Exception:
+            log.exception("telegram: stopping the bot failed")
 
     def _spawn(self, coro: Any) -> None:
         task = asyncio.create_task(self._guard(coro))
@@ -281,88 +443,209 @@ class TelegramBot:
         except asyncio.CancelledError:
             raise
         except Exception:
-            log.exception("telegram: handling an update failed")
+            log.exception("telegram: handling an event failed")
 
-    # ------------------------------------------------------------------ incoming
-
-    def _allowed(self, chat_id: int) -> bool:
-        if chat_id in self.allowed:
-            return True
-        if chat_id not in self._ignored:
-            self._ignored.add(chat_id)
-            log.warning("telegram: ignoring chat %s (not in the allowlist)", chat_id)
-        return False
-
-    async def handle_update(self, update: dict[str, Any]) -> None:
-        if "callback_query" in update:
-            await self._on_callback(update["callback_query"])
-            return
-        message = update.get("message") or {}
-        chat_id = (message.get("chat") or {}).get("id")
-        text = (message.get("text") or "").strip()
-        if chat_id is None or not text:
-            return
-        command = text.split()[0][1:].split("@")[0].lower() if text.startswith("/") else None
-        if command == "id":  # the only thing anybody may ask for
-            await self._id_command(message)
-            return
-        if not self._allowed(chat_id):
-            return
-        if command is not None:
-            await self._command(chat_id, command)
+    async def _on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        error = context.error
+        if isinstance(error, TelegramError):  # network trouble, rate limits: no traceback
+            log.warning("telegram: %s: %s", type(error).__name__, error)
         else:
-            await self._chat(chat_id, text)
+            log.error("telegram: handling an update failed", exc_info=error)  # type: ignore[arg-type]
 
-    async def _id_command(self, message: dict[str, Any]) -> None:
+    # ------------------------------------------------------------------ gate and /id
+
+    async def _gate(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Only allowed chats get past this point (the /id answer comes before it)."""
+        chat = update.effective_chat
+        if chat is not None and chat.id in self.allowed:
+            return
+        command = (
+            _command(update.effective_message.text or "") if update.effective_message else None
+        )
+        if (
+            chat is not None
+            and not (command and command[0] == "id")
+            and chat.id not in self._ignored
+        ):
+            self._ignored.add(chat.id)
+            log.warning("telegram: ignoring chat %s (not in the allowlist)", chat.id)
+        raise ApplicationHandlerStop
+
+    async def _id_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Reply with the chat id, sender id and chat type, in any chat, rate-limited."""
-        chat = message.get("chat") or {}
-        chat_id = int(chat["id"])
+        chat, message = update.effective_chat, update.effective_message
+        if chat is None or message is None:
+            return
         now = time.monotonic()
-        last = self._id_replied.get(chat_id)
+        last = self._id_replied.get(chat.id)
         if last is not None and now - last < ID_COOLDOWN:
             return
         if len(self._id_replied) > 1000:  # forget old entries: strangers can create many
             self._id_replied = {c: t for c, t in self._id_replied.items() if now - t < ID_COOLDOWN}
-        self._id_replied[chat_id] = now
-        sender = (message.get("from") or {}).get("id")
+        self._id_replied[chat.id] = now
+        sender = message.from_user.id if message.from_user else None
         lines = [
-            f"<b>Chat id:</b> <code>{chat_id}</code>",
+            f"<b>Chat id:</b> <code>{chat.id}</code>",
             f"<b>Your user id:</b> <code>{sender if sender is not None else 'unknown'}</code>",
-            f"<b>Chat type:</b> {html.escape(str(chat.get('type') or 'unknown'))}",
+            f"<b>Chat type:</b> {html.escape(str(chat.type or 'unknown'))}",
             "This chat is already allowed to use the bot."
-            if chat_id in self.allowed
+            if chat.id in self.allowed
             else "Add this chat id under Settings → Outputs → Telegram → Allowed chat IDs.",
         ]
-        log.info("telegram: /id answered in chat %s", chat_id)
-        await self.send(chat_id, "\n".join(lines), markdown=False)
+        log.info("telegram: /id answered in chat %s", chat.id)
+        await self.send(chat.id, "\n".join(lines), markdown=False)
 
-    async def _command(self, chat_id: int, command: str) -> None:
-        if command in ("start", "help"):
-            await self.send(chat_id, HELP, markdown=False)
-        elif command == "new":
-            await self.app.db.execute(
-                "DELETE FROM kv WHERE key = ?", (f"telegram.session.{chat_id}",)
+    # ------------------------------------------------------------------ commands
+
+    async def _help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await self.send(update.effective_chat.id, HELP, markdown=False)  # type: ignore[union-attr]
+
+    async def _unknown(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        command = _command(
+            (update.effective_message.text or "") if update.effective_message else ""
+        )
+        if command is None or command[0] == "id":
+            return
+        if command[1] and command[1].lower() != (self.bot.username or "").lower():
+            return  # meant for another bot in the group
+        await self.send(
+            update.effective_chat.id,  # type: ignore[union-attr]
+            "Unknown command. /help lists them.",
+            markdown=False,
+        )
+
+    async def _new(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        chat_id = update.effective_chat.id  # type: ignore[union-attr]
+        await self.app.db.execute("DELETE FROM kv WHERE key = ?", (f"telegram.session.{chat_id}",))
+        await self.send(
+            chat_id,
+            "Fresh chat started. The earlier one stays in the Chat list on the web page.",
+            markdown=False,
+        )
+
+    async def _approvals(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        chat_id = update.effective_chat.id  # type: ignore[union-attr]
+        batches = [b for b in await self.app.actions.pending_batches() if b["pending"]]
+        if not batches:
+            await self.send(chat_id, "Nothing is waiting for approval.", markdown=False)
+        for batch in batches:
+            await self._send_approval(chat_id, batch)
+
+    async def _status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        now = time.time()
+        data = await job_status(self.app)
+        overall = data["overall"]
+        if overall is None:
+            lines = ["No summary yet."]
+        else:
+            lines = [
+                f"{ICONS[overall.status]} <b>{WORDS[overall.status]}</b>"
+                + (
+                    f" — {html.escape(_one_line(overall.headline, 300))}"
+                    if overall.headline
+                    else ""
+                )
+                + f" ({_age(overall.finished, now)})"
+            ]
+        lines.append("")
+        for job in data["jobs"]:
+            state = (
+                f"{ICONS[job.status]} {WORDS[job.status]}, {_age(job.finished, now)}"
+                if job.status
+                else "never ran"
             )
+            off = "" if job.enabled else " (off)"
+            lines.append(f"• {html.escape(job.name)}{off} — {state}")
+        await self.send(update.effective_chat.id, "\n".join(lines), markdown=False)  # type: ignore[union-attr]
+
+    async def _jobs(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        now = time.time()
+        lines = []
+        for job in await self.app.jobs.store.list():
+            nxt = self.app.job_next_run(job["slug"])
+            if not job["enabled"]:
+                when = "off"
+            elif nxt is None:
+                when = "on, not scheduled (paused)"
+            else:
+                when = f"on, next run {_in(nxt, now)}"
+            origin = ORIGINS.get(job.get("created_by"), "Custom")
+            lines.append(
+                f"• <b>{html.escape(job['name'])}</b> (<code>{html.escape(job['slug'])}</code>)"
+                f" — {origin}, {when}"
+            )
+        await self.send(
+            update.effective_chat.id,  # type: ignore[union-attr]
+            "\n".join(lines) or "No jobs.",
+            markdown=False,
+        )
+
+    async def _run(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        chat_id = update.effective_chat.id  # type: ignore[union-attr]
+        jobs = {j["slug"]: j for j in await self.app.jobs.store.list()}
+        wanted = (context.args[0] if context.args else "").strip().lower()
+        job = jobs.get(wanted) or next(
+            (j for j in jobs.values() if j["name"].lower() == wanted), None
+        )
+        if job is None:
+            slugs = ", ".join(f"<code>{html.escape(s)}</code>" for s in jobs)
             await self.send(
                 chat_id,
-                "Fresh chat started. The earlier one stays in the Chat list on the web page.",
+                f"Which job? Usage: /run &lt;job&gt;. Jobs: {slugs}",
                 markdown=False,
             )
-        elif command == "approvals":
-            batches = [b for b in await self.app.actions.pending_batches() if b["pending"]]
-            if not batches:
-                await self.send(chat_id, "Nothing is waiting for approval.", markdown=False)
-            for batch in batches:
-                await self._send_approval(chat_id, batch)
-        else:
-            await self.send(chat_id, "Unknown command. /help lists them.", markdown=False)
+            return
+        await self._run_and_reply(chat_id, job)
+
+    async def _summary(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        chat_id = update.effective_chat.id  # type: ignore[union-attr]
+        summary = next(
+            (j for j in await self.app.jobs.store.list() if j["kind"] == "summary"), None
+        )
+        if summary is None:
+            await self.send(chat_id, "There is no summary job.", markdown=False)
+            return
+        await self._run_and_reply(chat_id, summary)
+
+    async def _run_and_reply(self, chat_id: int, job: dict[str, Any]) -> None:
+        """Run `job` now and answer with its result here. The run is started in the
+        background (it goes on if this bot is restarted meanwhile) and waited for through the
+        `job.finished` event."""
+        await self.send(chat_id, f"Running <b>{html.escape(job['name'])}</b>…", markdown=False)
+        runner = self.app.jobs
+        limit = float(job.get("timeout_s") or self.app.settings.jobs.timeout.total_seconds())
+        sub = self.app.events.subscribe("job.finished")
+        try:
+            run_id = await runner.start(job["slug"], "manual")
+            self._own_runs[run_id] = chat_id
+            try:
+                async with asyncio.timeout(limit * 2 + 60):
+                    async for event in sub:
+                        if event.data.get("run_id") == run_id:
+                            break
+            except TimeoutError:
+                await self.send(
+                    chat_id, "The run is taking much longer than allowed.", markdown=False
+                )
+                return
+        finally:
+            sub.close()
+        run = await runner.store.get_run(run_id)
+        if run is None:
+            await self.send(chat_id, "The run is gone.", markdown=False)
+            return
+        await self.send(chat_id, run_message(job["name"], run), markdown=False)
 
     # ------------------------------------------------------------------ chat
 
     async def _session_for(self, chat_id: int) -> str | None:
         return await self.app.db.kv_get(f"telegram.session.{chat_id}")
 
-    async def _chat(self, chat_id: int, text: str) -> None:
+    async def _chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        chat_id = update.effective_chat.id  # type: ignore[union-attr]
+        text = (update.effective_message.text or "").strip()  # type: ignore[union-attr]
+        if not text:
+            return
         engine = self.app.chat
         session_id = await self._session_for(chat_id)
         if session_id is not None:
@@ -390,35 +673,41 @@ class TelegramBot:
     async def _typing(self, chat_id: int) -> None:
         while True:
             with contextlib.suppress(TelegramError):
-                await self.api.call("sendChatAction", chat_id=chat_id, action="typing")
+                await self.bot.send_chat_action(chat_id, "typing")
             await asyncio.sleep(TYPING_EVERY)
 
     # ------------------------------------------------------------------ sending
 
     async def send(
-        self, chat_id: int, text: str, *, markdown: bool = True, **extra: Any
-    ) -> list[dict[str, Any]]:
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        markdown: bool = True,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> list[Message]:
         """Send `text` (Markdown, or ready HTML with markdown=False), split to fit."""
         pieces = html_messages(text) if markdown else split_message(text)
         sent = []
         for i, piece in enumerate(pieces):
-            params = {"chat_id": chat_id, "text": piece, "parse_mode": "HTML", **extra}
-            if i < len(pieces) - 1:
-                params.pop("reply_markup", None)  # buttons go on the last piece
+            markup = reply_markup if i == len(pieces) - 1 else None  # buttons on the last piece
             try:
-                sent.append(await self.api.call("sendMessage", **params))
-            except TelegramError as exc:
-                if exc.code != 400:
-                    raise
-                params.pop("parse_mode")  # unparsable markup: send it as plain text
-                params["text"] = html.unescape(re.sub(r"<[^>]+>", "", piece))
-                sent.append(await self.api.call("sendMessage", **params))
+                sent.append(
+                    await self.bot.send_message(
+                        chat_id, piece, parse_mode=ParseMode.HTML, reply_markup=markup
+                    )
+                )
+            except BadRequest:  # unparsable markup: send it as plain text
+                plain = html.unescape(re.sub(r"<[^>]+>", "", piece))
+                sent.append(await self.bot.send_message(chat_id, plain, reply_markup=markup))
         return sent
 
-    async def broadcast(self, text: str, *, markdown: bool = True, **extra: Any) -> None:
+    async def broadcast(self, text: str, *, markdown: bool = True, skip: int | None = None) -> None:
         for chat_id in sorted(self.allowed):
+            if chat_id == skip:
+                continue
             try:
-                await self.send(chat_id, text, markdown=markdown, **extra)
+                await self.send(chat_id, text, markdown=markdown)
             except TelegramError as exc:
                 log.warning("telegram: could not send to chat %s: %s", chat_id, exc)
 
@@ -431,6 +720,7 @@ class TelegramBot:
             "approval.decided",
             "approval.expired",
             "approval.progress",
+            "job.finished",
         )
         async for event in sub:
             self._spawn(self.on_event(event.type, event.data))
@@ -444,6 +734,29 @@ class TelegramBot:
         elif kind in ("approval.decided", "approval.expired", "approval.progress"):
             self._cancel_announcement(int(data["id"]))
             await self._reflect_decision(data)
+        elif kind == "job.finished":
+            await self._on_job_finished(data)
+
+    # ------------------------------------------------------------------ the summary
+
+    async def _on_job_finished(self, data: dict[str, Any]) -> None:
+        """A summary run ended: tell the chats, as `send_summary` says."""
+        run_id = int(data["run_id"])
+        asked_by = self._own_runs.pop(run_id, None)  # it answered there already
+        mode = self.cfg.send_summary
+        if mode == "never":
+            return
+        store = self.app.jobs.store
+        job = await store.get(str(data.get("slug") or ""))
+        run = await store.get_run(run_id)
+        if job is None or run is None or job["kind"] != "summary":
+            return
+        signature = summary_signature(run)
+        seen = await self.app.db.kv_get(SUMMARY_KEY)
+        await self.app.db.kv_set(SUMMARY_KEY, signature)
+        if mode == "changed" and seen == signature:
+            return
+        await self.broadcast(summary_message(run), markdown=False, skip=asked_by)
 
     # ------------------------------------------------------------------ approvals
     #
@@ -456,25 +769,25 @@ class TelegramBot:
             :12
         ]
 
-    def _keyboard(self, batch: dict[str, Any]) -> dict[str, Any]:
+    def _keyboard(self, batch: dict[str, Any]) -> InlineKeyboardMarkup:
         batch_id = int(batch["id"])
 
-        def button(label: str, decision: str) -> dict[str, str]:
-            return {
-                "text": label,
-                "callback_data": f"{decision}:{batch_id}:{self.sign(decision, batch_id)}",
-            }
+        def button(label: str, decision: str) -> InlineKeyboardButton:
+            return InlineKeyboardButton(
+                label, callback_data=f"{decision}:{batch_id}:{self.sign(decision, batch_id)}"
+            )
 
         many = int(batch.get("pending") or 0) > 1
-        row = [
-            button("✅ Approve all" if many else "✅ Approve", "ba"),
-            button("❌ Reject all" if many else "❌ Reject", "br"),
+        rows = [
+            [
+                button("✅ Approve all" if many else "✅ Approve", "ba"),
+                button("❌ Reject all" if many else "❌ Reject", "br"),
+            ]
         ]
-        rows: list[list[dict[str, str]]] = [row]
         web = self.cfg.web_url.strip().rstrip("/")
         if web:
-            rows.append([{"text": "🔍 Review", "url": f"{web}/#/approvals/{batch_id}"}])
-        return {"inline_keyboard": rows}
+            rows.append([InlineKeyboardButton("🔍 Review", url=f"{web}/#/approvals/{batch_id}")])
+        return InlineKeyboardMarkup(rows)
 
     @staticmethod
     def _batch_text(batch: dict[str, Any], *, expiry: bool = True) -> str:
@@ -544,16 +857,12 @@ class TelegramBot:
 
     async def _send_approval(self, chat_id: int, batch: dict[str, Any]) -> None:
         sent = await self.send(
-            chat_id,
-            self._batch_text(batch),
-            markdown=False,
-            reply_markup=self._keyboard(batch),
+            chat_id, self._batch_text(batch), markdown=False, reply_markup=self._keyboard(batch)
         )
-        message_id = sent[-1]["message_id"]
         await self.app.db.execute(
             "INSERT OR REPLACE INTO telegram_batch_messages "
             "(batch_id, chat_id, message_id, created_ts) VALUES (?, ?, ?, ?)",
-            (int(batch["id"]), chat_id, int(message_id), time.time()),
+            (int(batch["id"]), chat_id, sent[-1].message_id, time.time()),
         )
 
     async def _refresh(self, batch_id: int) -> None:
@@ -567,18 +876,19 @@ class TelegramBot:
         for chat_id, message_id in known:
             await self._edit(chat_id, message_id, self._batch_text(batch), self._keyboard(batch))
 
-    async def _on_callback(self, query: dict[str, Any]) -> None:
-        message = query.get("message") or {}
-        chat_id = (message.get("chat") or {}).get("id")
-        if chat_id is None or not self._allowed(chat_id):
+    async def _on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if query is None or update.effective_chat is None:
             return
-        decision, batch_id, only_item = await self._parse_callback(query.get("data") or "")
+        chat_id = update.effective_chat.id
+        message = query.message
+        message_id = message.message_id if message is not None else None
+        decision, batch_id, only_item = await self._parse_callback(query.data or "")
         if decision is None or batch_id is None:
             log.warning("telegram: rejected a callback with a bad signature from chat %s", chat_id)
             await self._answer(query, "Invalid button.")
             return
-        user = query.get("from") or {}
-        who = user.get("username") or str(user.get("id"))
+        who = query.from_user.username or str(query.from_user.id)
         try:
             view = await self.app.actions.decide_batch(
                 batch_id,
@@ -587,11 +897,29 @@ class TelegramBot:
                 decided_by=f"telegram:{who}",
             )
         except (NotFound, Conflict, ActionError) as exc:
-            await self._answer(query, str(exc)[:150])
-            await self._finish_message(chat_id, message.get("message_id"), message, str(exc))
+            note = await self._closed_note(batch_id, exc)
+            await self._answer(query, note)
+            original = getattr(message, "text", None)
+            await self._finish_message(chat_id, message_id, original, note)
             return
         await self._answer(query, _outcome_line(view)[:190])
-        await self._reflect(batch_id, view, only=(chat_id, message.get("message_id")))
+        await self._reflect(batch_id, view, only=(chat_id, message_id))
+
+    async def _closed_note(self, batch_id: int, exc: Exception) -> str:
+        """Why a button no longer works: expired (also approvals closed by an upgrade) or
+        already decided."""
+        if isinstance(exc, NotFound) or "expired" in str(exc):
+            return "This approval has expired."
+        try:
+            counts = (await self.app.actions.get_batch(batch_id)).get("counts") or {}
+        except Exception:
+            return "This approval has expired."
+        if set(counts) <= {"expired"}:
+            return "This approval has expired."
+        done = {k: v for k, v in counts.items() if k != "pending"}
+        if done:
+            return f"Already decided: {outcome_text(done)}"[:190]
+        return str(exc)[:190]
 
     async def _parse_callback(self, data: str) -> tuple[str | None, int | None, int | None]:
         """(approve | reject, batch id, item id when the button is an old per-item one)."""
@@ -612,31 +940,40 @@ class TelegramBot:
             return None, None, None
         return decision, int(row["batch_id"]), number
 
-    async def _answer(self, query: dict[str, Any], text: str) -> None:
+    async def _answer(self, query: Any, text: str) -> None:
         try:
-            await self.api.call("answerCallbackQuery", callback_query_id=query["id"], text=text)
-        except TelegramError as exc:
-            log.info("telegram: answerCallbackQuery failed: %s", exc)
+            await query.answer(text=text)
+        except TelegramError as exc:  # e.g. the button is too old to be answered
+            log.info("telegram: answering a button failed: %s", exc)
 
     async def _finish_message(
-        self, chat_id: int, message_id: int | None, message: dict[str, Any], note: str
+        self, chat_id: int, message_id: int | None, original: str | None, note: str
     ) -> None:
+        """Take the buttons off a card that no longer applies and say why."""
         if message_id is None:
             return
-        original = html.escape(message.get("text") or "")
-        await self._edit(chat_id, message_id, f"{original}\n\n— {html.escape(note)}")
+        if original:
+            await self._edit(
+                chat_id, message_id, f"{html.escape(original)}\n\n— {html.escape(note)}"
+            )
+            return
+        with contextlib.suppress(TelegramError):  # too old to read its text: only the buttons go
+            await self.bot.edit_message_reply_markup(chat_id, message_id, reply_markup=None)
 
     async def _edit(
-        self, chat_id: int, message_id: int, text: str, keyboard: dict[str, Any] | None = None
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        keyboard: InlineKeyboardMarkup | None = None,
     ) -> None:
         try:
-            await self.api.call(
-                "editMessageText",
+            await self.bot.edit_message_text(
+                text,
                 chat_id=chat_id,
                 message_id=message_id,
-                text=text,
-                parse_mode="HTML",
-                reply_markup=keyboard or {"inline_keyboard": []},
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,  # none: Telegram drops the buttons
             )
         except TelegramError as exc:
             log.info("telegram: could not edit a message: %s", exc)  # e.g. "not modified"
@@ -652,7 +989,7 @@ class TelegramBot:
         while items still wait, the buttons stay and apply to the rest."""
         batch = await self.app.actions.get_batch(batch_id)
         known = await self._stored_messages(batch_id)
-        keyboard: dict[str, Any] | None
+        keyboard: InlineKeyboardMarkup | None
         if batch["pending"]:
             text, keyboard = self._batch_text(batch), self._keyboard(batch)
         elif batch["queued"]:  # approved, running by itself as the hourly cap frees up
@@ -707,21 +1044,3 @@ class TelegramBot:
                 await self._reflect(batch_id)
         except Exception:
             log.exception("telegram: could not catch up on approval messages")
-
-
-def _one_line(text: str, limit: int) -> str:
-    text = " ".join(text.split())
-    return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
-def _outcome_line(view: dict[str, Any]) -> str:
-    """ "Approved by @name: 37 executed, 2 failed, 1 deferred". The same text whichever path
-    (button callback or bus event) edits the message."""
-    decision = str(view.get("decision") or "")
-    decided_by = str(view.get("decided_by") or "")
-    by = f"@{decided_by[9:]}" if decided_by.startswith("telegram:") else decided_by
-    verb = {"approve": "Approved", "reject": "Rejected", "expired": "Expired"}.get(decision, "Done")
-    counts = {k: v for k, v in (view.get("counts") or {}).items() if k != "pending"}
-    tail = f": {outcome_text(counts)}{view.get('queue_note') or ''}" if counts else ""
-    who = f" by {by}" if by and decision != "expired" else ""
-    return f"{verb}{who}{tail}"

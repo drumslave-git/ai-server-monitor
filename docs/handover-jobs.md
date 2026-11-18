@@ -9,7 +9,8 @@ jobs/` (store, builtins, prompts, runner, schemas, api, tools), `schedule.py`, `
     Job     = {slug, name, kind: "topic"|"summary", prompt, interval_s: int|null, cron: str|null,
                model: "worker"|"main", enabled, builtin, edited, timeout_s: int|null,
                max_steps: int|null, created_by: "builtin"|"user"|"llm", created, updated,
-               next_run: float|null, last_run: JobRun|null}
+               next_run: float|null, last_run: JobRun|null,
+               running_run_id: int|null}            (the run in progress right now)
     JobRun  = {id, job_slug, trigger: "schedule"|"manual"|"llm", started, finished|null,
                duration_s|null, status: "running"|"ok"|"warn"|"crit"|"error",
                summary (markdown)|null, findings: [{severity: "info"|"warn"|"crit", title, detail}],
@@ -31,7 +32,8 @@ jobs/` (store, builtins, prompts, runner, schemas, api, tools), `schedule.py`, `
     GET    /api/jobs/runs/{run_id}      -> JobRun | 404
     GET    /api/status                  -> … + overall: {status, headline, finished, run_id} | null
                                            + jobs: [{slug, name, kind, enabled, status|null,
-                                                     finished|null, run_id|null}]
+                                                     finished|null, run_id|null,
+                                                     running_run_id|null}]
     GET    /api/info                    -> … + jobs: [{name ("job:<slug>", "prune", …), kind,
                                            paused, next_run, runs, running, last_status, last_error}]
     SSE /api/stream?types=job           job.started {run_id, slug, trigger}
