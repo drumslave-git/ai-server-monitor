@@ -147,7 +147,7 @@ export function SettingsPage() {
           ctx={ctx}
         />
         {(section === "llm" || section === "worker") && (
-          <LlmTest key={section} profile={section} llm={values[section] as JsonObject} onModels={setModels} />
+          <LlmTest key={section} profile={section === "llm" ? "main" : "worker"} llm={values[section] as JsonObject} onModels={setModels} />
         )}
 
         <div className={`savebar${dirty || status ? " visible" : ""}`}>

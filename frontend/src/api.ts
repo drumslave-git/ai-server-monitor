@@ -6,8 +6,25 @@ export class ApiError extends Error {
     public status: number,
     public detail: unknown,
   ) {
-    super(typeof detail === "string" ? detail : `HTTP ${status}`);
+    super(describe(status, detail));
   }
+}
+
+/** The message of an error response: its `detail` text, or each entry of a validation error
+ *  list (FastAPI: `{loc, msg}`) as "field: message". */
+function describe(status: number, detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail) && detail.length) {
+    return detail
+      .map((item) => {
+        if (typeof item !== "object" || item === null) return String(item);
+        const { loc, msg } = item as { loc?: unknown; msg?: unknown };
+        const field = Array.isArray(loc) ? loc.filter((p) => p !== "body" && p !== "query").join(".") : "";
+        return field ? `${field}: ${String(msg ?? "")}` : String(msg ?? JSON.stringify(item));
+      })
+      .join("; ");
+  }
+  return `HTTP ${status}`;
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
