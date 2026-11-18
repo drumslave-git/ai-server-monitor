@@ -437,6 +437,15 @@ log and the model call logs are kept; the rest of the old data is deleted by the
   within its step limit gives a run with the error "The model did not finish within N steps"
   instead of a crash.
 
+### 0.7.2
+
+- New **Explain** button on the summary, on every job run and on every finding (also on the
+  Telegram summary message): it opens a new chat in which the main model explains it in detail
+  from the run's own data. Nothing to set up.
+- The built-in jobs, the chat and the worker share one set of tested host commands, and the
+  `journal` and `updates` jobs run one combined command. Built-in jobs you never edited get the
+  new prompts by themselves; if you edited one, press *Reset* on the Jobs page to get them.
+
 ## Troubleshooting
 
 - **A job or the summary shows `error`** — open the run on the Jobs page: its error says why
