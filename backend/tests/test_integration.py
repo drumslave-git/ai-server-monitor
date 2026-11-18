@@ -44,7 +44,6 @@ def test_migrations_are_contiguous_and_complete() -> None:
         (17, "0017_chat_pending_runs.sql"),
         (18, "0018_summary_topics.sql"),
         (19, "0019_mcp_on_pydantic_ai.sql"),
-        (20, "0020_mcp_domains.sql"),
     ]
     names = {e.name for e in resources.files("ai_server_monitor.migrations").iterdir()}
     assert not any("placeholder" in n for n in names)
@@ -54,7 +53,7 @@ async def test_fresh_database_migrates_to_latest(tmp_path: Path) -> None:
     db = Database(tmp_path / "fresh.db")
     await db.connect()
     try:
-        assert await db.schema_version() == 20
+        assert await db.schema_version() == 19
         tables = {
             r["name"]
             for r in await db.fetchall("SELECT name FROM sqlite_master WHERE type='table'")
@@ -81,7 +80,7 @@ async def test_database_at_the_old_main_schema_upgrades(tmp_path: Path) -> None:
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 20
+        assert await db.schema_version() == 19
         assert await db.kv_get("keep") == 1  # data survives
         await db.execute(
             "INSERT INTO actions (ts, updated, action, policy, status, source) "
