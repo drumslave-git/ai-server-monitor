@@ -47,6 +47,7 @@ from ..jobs.tools import job_tools
 from ..llm.text import strip_reasoning
 from ..tracing import trace_scope
 from ..tracing.parse import empty_answer_message
+from .explain import Explain
 from .store import ChatStore
 from .title import TITLE_MAX_TOKENS, TITLE_SYSTEM, TITLE_TIMEOUT_S, clean_title, title_prompt
 from .tools import ToolContext
@@ -84,15 +85,20 @@ class ChatEngine:
         *,
         channel: str = "web",
         source: str | None = None,
+        title: str | None = None,
+        user_meta: dict[str, Any] | None = None,
+        limit: int | None = MAX_MESSAGE,
     ) -> AsyncIterator[Event]:
         """Answer `message` in a new or existing session. Yields events until `done`/`error`.
 
         `source` names who asks in the audit log of write actions (default `chat:<session>`);
-        `channel` is stored with a new session (web | telegram)."""
-        message = message.strip()[:MAX_MESSAGE]
-        is_new = session_id is None
+        `channel` is stored with a new session (web | telegram). A new session given a `title`
+        keeps it (no LLM title). `user_meta` is stored with the question; `limit` cuts it
+        (None: a message the app composed, e.g. an explain request, is kept whole)."""
+        message = message.strip()[:limit] if limit else message.strip()
+        is_new = session_id is None and title is None
         if session_id is None:
-            session_id = await self.store.create_session(message, channel)
+            session_id = await self.store.create_session(title or message, channel)
         elif not await self.store.session_exists(session_id):
             yield {"type": "error", "message": f"unknown session {session_id}"}
             return
@@ -101,7 +107,7 @@ class ChatEngine:
         title_task: asyncio.Task[str | None] | None = None
         async with lock:
             try:
-                async for event in self._answer(session_id, message, source):
+                async for event in self._answer(session_id, message, source, user_meta):
                     if event["type"] == "done" and is_new:
                         # Started before `done` goes out, so the model works while the client
                         # reads the answer; nothing below waits for it.
@@ -122,6 +128,22 @@ class ChatEngine:
             title = await title_task
             if title:
                 yield {"type": "title", "session_id": session_id, "title": title}
+
+    async def explain(
+        self, request: Explain, *, channel: str = "web", source: str | None = None
+    ) -> AsyncIterator[Event]:
+        """A new conversation that starts with the explain message of a run or finding: shown
+        as its short label (`meta.explain`), titled with it, answered like any question."""
+        async for event in self.run(
+            request.prompt,
+            None,
+            channel=channel,
+            source=source,
+            title=request.label,
+            user_meta={"explain": request.meta},
+            limit=None,
+        ):
+            yield event
 
     # ------------------------------------------------------------------ titles
 
@@ -168,15 +190,19 @@ class ChatEngine:
     # ------------------------------------------------------------------ one question
 
     async def _answer(
-        self, session_id: str, message: str, source: str | None
+        self,
+        session_id: str,
+        message: str,
+        source: str | None,
+        user_meta: dict[str, Any] | None = None,
     ) -> AsyncIterator[Event]:
         app = self.app
         settings = app.settings
+        history = await self.store.history(session_id, settings.chat.history_messages)
+        await self.store.add_message(session_id, "user", message, meta=user_meta)
         if not app.models.configured("main"):
             yield {"type": "error", "message": "The LLM is not configured (Settings → Main model)."}
             return
-        history = await self.store.history(session_id, settings.chat.history_messages)
-        await self.store.add_message(session_id, "user", message)
         trace_turn = uuid.uuid4().hex[:12]
         cfg, kinds = await self._config(session_id, source, trace_turn)
         async for event in self._drive(

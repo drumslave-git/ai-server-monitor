@@ -48,6 +48,7 @@ from telegram.request import HTTPXRequest
 
 from ..actions import ActionError, Conflict, NotFound
 from ..actions.service import outcome_text
+from ..chat import explain as explaining
 from ..config import TelegramSettings
 from ..jobs.status import headline, job_status
 
@@ -361,6 +362,7 @@ class TelegramBot:
             application.add_handler(CommandHandler(names, callback))
         application.add_handler(MessageHandler(filters.COMMAND, self._unknown))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._chat))
+        application.add_handler(CallbackQueryHandler(self._on_explain, pattern=r"^x:"))
         application.add_handler(CallbackQueryHandler(self._on_callback))
         application.add_error_handler(self._on_error)
         return application
@@ -638,7 +640,10 @@ class TelegramBot:
         if run is None:
             await self.send(chat_id, "The run is gone.", markdown=False)
             return
-        await self.send(chat_id, run_message(job["name"], run), markdown=False)
+        keyboard = self._explain_keyboard(run_id) if job["kind"] == "summary" else None
+        await self.send(
+            chat_id, run_message(job["name"], run), markdown=False, reply_markup=keyboard
+        )
 
     # ------------------------------------------------------------------ chat
 
@@ -657,12 +662,17 @@ class TelegramBot:
             gap = self.app.settings.outputs.telegram.new_session_after.total_seconds()
             if last is None or (gap > 0 and time.time() - last > gap):
                 session_id = None  # gone, or quiet for long enough: the next message starts anew
+        await self._converse(
+            chat_id,
+            engine.run(text, session_id, channel="telegram", source=f"telegram:{chat_id}"),
+        )
+
+    async def _converse(self, chat_id: int, events: Any) -> None:
+        """Send the answer of one chat turn here; its session becomes this chat's."""
         typing = asyncio.create_task(self._typing(chat_id))
         answer, error = "", None
         try:
-            async for event in engine.run(
-                text, session_id, channel="telegram", source=f"telegram:{chat_id}"
-            ):
+            async for event in events:
                 if event["type"] == "session":
                     await self.app.db.kv_set(f"telegram.session.{chat_id}", event["session_id"])
                 elif event["type"] == "done":
@@ -706,12 +716,19 @@ class TelegramBot:
                 sent.append(await self.bot.send_message(chat_id, plain, reply_markup=markup))
         return sent
 
-    async def broadcast(self, text: str, *, markdown: bool = True, skip: int | None = None) -> None:
+    async def broadcast(
+        self,
+        text: str,
+        *,
+        markdown: bool = True,
+        skip: int | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> None:
         for chat_id in sorted(self.allowed):
             if chat_id == skip:
                 continue
             try:
-                await self.send(chat_id, text, markdown=markdown)
+                await self.send(chat_id, text, markdown=markdown, reply_markup=reply_markup)
             except TelegramError as exc:
                 log.warning("telegram: could not send to chat %s: %s", chat_id, exc)
 
@@ -776,7 +793,44 @@ class TelegramBot:
         await self.app.db.kv_set(SUMMARY_KEY, signature)
         if mode == "changed" and seen == signature:
             return
-        await self.broadcast(summary_message(run), markdown=False, skip=asked_by)
+        await self.broadcast(
+            summary_message(run),
+            markdown=False,
+            skip=asked_by,
+            reply_markup=self._explain_keyboard(run_id),
+        )
+
+    def _explain_keyboard(self, run_id: int) -> InlineKeyboardMarkup:
+        data = f"x:{run_id}:{self.sign('x', run_id)}"
+        return InlineKeyboardMarkup([[InlineKeyboardButton("Explain", callback_data=data)]])
+
+    async def _on_explain(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """The Explain button of a summary: its explanation as a new chat turn here."""
+        query = update.callback_query
+        if query is None or update.effective_chat is None:
+            return
+        chat_id = update.effective_chat.id
+        parts = (query.data or "").split(":")
+        if (
+            len(parts) != 3
+            or not parts[1].isdigit()
+            or not hmac.compare_digest(parts[2], self.sign("x", int(parts[1])))
+        ):
+            log.warning("telegram: rejected a callback with a bad signature from chat %s", chat_id)
+            await self._answer(query, "Invalid button.")
+            return
+        try:
+            prepared = await explaining.build(self.app, int(parts[1]))
+        except explaining.ExplainError as exc:
+            await self._answer(query, str(exc)[:190])
+            await self.send(chat_id, f"Cannot explain: {exc}.", markdown=False)
+            return
+        await self._answer(query, "Explaining…")
+        await self.send(chat_id, html.escape(prepared.label), markdown=False)
+        await self._converse(
+            chat_id,
+            self.app.chat.explain(prepared, channel="telegram", source=f"telegram:{chat_id}"),
+        )
 
     # ------------------------------------------------------------------ approvals
     #

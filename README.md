@@ -153,6 +153,13 @@ working. It survives a restart. `GET /api/automation`, `POST /api/automation/pau
 - **Dashboard** — the overall status and headline from the newest summary run, and one tile per
   job with its last status. **Jobs** — every job with its runs (summary, findings, error, model,
   tokens), the editor and *Run now*.
+- **Explain** — on the Dashboard's summary and the run view of the Jobs page, the run as a whole
+  and every finding have an *Explain* button. It opens a new chat in which the main model gets the
+  run's source data (the job and what it checks, the run, its findings with their evidence, the
+  commands it ran with their output, and for the summary the topic results it was given) and
+  explains in detail what it means, why it matters, the likely causes, how to confirm it and what
+  you can do. It may look at the current state with read-only commands; keep asking in the same
+  chat. The Telegram summary message has the same button.
 - **Chat** — ask about the server ("what is using the most disk?"). Answers stream in; each tool
   call is shown with its command and output. The model sees the last `chat.history_messages`
   messages of a conversation.
@@ -173,7 +180,8 @@ working. It survives a restart. `GET /api/automation`, `POST /api/automation/pau
   decide in the web UI. A conversation starts fresh after `outputs.telegram.new_session_after`
   (6 h) of silence or with `/new`.
 - **Chat API** — `POST /api/chat` with `{"message": "...", "session_id": "..."}` answers as a
-  server-sent-event stream; `GET /api/chat/sessions[/{id}]`, `DELETE /api/chat/sessions/{id}`.
+  server-sent-event stream (`POST /api/chat/explain` with `{"run_id": 12, "finding": 0}` starts an
+  explain conversation the same way); `GET /api/chat/sessions[/{id}]`, `DELETE /api/chat/sessions/{id}`.
   `GET /api/chat/audit` lists the commands and MCP calls the chat made. `GET /api/status`,
   `GET /api/jobs`, `GET /api/jobs/{slug}/runs` give the job picture.
 - **Metrics** — `/metrics` (`prometheus_client`): job status, last run time, duration, findings

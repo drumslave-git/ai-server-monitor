@@ -49,6 +49,18 @@ context and an optional structured `output_type`.
 - Ollama URLs get Pydantic AI's Ollama profile; reasoning effort is sent as
   `openai_reasoning_effort` (Pydantic AI's `thinking` setting sends nothing to these endpoints).
 
+**Explain** (`chat/explain.py`): `POST /api/chat/explain` (run id, optional finding index)
+composes the first message of a new chat from what is stored for the run: the job and its
+prompt, the run, all findings with evidence and the `verified` mark (the chosen one first, as the
+subject), the `bash` calls of the run's trace turn with their output, and for a summary the user
+message of its first model request (the topic results it was given). It is fitted to 40 % of the
+main model's context (Ollama's `/api/show` context length, else 32k tokens): the subject stays
+whole, outputs are cut in the middle to a fair share, then the oldest outputs the findings do not
+quote are left out, each with a note. Outputs are wrapped as untrusted data. The chat engine runs
+it as an ordinary turn; the stored question carries `meta.explain.label`, which is the session
+title and what the UI shows (the source folded under it). Telegram's summary message has an
+Explain button (signed callback `x:<run>:<sig>`) that runs the same turn in that chat.
+
 ## Jobs and scheduling
 
 `jobs` holds the definitions (builtins are seeded from `jobs/builtins.py`; unedited ones follow

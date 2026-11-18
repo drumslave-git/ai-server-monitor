@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..context import AppContext
 from ..outputs.sse import SSE_HEADERS
 from . import audit
+from . import explain as explaining
 from .engine import MAX_MESSAGE
 
 router = APIRouter()
@@ -26,6 +27,13 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=MAX_MESSAGE)
     session_id: str | None = None
     """Continue this conversation; omit to start a new one."""
+
+
+class ExplainRequest(BaseModel):
+    run_id: int
+    """The job run to explain."""
+    finding: int | None = Field(default=None, ge=0)
+    """Explain this finding of the run (its 0-based index) instead of the run as a whole."""
 
 
 class ChatMessage(BaseModel):
@@ -107,6 +115,40 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
 
     async def frames() -> AsyncIterator[str]:
         async for event in ctx.chat.run(body.message, body.session_id):
+            yield _frame(event)
+
+    return StreamingResponse(frames(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+@router.post(
+    "/api/chat/explain",
+    response_class=StreamingResponse,
+    responses={
+        200: {"content": {"text/event-stream": {}}, "description": "SSE stream"},
+        404: {"description": "No such run (old runs are pruned) or no such finding"},
+        409: {"description": "The run is still running"},
+    },
+)
+async def explain(body: ExplainRequest, request: Request) -> StreamingResponse:
+    """Explain a job run, or one of its findings, in a new conversation. The server composes
+    the first message from the stored run (job, run, findings with evidence, the commands of
+    its trace and their output) and answers it like `/api/chat`, with the same SSE events (the
+    `session` event also carries `explain` {label, source}: the label and the whole message); the
+    stored first message carries `meta.explain` {label, run_id, job, finding} and the session is
+    titled with the label."""
+    ctx = _ctx(request)
+    try:
+        prepared = await explaining.build(ctx, body.run_id, body.finding)
+    except explaining.ExplainNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except explaining.ExplainError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    async def frames() -> AsyncIterator[str]:
+        async for event in ctx.chat.explain(prepared):
+            if event["type"] == "session":
+                # the short label and the composed message, to show before anything is stored
+                event = {**event, "explain": {"label": prepared.label, "source": prepared.prompt}}
             yield _frame(event)
 
     return StreamingResponse(frames(), media_type="text/event-stream", headers=SSE_HEADERS)

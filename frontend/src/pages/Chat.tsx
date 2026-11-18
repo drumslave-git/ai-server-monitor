@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type ActionRecord, type Schemas } from "../api";
 import { HostCommand } from "../components/HostCommand";
 import { ago } from "../fmt";
+import { takeExplain, type ExplainRequest } from "../components/Explain";
 import { useStream } from "../live";
 import { Dot, Empty, Markdown, PageHead, useNow, usePoll, type Level } from "../ui";
 
@@ -19,8 +20,10 @@ type ToolUse = {
   elapsed?: number;
   approval?: { id: number; status: string };
 };
+/** The first message of an Explain conversation: shown as its label, the source data folded. */
+type ExplainNote = { label: string; source: string };
 type Turn =
-  | { role: "user"; text: string }
+  | { role: "user"; text: string; explain?: ExplainNote }
   | {
       role: "assistant";
       text: string;
@@ -59,7 +62,12 @@ function toTurns(doc: SessionDoc): Turn[] {
     if (m.role === "user") {
       if (current) turns.push(current);
       current = null;
-      turns.push({ role: "user", text: m.content ?? "" });
+      const label = (m.meta as any)?.explain?.label;
+      turns.push({
+        role: "user",
+        text: m.content ?? "",
+        explain: typeof label === "string" ? { label, source: m.content ?? "" } : undefined,
+      });
     } else if (m.role === "assistant") {
       const turn = open();
       for (const call of m.tool_calls ?? []) {
@@ -115,6 +123,8 @@ export function ChatPage() {
   const abort = useRef<AbortController | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const sessionId = useRef<string | null>(null);
+  /** The session whose last turn failed: its error is not stored, so the live thread stays. */
+  const keepThread = useRef<string | null>(null);
 
   const load = useCallback(async (id: string) => {
     try {
@@ -127,6 +137,8 @@ export function ChatPage() {
 
   useEffect(() => {
     if (busy) return; // the live stream owns the thread meanwhile
+    if (routeId && routeId === keepThread.current) return;
+    keepThread.current = null;
     sessionId.current = routeId;
     if (routeId) void load(routeId);
     else setTurns([]);
@@ -160,16 +172,35 @@ export function ChatPage() {
     const message = draft.trim();
     if (!message || busy) return;
     setDraft("");
+    await stream("/api/chat", { message, session_id: sessionId.current }, { role: "user", text: message });
+  };
+
+  // Explain (Dashboard, Jobs): a new conversation whose first message the server composes.
+  useEffect(() => {
+    const request = takeExplain();
+    if (request) void explain(request);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const explain = async (request: ExplainRequest) => {
+    sessionId.current = null;
+    const label = request.finding === null ? "Explain this run" : "Explain this finding";
+    await stream("/api/chat/explain", { run_id: request.runId, finding: request.finding }, { role: "user", text: "", explain: { label, source: "" } });
+  };
+
+  const stream = async (url: string, body: unknown, question: Turn) => {
     setBusy(true);
-    setTurns((t) => [...t, { role: "user", text: message }, { role: "assistant", text: "", tools: [], live: true }]);
+    keepThread.current = null;
+    setTurns((t) => [...(sessionId.current ? t : []), question, { role: "assistant", text: "", tools: [], live: true }]);
     const controller = new AbortController();
     abort.current = controller;
     let finished = false;
+    let failed = false;
     try {
-      const response = await fetch("/api/chat", {
+      const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, session_id: sessionId.current }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
       if (!response.ok || !response.body) {
@@ -192,6 +223,10 @@ export function ChatPage() {
           const data = JSON.parse(raw);
           if (type === "session") {
             sessionId.current = data.session_id;
+            if (data.explain) {
+              const note: ExplainNote = { label: data.explain.label, source: data.explain.source };
+              setTurns((all) => all.map((t, i) => (i === 0 && t.role === "user" ? { ...t, text: note.source, explain: note } : t)));
+            }
             history.replaceState(null, "", `#/chat/${data.session_id}`);
             setParams([data.session_id]);
           } else if (type === "tool_call") {
@@ -219,6 +254,8 @@ export function ChatPage() {
           } else if (type === "error") {
             patchLast((t) => void (t.error = data.message));
             finished = true;
+            failed = true; // nothing of the answer is stored: keep the live thread with the error
+            keepThread.current = sessionId.current;
           } else if (type === "done") {
             finished = true;
             patchLast((t) => {
@@ -245,7 +282,7 @@ export function ChatPage() {
       }
       sessions.reload();
       // Replace the live thread with the stored one once the answer is complete.
-      if (finished && current && sessionId.current) {
+      if (finished && !failed && current && sessionId.current) {
         const id = sessionId.current;
         window.setTimeout(() => {
           if (sessionId.current === id) void load(id);
@@ -300,7 +337,9 @@ export function ChatPage() {
             <Empty>Ask about the server: what is using the disk, why a container restarted, what changed since yesterday.</Empty>
           )}
           <div className="messages">
-            {turns.map((t, i) => (t.role === "user" ? <UserBubble key={i} text={t.text} /> : <AssistantBubble key={i} turn={t} />))}
+            {turns.map((t, i) =>
+              t.role === "user" ? <UserBubble key={i} text={t.text} explain={t.explain} /> : <AssistantBubble key={i} turn={t} />,
+            )}
           </div>
           <div ref={bottom} />
           <form
@@ -342,8 +381,19 @@ export function ChatPage() {
   );
 }
 
-function UserBubble({ text }: { text: string }) {
-  return <div className="bubble bubble-user">{text}</div>;
+function UserBubble({ text, explain }: { text: string; explain?: ExplainNote }) {
+  if (!explain) return <div className="bubble bubble-user">{text}</div>;
+  return (
+    <div className="bubble bubble-user bubble-explain">
+      {explain.label}
+      {explain.source && (
+        <details className="explain-source">
+          <summary>Source data</summary>
+          <pre>{explain.source}</pre>
+        </details>
+      )}
+    </div>
+  );
 }
 
 // MCP tools are named server__tool for the model; show "server · tool" (mcp_client.display_name).

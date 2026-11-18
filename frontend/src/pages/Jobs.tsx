@@ -1,6 +1,7 @@
 import { ArrowLeft, Play } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { useAutomation } from "../automation";
+import { ExplainButton } from "../components/Explain";
 import { api } from "../api";
 import { ago, clock, until } from "../fmt";
 import {
@@ -507,9 +508,12 @@ function RunView({ run, now }: { run: JobRun; now: number }) {
       className="run-view"
       title={<Badge level={STATUS_LEVEL[run.status]}>{STATUS_TEXT[run.status]}</Badge>}
       aside={
-        <a href={logsHref(run)} title="This run's model and tool calls on the Logs page">
-          LLM and tool calls
-        </a>
+        <>
+          {run.status !== "running" && <ExplainButton runId={run.id} />}
+          <a href={logsHref(run)} title="This run's model and tool calls on the Logs page">
+            LLM and tool calls
+          </a>
+        </>
       }
     >
       <dl className="run-facts">
@@ -534,7 +538,7 @@ function RunView({ run, now }: { run: JobRun; now: number }) {
       {run.error && <pre className="run-error">{run.error}</pre>}
       {run.status === "running" && <p className="muted run-wait">The model is working on it. This view updates when it ends.</p>}
       {run.summary && <Markdown text={run.summary} />}
-      {run.findings.length > 0 && <Findings findings={run.findings} />}
+      {run.findings.length > 0 && <Findings findings={run.findings} runId={run.id} />}
       {run.status !== "running" && !run.summary && !run.error && run.findings.length === 0 && <Empty>The run left no summary.</Empty>}
     </Panel>
   );
@@ -542,18 +546,22 @@ function RunView({ run, now }: { run: JobRun; now: number }) {
 
 const SEVERITY_ORDER = { crit: 0, warn: 1, info: 2 } as const;
 
-export function Findings({ findings }: { findings: Finding[] }) {
-  const sorted = [...findings].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+export function Findings({ findings, runId }: { findings: Finding[]; runId?: number }) {
+  // (sorted for display; the Explain button names a finding by its stored index)
+  const sorted = findings.map((f, index) => ({ f, index })).sort((a, b) => SEVERITY_ORDER[a.f.severity] - SEVERITY_ORDER[b.f.severity]);
   return (
     <section className="findings">
       <h4>Findings</h4>
       <ul>
-        {sorted.map((f, i) => (
-          <li key={i}>
-            <Badge level={SEVERITY_LEVEL[f.severity]}>
-              <span className="sr-only">{SEVERITY_TEXT[f.severity]}: </span>
-              <strong>{f.title}</strong>
-            </Badge>
+        {sorted.map(({ f, index }) => (
+          <li key={index}>
+            <div className="finding-head">
+              <Badge level={SEVERITY_LEVEL[f.severity]}>
+                <span className="sr-only">{SEVERITY_TEXT[f.severity]}: </span>
+                <strong>{f.title}</strong>
+              </Badge>
+              {runId !== undefined && <ExplainButton runId={runId} finding={index} />}
+            </div>
             {f.detail && <p className="finding-detail">{f.detail}</p>}
             {(f.evidence ?? []).length > 0 && (
               <pre className="finding-evidence">{(f.evidence ?? []).join("\n")}</pre>

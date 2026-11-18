@@ -336,6 +336,10 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .tools li { display: block; overflow-wrap: anywhere; }
 .tools li .dot { margin-right: 8px; }
 .tools pre { margin-top: 4px; max-height: 120px; overflow: auto; }
+.bubble-explain { white-space: normal; }
+.explain-source { margin-top: 4px; color: var(--muted); font-size: 13px; }
+.explain-source summary { cursor: pointer; }
+.explain-source pre { margin-top: 4px; max-height: 320px; overflow: auto; white-space: pre-wrap; font-size: 12px; }
 .approval-card { display: flex; justify-content: space-between; align-items: center; gap: 16px; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; background: var(--surface); }
 .cursor { display: inline-block; width: 8px; height: 16px; background: var(--muted); }
 .composer { position: sticky; bottom: 0; display: flex; gap: 8px; align-items: flex-end; padding: 12px 0; background: var(--bg); }
@@ -414,6 +418,10 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .findings li { padding: 8px 0; border-top: 1px solid var(--border); }
 .findings li .badge { font-size: 14px; align-items: baseline; }
 .findings strong { font-weight: 500; }
+.finding-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.btn-explain { padding: 0 6px; font-size: 12px; line-height: 18px; gap: 4px; align-self: center; }
+.btn-explain svg { flex: none; }
+.overall-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .finding-detail { margin: 2px 0 0 16px; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .finding-evidence { margin: 4px 0 0 16px; color: var(--muted); max-height: 7.5em; overflow: auto; }
 .finding-unverified { margin: 2px 0 0 16px; color: var(--muted); font-size: 12px; font-style: italic; }

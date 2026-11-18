@@ -199,6 +199,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chat/explain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Explain
+         * @description Explain a job run, or one of its findings, in a new conversation. The server composes
+         *     the first message from the stored run (job, run, findings with evidence, the commands of
+         *     its trace and their output) and answers it like `/api/chat`, with the same SSE events (the
+         *     `session` event also carries `explain` {label, source}: the label and the whole message); the
+         *     stored first message carries `meta.explain` {label, run_id, job, finding} and the session is
+         *     titled with the label.
+         */
+        post: operations["explain_api_chat_explain_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chat/sessions": {
         parameters: {
             query?: never;
@@ -924,6 +949,13 @@ export interface components {
             decision: "approve" | "reject";
             /** Items */
             items?: number[] | null;
+        };
+        /** ExplainRequest */
+        ExplainRequest: {
+            /** Finding */
+            finding?: number | null;
+            /** Run Id */
+            run_id: number;
         };
         /** Finding */
         Finding: {
@@ -2507,6 +2539,53 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AuditList"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    explain_api_chat_explain_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExplainRequest"];
+            };
+        };
+        responses: {
+            /** @description SSE stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description No such run (old runs are pruned) or no such finding */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The run is still running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

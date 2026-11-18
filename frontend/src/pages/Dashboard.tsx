@@ -16,6 +16,7 @@ import {
 } from "../jobs";
 import { useStream } from "../live";
 import { Badge, Empty, Markdown, PageHead, Panel, useNow, usePoll } from "../ui";
+import { ExplainButton } from "../components/Explain";
 import { Findings } from "./Jobs";
 
 export function DashboardPage() {
@@ -150,17 +151,20 @@ function Overall({
             )}
           </p>
         </div>
-        {summary && (
-          <button className="btn" onClick={start} disabled={busy || running}>
-            {running ? "Running…" : "Run summary now"}
-          </button>
-        )}
+        <div className="overall-actions">
+          {shown && <ExplainButton runId={shown.id} />}
+          {summary && (
+            <button className="btn" onClick={start} disabled={busy || running}>
+              {running ? "Running…" : "Run summary now"}
+            </button>
+          )}
+        </div>
       </div>
       {error && <p className="error">{error}</p>}
       {shown?.status === "error" && shown.error && shown.error.trim() !== overall?.headline && <pre className="run-error">{shown.error}</pre>}
       {/* the headline above is the summary's first line */}
       {shown?.summary && withoutFirstLine(shown.summary) && <Markdown text={withoutFirstLine(shown.summary)} />}
-      {shown && shown.findings.length > 0 && <Findings findings={shown.findings} />}
+      {shown && shown.findings.length > 0 && <Findings findings={shown.findings} runId={shown.id} />}
     </Panel>
   );
 }
