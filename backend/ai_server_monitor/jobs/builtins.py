@@ -42,8 +42,11 @@ Commands:
 ok: every filesystem below 85 % of space and of inodes.
 warn: a filesystem at 85-95 %.
 crit: a filesystem at 95 % or more, or less than 5 GB free on `/`.
-Name the mount point, the percentage and the free space from its df line. A directory's size
-is the first column of ITS du line; the disk's size and use are only in df: never mix them.""",
+For each filesystem at 85 % or more: the mount point, the percentage and the free space from
+its df line, and its two biggest directories: `sort -h` puts the biggest last, and the very
+last du line is the whole mount (its total, not a directory), so copy the TWO LINES JUST ABOVE
+the last line as they are (e.g. "650G .../telegram-downloader", "11T .../media"). The disk's
+size and use are only in df: never mix them.""",
     ),
     JobDef(
         slug="journal",
@@ -131,7 +134,8 @@ warn: failed units that are not essential (one-shot jobs, a timer's service), th
 "degraded".
 crit: a failed essential service: ssh, networking, docker or containerd, cron, a mount of a
 data disk.
-Name each failed unit with the reason from its journal lines.""",
+One finding per failed unit: the title names the unit, the detail gives the reason in a few
+words copied from its journal error line (for example the "error:" text), not just the name.""",
     ),
     JobDef(
         slug="updates",
