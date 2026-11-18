@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError, type ActionRecord, type ApprovalBatch } from "../api";
+import { api, ApiError, type ActionRecord, type ApprovalBatch, type StatusResponse } from "../api";
+import { HostCommand } from "../components/HostCommand";
 import { ago, clock, until } from "../fmt";
 import { useAutomation } from "../automation";
 import { useStream } from "../live";
@@ -29,6 +30,7 @@ function describe(a: ActionRecord): string {
   if (a.status === "rejected" || a.status === "deferred") return String(result.detail ?? a.status);
   if (a.status === "queued") return "approved; waiting for the hourly limit, it runs by itself";
   if (a.status === "dry_run") return `dry run: ${String(result.would ?? "nothing was sent")}`;
+  if (a.action === "host_command" && typeof result.exit_code === "number") return `exit code ${result.exit_code}${a.reason ? ` · ${a.reason}` : ""}`;
   return a.reason ?? "";
 }
 
@@ -157,9 +159,15 @@ function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) 
               <span className="check-gap" aria-hidden />
             )}
             <div className="item-body">
-              <span className="item-target">{item.target}</span>
-              {item.reason && item.status === "pending" && <span className="muted small block">{item.reason}</span>}
-              {item.status !== "pending" && <span className="muted small block">{describe(item)}</span>}
+              {item.action === "host_command" ? (
+                <HostCommand item={item} />
+              ) : (
+                <>
+                  <span className="item-target">{item.target}</span>
+                  {item.reason && item.status === "pending" && <span className="muted small block">{item.reason}</span>}
+                  {item.status !== "pending" && <span className="muted small block">{describe(item)}</span>}
+                </>
+              )}
             </div>
             {item.status !== "pending" && <Badge level={statusLevel(item.status)}>{label(item.status)}</Badge>}
           </li>
@@ -198,6 +206,13 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
   const log = usePoll(() => api.get<Listing>(`/api/actions?${query}`), 30_000);
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // a link to another approval while the page is open: load that one now
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => opened.reload(), [focusId]);
+  const [shell, setShell] = useState<StatusResponse["change_shell"]>(null);
+  useEffect(() => {
+    api.get<StatusResponse>("/api/status").then((s) => setShell(s.change_shell ?? null), () => undefined);
+  }, []);
 
   const refresh = () => {
     pending.reload();
@@ -235,6 +250,15 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
   return (
     <div className="stack">
       <PageHead title="Approvals and actions" />
+      {shell && shell.policy !== "off" && !shell.available && (
+        <div className="notice">
+          <strong>Changing shell commands are not available.</strong> The chat cannot ask to run them until this is fixed:
+          <p className="muted small">{shell.reason ?? "The host shell could not be reached."}</p>
+          <p className="muted small">
+            Turn them off in <a href="#/settings/approvals">Settings → Approvals</a> to hide this note.
+          </p>
+        </div>
+      )}
       <Panel
         title="Waiting for you"
         aside={

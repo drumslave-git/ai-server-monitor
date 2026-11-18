@@ -709,6 +709,18 @@ export interface components {
              * @example 30d
              */
             approval_ttl: string;
+            /**
+             * Shell Changes
+             * @description Commands that change the host, which the chat proposes when you ask for a change
+             *     (restart a container, delete files): approve = each one waits for your approval (here or
+             *     in Telegram) and the chat continues with the result; auto = they run without asking;
+             *     off = the chat cannot change anything. They run as root on the host, which needs
+             *     `cap_add: [SYS_ADMIN, SYS_PTRACE]` in compose.yaml (commented out in the example);
+             *     without it the chat only reads, and the status says so.
+             * @default approve
+             * @enum {string}
+             */
+            shell_changes: "off" | "approve" | "auto";
         };
         /** AuditEntry */
         AuditEntry: {
@@ -725,6 +737,23 @@ export interface components {
         AuditList: {
             /** Items */
             items: components["schemas"]["AuditEntry"][];
+        };
+        /**
+         * ChangeShellStatus
+         * @description Commands that change the host (the chat's `bash_write`).
+         */
+        ChangeShellStatus: {
+            /** Available */
+            available: boolean;
+            /** Offered */
+            offered: boolean;
+            /**
+             * Policy
+             * @enum {string}
+             */
+            policy: "off" | "approve" | "auto";
+            /** Reason */
+            reason: string | null;
         };
         /** ChatMessage */
         ChatMessage: {
@@ -1706,7 +1735,8 @@ export interface components {
         Settings: {
             /**
              * @default {
-             *       "approval_ttl": "1d"
+             *       "approval_ttl": "1d",
+             *       "shell_changes": "approve"
              *     }
              */
             approvals: components["schemas"]["ApprovalsSettings"];
@@ -1836,6 +1866,7 @@ export interface components {
             automation: {
                 [key: string]: unknown;
             };
+            change_shell?: components["schemas"]["ChangeShellStatus"] | null;
             /**
              * Jobs
              * @default []

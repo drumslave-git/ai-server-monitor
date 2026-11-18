@@ -16,6 +16,7 @@ const EVENT_TYPES = [
   "approval.expired",
   "job.started",
   "job.finished",
+  "chat.message",
 ];
 
 const listeners = new Set<Listener>();

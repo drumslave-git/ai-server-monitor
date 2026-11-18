@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Schemas } from "../api";
+import { api, ApiError, type ActionRecord, type Schemas } from "../api";
+import { HostCommand } from "../components/HostCommand";
 import { ago } from "../fmt";
 import { useStream } from "../live";
 import { Dot, Empty, Markdown, PageHead, useNow, usePoll } from "../ui";
@@ -27,6 +28,8 @@ type Turn =
       live?: boolean;
       error?: string;
       stopped?: boolean;
+      /** The run stopped for these approvals (action ids); `text` is the waiting note. */
+      waiting?: number[];
       /** Logs page link: the session and the turn id of this answer. */
       session?: string;
       trace?: string;
@@ -63,6 +66,8 @@ function toTurns(doc: SessionDoc): Turn[] {
       }
       if (!(m.tool_calls && m.tool_calls.length) && m.content) {
         turn.text = m.content;
+        const waiting = (m.meta as any)?.waiting_for;
+        if (Array.isArray(waiting) && waiting.length) turn.waiting = waiting.map(Number);
         const traceTurn = (m.meta as any)?.trace_turn;
         if (typeof traceTurn === "string") {
           turn.trace = traceTurn;
@@ -126,6 +131,13 @@ export function ChatPage() {
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [turns]);
+
+  // A run that waited for an approval continues on the server; its answer arrives as an event.
+  useStream(["chat.message"], (event) => {
+    if (busy || !sessionId.current || event.data.session_id !== sessionId.current) return;
+    void load(sessionId.current);
+    sessions.reload();
+  });
 
   const patchLast = (fn: (t: Extract<Turn, { role: "assistant" }>) => void) =>
     setTurns((all) => {
@@ -207,6 +219,7 @@ export function ChatPage() {
             patchLast((t) => {
               t.trace = data.trace_turn;
               t.session = data.session_id;
+              if (Array.isArray(data.waiting_for) && data.waiting_for.length) t.waiting = data.waiting_for;
             });
             setBusy(false); // the title event may still follow: the composer need not wait for it
           } else if (type === "title") {
@@ -336,6 +349,10 @@ function displayName(name: string): string {
 
 function AssistantBubble({ turn }: { turn: Extract<Turn, { role: "assistant" }> }) {
   const names = Array.from(new Set(turn.tools.map((t) => displayName(t.name))));
+  // approvals this answer waits for, and older write tools whose result named a pending approval
+  const approvals = Array.from(
+    new Set([...(turn.waiting ?? []), ...turn.tools.filter((t) => t.approval?.status === "pending").map((t) => t.approval!.id)]),
+  );
   return (
     <div className="bubble bubble-assistant">
       {turn.live &&
@@ -366,10 +383,18 @@ function AssistantBubble({ turn }: { turn: Extract<Turn, { role: "assistant" }> 
           </ul>
         </details>
       )}
-      {turn.tools.filter((t) => t.approval && t.approval.status === "pending").map((t) => (
-        <ApprovalCard key={t.id} id={t.approval!.id} name={t.name} />
+      {approvals.map((id) => (
+        <ApprovalCard key={id} id={id} />
       ))}
-      {turn.text ? <Markdown text={turn.text} /> : turn.live && !turn.error ? <p className="muted">Thinking…</p> : null}
+      {turn.waiting && turn.text ? (
+        <p className="waiting-note muted small">
+          <Dot level="off" /> {turn.text.trim()}
+        </p>
+      ) : turn.text ? (
+        <Markdown text={turn.text} />
+      ) : turn.live && !turn.error ? (
+        <p className="muted">Thinking…</p>
+      ) : null}
       {turn.live && turn.text && <span className="cursor" aria-hidden />}
       {!turn.live && turn.trace && turn.session && (
         <a className="trace-link" href={`#/logs/llm/for/chat/${turn.session}/${turn.trace}`}>
@@ -382,38 +407,63 @@ function AssistantBubble({ turn }: { turn: Extract<Turn, { role: "assistant" }> 
   );
 }
 
-function ApprovalCard({ id, name }: { id: number; name: string }) {
-  const pending = usePoll(() => api.get<{ items: { id: number; target: string | null; action: string }[] }>("/api/approvals"), 20_000);
-  const [done, setDone] = useState<string | null>(null);
-  useStream(["approval", "action"], () => pending.reload());
-  const row = pending.data?.items.find((a) => a.id === id);
+const STATUS_TEXT: Record<string, string> = {
+  pending: "Waiting for your approval",
+  queued: "Approved; queued",
+  executed: "Approved and run",
+  failed: "Approved; failed",
+  rejected: "Denied",
+  expired: "Expired",
+  dry_run: "Dry run",
+};
+
+/** One action a chat answer filed: what it is, Approve / Deny while pending, the outcome after. */
+function ApprovalCard({ id }: { id: number }) {
+  // The audit log holds the action with its arguments and result (there is no single-action read).
+  const actions = usePoll(() => api.get<{ items: ActionRecord[] }>("/api/actions?limit=200"), 30_000);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useStream(["approval", "action"], () => actions.reload());
+  const row = actions.data?.items.find((a) => a.id === id);
+  if (!actions.data) return null;
+  if (!row) return <div className="approval-card muted small">Approval item #{id} is no longer in the recent audit log.</div>;
+  const pending = row.status === "pending";
   const decide = async (decision: "approve" | "reject") => {
+    setBusy(true);
+    setError(null);
     try {
-      const result = await api.post<{ status: string }>(`/api/approvals/${id}`, { decision });
-      setDone(result.status);
+      await api.post(`/api/approvals/${row.batch_id ?? id}`, { decision, items: [id] });
     } catch (e) {
-      setDone((e as Error).message);
+      setError(e instanceof ApiError ? String(e.detail) : (e as Error).message);
     }
-    pending.reload();
+    setBusy(false);
+    actions.reload();
   };
-  if (!row && !done && pending.data) return <div className="approval-card muted small">Approval #{id} for {name} was decided.</div>;
+  const level = pending || row.status === "queued" ? "warn" : row.status === "executed" ? "ok" : row.status === "failed" ? "crit" : "off";
   return (
-    <div className="approval-card">
-      <div>
+    <div className={`approval-card${pending ? "" : " settled"}`}>
+      <div className="approval-card-body">
         <p className="approval-title">
-          <span className="mono">{row?.action ?? name}</span>
-          <span>{row?.target}</span>
+          {row.action === "host_command" ? (
+            <span>Command to run as root on the host</span>
+          ) : (
+            <>
+              <span className="mono">{row.action}</span>
+              <span>{row.target}</span>
+            </>
+          )}
         </p>
+        {row.action === "host_command" ? <HostCommand item={row} /> : row.reason && <p className="small">{row.reason}</p>}
         <p className="muted small">
-          Waiting for your approval · <a href="#/approvals">open Approvals</a>
+          <Dot level={level} /> {STATUS_TEXT[row.status] ?? row.status} ·{" "}
+          <a href={`#/approvals/${row.batch_id ?? ""}`}>open in Approvals</a>
         </p>
+        {error && <p className="error small">{error}</p>}
       </div>
-      {done ? (
-        <span className="muted small">{done}</span>
-      ) : (
+      {pending && (
         <div className="approval-buttons">
-          <button className="btn" onClick={() => decide("reject")}>Reject</button>
-          <button className="btn btn-primary" onClick={() => decide("approve")}>Approve</button>
+          <button className="btn" disabled={busy} onClick={() => decide("reject")}>Deny</button>
+          <button className="btn btn-primary" disabled={busy} onClick={() => decide("approve")}>Approve</button>
         </div>
       )}
     </div>
