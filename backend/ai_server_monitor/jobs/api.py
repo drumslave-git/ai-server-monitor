@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..context import AppContext
+from ..mcp_client.api import page
 from ..mcp_client.turn import classify
 from .schemas import Job, JobCreate, JobList, JobRun, JobRunList, JobUpdate, RunStarted, job_out
 from .store import JobError, UnknownDomain
@@ -67,10 +68,12 @@ class ClassifyResult(BaseModel):
 
 @router.post("/api/jobs/classify-domains")
 async def classify_domains(request: Request, body: ClassifyRequest) -> ClassifyResult:
-    """The job form's "Classify" button: the worker model picks the MCP domains a job's
-    prompt needs (nothing is saved)."""
+    """The job form's "Classify" button: the worker model picks, among the domains with at
+    least one enabled tool, the MCP domains a job's prompt needs (nothing is saved)."""
     ctx = _ctx(request)
-    domains = [d for d in await ctx.domains.domains() if d["tools"]]
+    tools = await page(ctx)
+    on = {t.domain_id for t in tools.tools if t.enabled and t.domain_id is not None}
+    domains = [d.model_dump() for d in tools.domains if d.id in on]
     if not domains:
         return ClassifyResult(domains=[])
     try:

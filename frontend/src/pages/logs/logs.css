@@ -143,4 +143,6 @@ a.call-row:hover { background: var(--hover); text-decoration: none; }
 
 /* link under a chat answer */
 .trace-link { align-self: flex-start; font-size: 12px; color: var(--faint); }
+.turn-foot { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin: 0; }
+.domain-line { font-size: 12px; color: var(--faint); overflow-wrap: anywhere; }
 .trace-link:hover { color: var(--accent); }

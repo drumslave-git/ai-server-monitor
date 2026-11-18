@@ -55,6 +55,7 @@ class McpTool(BaseModel):
 
 
 class McpToolsPage(BaseModel):
+    sorting: bool = Field(description="A sorting into domains is running right now.")
     servers: list[McpServerState]
     domains: list[McpDomain]
     tools: list[McpTool]
@@ -99,6 +100,7 @@ async def page(ctx: AppContext) -> McpToolsPage:
             )
         )
     return McpToolsPage(
+        sorting=ctx.domains.sorting,
         servers=[
             McpServerState(
                 name=s.name,

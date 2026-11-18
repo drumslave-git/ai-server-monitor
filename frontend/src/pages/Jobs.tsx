@@ -432,6 +432,8 @@ function DomainsField({ prompt, value, onChange }: { prompt: string; value: stri
   const free = known.filter((d) => !value.includes(d.name));
   const tools = (page?.tools ?? []).filter((t) => t.enabled && t.domain && value.includes(t.domain));
   const writes = tools.filter((t) => t.kind === "write").length;
+  const onIn = (name: string) => (page?.tools ?? []).filter((t) => t.enabled && t.domain === name).length;
+  const classifiable = known.some((d) => onIn(d.name) > 0);
   const classify = () => {
     setBusy(true);
     setNote(null);
@@ -472,11 +474,12 @@ function DomainsField({ prompt, value, onChange }: { prompt: string; value: stri
             <option value="">{free.length ? "Add domain…" : known.length ? "All added" : "No domains yet"}</option>
             {free.map((d) => (
               <option key={d.id} value={d.name}>
-                {d.name} ({d.tools} tool{d.tools === 1 ? "" : "s"})
+                {d.name} ({onIn(d.name)} of {d.tools} on)
               </option>
             ))}
           </select>
-          <button className="btn" type="button" onClick={classify} disabled={busy || prompt.trim().length < 10 || known.length === 0}>
+          <button className="btn" type="button" onClick={classify} disabled={busy || prompt.trim().length < 10 || !classifiable}
+            title={classifiable ? "The worker model picks the domains this prompt needs" : "No domain has a tool switched on"}>
             {busy ? "Classifying…" : "Classify"}
           </button>
         </div>

@@ -86,6 +86,11 @@ class DomainStore:
         """One sorting at a time: a run that needs its tools sorted waits for a running sort
         and then finds them placed."""
 
+    @property
+    def sorting(self) -> bool:
+        """A sorting is running right now (the MCP tools page says so)."""
+        return self._sorting.locked()
+
     # ------------------------------------------------------------------ reading
 
     async def domains(self) -> list[dict[str, Any]]:

@@ -51,8 +51,35 @@ type Turn =
       outcome?: Record<string, string>;
       /** Logs page link: the session and the turn id of this answer. */
       session?: string;
+      /** The MCP part of the turn (meta `mcp_domains`); absent when no MCP tool was enabled. */
+      domains?: McpDomainsLog;
       trace?: string;
     };
+
+type McpDomainsLog = {
+  picked?: string[];
+  offered?: string[];
+  loaded?: string[];
+  unsorted?: string[];
+  unreachable?: Record<string, string>;
+  classify_error?: string;
+};
+
+/** "Domains: sonarr (picked), torrents (loaded) · server arr unreachable": one quiet line. */
+function domainsText(d: McpDomainsLog): string {
+  const picked = d.picked ?? [];
+  const earlier = (d.offered ?? []).filter((n) => !picked.includes(n));
+  const names = [
+    ...picked.map((n) => `${n} (picked)`),
+    ...earlier.map((n) => `${n} (loaded before)`),
+    ...(d.loaded ?? []).map((n) => `${n} (loaded)`),
+  ];
+  const parts = [`Domains: ${names.length ? names.join(", ") : "none"}`];
+  if (d.classify_error) parts.push("classification failed");
+  for (const server of Object.keys(d.unreachable ?? {})) parts.push(`server ${server} unreachable`);
+  if (d.unsorted?.length) parts.push(`${d.unsorted.length} tool${d.unsorted.length === 1 ? "" : "s"} not sorted`);
+  return parts.join(" · ");
+}
 
 /** "45 s", "3 min 20 s": how long a tool has been running. */
 function running(s: number): string {
@@ -98,6 +125,8 @@ function toTurns(doc: SessionDoc): Turn[] {
         if (Array.isArray(waiting) && waiting.length) turn.waiting = waiting.map(Number);
         const outcome = (m.meta as any)?.outcome;
         if (outcome && typeof outcome === "object") turn.outcome = outcome;
+        const domains = (m.meta as any)?.mcp_domains;
+        if (domains && typeof domains === "object") turn.domains = domains;
         const traceTurn = (m.meta as any)?.trace_turn;
         if (typeof traceTurn === "string") {
           turn.trace = traceTurn;
@@ -281,6 +310,7 @@ export function ChatPage() {
             patchLast((t) => {
               t.trace = data.trace_turn;
               t.session = data.session_id;
+              if (data.mcp_domains) t.domains = data.mcp_domains;
               if (Array.isArray(data.waiting_for) && data.waiting_for.length) t.waiting = data.waiting_for;
             });
             setBusy(false); // the title event may still follow: the composer need not wait for it
@@ -521,9 +551,12 @@ function AssistantBubble({
       ) : null}
       {turn.live && turn.text && <span className="cursor" aria-hidden />}
       {!turn.live && turn.trace && turn.session && (
-        <a className="trace-link" href={`#/logs/llm/for/chat/${turn.session}/${turn.trace}`}>
-          Trace
-        </a>
+        <p className="turn-foot">
+          <a className="trace-link" href={`#/logs/llm/for/chat/${turn.session}/${turn.trace}`}>
+            Trace
+          </a>
+          {turn.domains && <span className="domain-line">{domainsText(turn.domains)}</span>}
+        </p>
       )}
       {turn.stopped && <p className="muted small">Stopped.</p>}
       {turn.error && <p className="error">{turn.error}</p>}

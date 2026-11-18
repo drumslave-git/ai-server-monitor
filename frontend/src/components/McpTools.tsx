@@ -21,7 +21,7 @@ export function mcpTools(result: ConnectionTestResult | null): ToolRow[] | null 
   return Array.isArray(tools) ? tools : null;
 }
 
-function Description({ text }: { text: string }) {
+export function Description({ text }: { text: string }) {
   const ref = useRef<HTMLParagraphElement>(null);
   const [open, setOpen] = useState(false);
   const [long, setLong] = useState(false);

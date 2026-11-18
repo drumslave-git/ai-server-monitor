@@ -184,3 +184,19 @@ def test_a_missing_tools_failure_keeps_its_sentence_in_the_headline() -> None:
     assert headline(run, "Heating") == (
         "Heating failed: missing tools: No tool reads the boiler pressure."
     )
+
+
+async def test_classify_offers_only_domains_with_an_enabled_tool(
+    tmp_path: Path, fake46: FakeMcp
+) -> None:
+    llm = mcp_llm(picks=[])
+    async for app in start_app(tmp_path, llm, settings(fake46.url, chosen=["get_temperature"])):
+        await sorted_app(app)
+        async with client(app) as http:
+            page = (await http.get("/api/mcp/tools")).json()
+            assert page["sorting"] is False and len(page["domains"]) == 3
+            r = await http.post("/api/jobs/classify-domains", json={"prompt": JOB["prompt"]})
+            assert r.json() == {"domains": []}
+            offered_to_model = llm.classify_requests[-1]["messages"][-1]["content"]
+            assert "- climate:" in offered_to_model
+            assert "- bulk:" not in offered_to_model and "- misc:" not in offered_to_model

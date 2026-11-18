@@ -336,8 +336,8 @@ export interface paths {
         put?: never;
         /**
          * Classify Domains
-         * @description The job form's "Classify" button: the worker model picks the MCP domains a job's
-         *     prompt needs (nothing is saved).
+         * @description The job form's "Classify" button: the worker model picks, among the domains with at
+         *     least one enabled tool, the MCP domains a job's prompt needs (nothing is saved).
          */
         post: operations["classify_domains_api_jobs_classify_domains_post"];
         delete?: never;
@@ -1985,6 +1985,11 @@ export interface components {
             domains: components["schemas"]["McpDomain"][];
             /** Servers */
             servers: components["schemas"]["McpServerState"][];
+            /**
+             * Sorting
+             * @description A sorting into domains is running right now.
+             */
+            sorting: boolean;
             /** Tools */
             tools: components["schemas"]["McpTool"][];
         };

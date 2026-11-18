@@ -1,4 +1,4 @@
-import { Activity, CalendarClock, MessageSquare, ScrollText, Settings, ShieldCheck, type LucideIcon } from "lucide-react";
+import { Activity, Blocks, CalendarClock, MessageSquare, ScrollText, Settings, ShieldCheck, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, type StatusResponse } from "./api";
 import { AutomationBar, AutomationProvider } from "./automation";
@@ -8,6 +8,7 @@ import { ChatPage } from "./pages/Chat";
 import { DashboardPage } from "./pages/Dashboard";
 import { JobsPage } from "./pages/Jobs";
 import { LogsPage } from "./pages/Logs";
+import { McpToolsPage } from "./pages/McpTools";
 import { SettingsPage } from "./pages/Settings";
 
 const PAGES: { key: string; title: string; icon: LucideIcon }[] = [
@@ -15,6 +16,7 @@ const PAGES: { key: string; title: string; icon: LucideIcon }[] = [
   { key: "jobs", title: "Jobs", icon: CalendarClock },
   { key: "approvals", title: "Approvals", icon: ShieldCheck },
   { key: "chat", title: "Chat", icon: MessageSquare },
+  { key: "mcp", title: "MCP tools", icon: Blocks },
   { key: "logs", title: "Logs", icon: ScrollText },
   { key: "settings", title: "Settings", icon: Settings },
 ];
@@ -102,6 +104,8 @@ export function App() {
           <ApprovalsPage params={params} />
         ) : page === "chat" ? (
           <ChatPage />
+        ) : page === "mcp" ? (
+          <McpToolsPage />
         ) : page === "logs" ? (
           <LogsPage params={params} />
         ) : page === "settings" ? (
