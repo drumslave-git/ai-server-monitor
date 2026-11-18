@@ -348,6 +348,17 @@ ServerName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9-]
 """Used in tool names (`<server>__<tool>`), so: letters, digits and '-', no underscores."""
 
 
+def pattern_problem(err: Any) -> str:
+    """Plain words for a `string_pattern_mismatch` of a pydantic error (needs its input):
+    a server name and a URL have different rules."""
+    field = next((p for p in reversed(err["loc"]) if isinstance(p, str)), "")
+    if field == "name":
+        if not str(err.get("input") or "").strip():
+            return "is required"
+        return "may only use letters, digits and '-' (up to 24, starting with a letter or digit)"
+    return "must start with http:// or https://"
+
+
 class McpHeader(_Model):
     name: Name
     """Header name, e.g. X-Api-Key."""

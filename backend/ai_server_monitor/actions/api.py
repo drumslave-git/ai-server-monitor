@@ -59,7 +59,8 @@ async def get_approval(batch_id: int, request: Request) -> dict[str, Any]:
 @router.post("/api/approvals/{batch_id}")
 async def decide(batch_id: int, body: Decision, request: Request) -> dict[str, Any]:
     """Approve (→ executes the items now) or reject an approval batch: all its pending items,
-    or only `items`. The answer is the batch with the outcome of every item."""
+    or only `items`. The answer is the batch with the outcome of every item; changing shell
+    commands answer "approved" at once and report their outcome by event when they finish."""
     try:
         return await _ctx(request).actions.decide_batch(
             batch_id, body.decision, body.items, decided_by="ui"

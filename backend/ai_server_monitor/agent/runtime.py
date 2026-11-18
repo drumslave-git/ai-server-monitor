@@ -26,6 +26,7 @@ from typing import Any
 from pydantic import ValidationError
 from pydantic_ai import (
     Agent,
+    ApprovalRequired,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
@@ -84,6 +85,9 @@ class AgentTool:
     handler: Callable[[dict[str, Any]], Awaitable[Any]]
     requires_approval: bool = False
     """Pydantic AI defers the call instead of running it; `on_approval` takes over."""
+    approval_for: Callable[[dict[str, Any]], bool] | None = None
+    """Per call: True = defer this call like `requires_approval` (the generic `mcp_call`,
+    which writes only for some of the tools it reaches)."""
 
 
 @dataclass
@@ -264,6 +268,12 @@ class _Run:
 
     def pydantic_tool(self, tool: AgentTool) -> Tool[Any]:
         async def call(ctx: RunContext[Any], **kwargs: Any) -> str:
+            if (
+                tool.approval_for is not None
+                and not ctx.tool_call_approved
+                and tool.approval_for(kwargs)
+            ):
+                raise ApprovalRequired()
             return await self.execute(tool, ctx.tool_call_id or "", kwargs)
 
         out = Tool.from_schema(
@@ -308,7 +318,7 @@ class _Run:
             instructions=[cfg.instructions, self.limit_note],
             tools=[self.pydantic_tool(t) for t in cfg.tools],
             output_type=[cfg.output_type, DeferredToolRequests]
-            if any(t.requires_approval for t in cfg.tools)
+            if any(t.requires_approval or t.approval_for for t in cfg.tools)
             else cfg.output_type,
             model_settings=cfg.model_settings,
             capabilities=[PrepareTools(self.prepare)],

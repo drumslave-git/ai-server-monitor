@@ -86,15 +86,25 @@ def test_settings_roundtrip_masks_secrets_and_applies_live(bootstrap: Bootstrap)
 def test_settings_rejects_incomplete_instances_with_readable_errors(bootstrap: Bootstrap) -> None:
     with TestClient(create_app(bootstrap)) as client:
         values = client.get("/api/settings").json()["values"]
-        values["mcp"]["servers"] = [{"name": "ha", "url": ""}]
+        values["mcp"]["servers"] = [
+            {"name": "ha", "url": ""},
+            {"name": "", "url": "http://ok/mcp"},
+            {"name": "home_assistant", "url": "http://ok/mcp"},
+        ]
         values["llm"]["base_url"] = "ollama:11434"
         resp = client.put("/api/settings", json=values)
+        test = client.post("/api/settings/test/mcp", json={"name": " ", "url": "http://ok/mcp"})
     assert resp.status_code == 422
     errors = {".".join(e["loc"]): e["msg"] for e in resp.json()["detail"]}
     assert errors == {
         "llm.base_url": "Must be a URL starting with http:// or https://",
         "mcp.servers.0.url": "Must be a URL starting with http:// or https://",
+        "mcp.servers.1.name": "Required",
+        "mcp.servers.2.name": "May only use letters, digits and '-' (up to 24, starting with a "
+        "letter or digit)",
     }
+    # the connection test says what is wrong, not "invalid URL"
+    assert test.json()["ok"] is False and "name is required" in test.json()["message"]
 
 
 @respx.mock

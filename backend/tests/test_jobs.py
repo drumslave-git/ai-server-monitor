@@ -116,6 +116,31 @@ def test_failed_runs_are_stored_as_error(
         assert statuses == ["error", "error", "error"]
 
 
+def test_a_failed_summary_has_a_plain_headline_and_keeps_the_raw_error(
+    bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
+) -> None:
+    from pydantic_ai.exceptions import ModelConnectionError
+
+    from ai_server_monitor.jobs.status import headline
+
+    def unreachable(messages: Any, info: Any) -> Any:
+        raise ModelConnectionError(model_name="big", message="Connection error.")
+
+    models.script = [unreachable]
+    with TestClient(make_app(bootstrap)) as client:
+        failed = run(client, "summary")
+        assert failed["error"] == "ModelConnectionError: Connection error."
+        overall = client.get("/api/status").json()["overall"]
+        assert overall["status"] == "error"
+        assert overall["headline"] == "Summary failed: the model could not be reached"
+    for error, words in [
+        ("timed out after 900s (limit 900s)", "it took longer than its time limit"),
+        ("no result: I think all is fine", "the model gave no result"),
+        ("KeyError: 'x'", "an internal error (see the run)"),
+    ]:
+        assert headline({"status": "error", "error": error}) == f"Summary failed: {words}"
+
+
 def test_the_summary_gets_the_topic_results_and_sets_the_overall_status(
     bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
 ) -> None:
@@ -240,3 +265,26 @@ def test_a_run_in_progress_is_shown_on_the_job_and_in_status(bootstrap: Bootstra
         assert status["storage"]["running_run_id"] == run_id
         client.portal.call(lambda: store.finish_run(run_id, status="ok", finished=time.time()))
         assert client.get("/api/jobs/storage").json()["running_run_id"] is None
+
+
+def test_an_interrupted_run_is_rerun_soon_and_does_not_hide_the_last_result(
+    bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
+) -> None:
+    from ai_server_monitor.jobs.store import INTERRUPTED
+
+    models.script = [finish("warn", "Root is 88% full.", [FINDING])]
+    with TestClient(make_app(bootstrap)) as client:
+        real = run(client, "storage")
+        store = client.app.state.ctx.jobs.store  # type: ignore[attr-defined]
+        # a run in flight when the process dies (no clean stop)
+        client.portal.call(store.start_run, "storage", "schedule", "small")
+    with TestClient(make_app(bootstrap)) as client:
+        runs = client.get("/api/jobs/storage/runs").json()["items"]
+        assert [r["error"] for r in runs] == [INTERRUPTED, None]
+        job = client.get("/api/jobs/storage").json()
+        assert job["last_run"]["id"] == real["id"]
+        status = {j["slug"]: j for j in client.get("/api/status").json()["jobs"]}
+        assert status["storage"]["status"] == "warn" and status["storage"]["run_id"] == real["id"]
+        # rerun about a minute after the start, not in 4 hours; other jobs keep their times
+        assert job["next_run"] - time.time() < 120
+        assert client.get("/api/jobs/journal").json()["next_run"] - time.time() > 600

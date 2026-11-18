@@ -24,7 +24,9 @@ from ..agent.tools import app_bash, app_delegate, app_shell
 from ..config import Settings
 from ..llm.text import strip_reasoning
 from .prompts import summary_input, summary_instructions, topic_instructions
-from .store import JobStore
+from .store import INTERRUPTED, JobStore
+
+STOPPING = "stopping"
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -100,9 +102,9 @@ class JobRunner:
         return names
 
     async def close(self) -> None:
-        await self.cancel_all("stopping")
+        await self.cancel_all(STOPPING)
         for task in list(self._background):
-            task.cancel()
+            task.cancel(STOPPING)
         await asyncio.gather(*self._background, return_exceptions=True)
 
     # ------------------------------------------------------------------ one run
@@ -140,7 +142,8 @@ class JobRunner:
                     )
         except asyncio.CancelledError as exc:
             reason = exc.args[0] if exc.args else "cancelled"
-            fields.update(status="error", error=f"cancelled ({reason})")
+            error = INTERRUPTED if reason == STOPPING else f"cancelled ({reason})"
+            fields.update(status="error", error=error)
             await asyncio.shield(self._close(slug, run_id, fields))
             raise
         except Exception as exc:

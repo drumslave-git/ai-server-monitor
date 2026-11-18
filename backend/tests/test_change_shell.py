@@ -3,6 +3,8 @@ continues by itself once the owner decided."""
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
 from typing import Any
 
@@ -55,9 +57,9 @@ def test_approved_command_runs_and_the_chat_continues_by_itself(
 
         models.script = ["Restarted: nginx is running again."]
         decided = client.post(f"/api/approvals/{batch['id']}", json={"decision": "approve"})
-        assert decided.json()["counts"] == {"executed": 1}
-        assert root_shell == [COMMAND]
+        assert decided.json()["counts"] in ({"approved": 1}, {"executed": 1})
         messages = wait_for_answer(client, done["session_id"], "Restarted: nginx is running again.")
+        assert root_shell == [COMMAND]
         # the model got the command's output as the tool result, then answered
         assert "nginx restarted" in models.requests[-1]["text"]
         assert "exit code 0" in models.requests[-1]["text"]
@@ -69,6 +71,37 @@ def test_approved_command_runs_and_the_chat_continues_by_itself(
         [row] = client.get("/api/actions", params={"action": "host_command"}).json()["items"]
         assert row["status"] == "executed" and row["result"]["exit_code"] == 0
         assert row["result"]["output"] == "nginx restarted\n"
+
+
+def test_the_approve_call_returns_before_a_long_command_has_finished(
+    bootstrap: Bootstrap,
+    models: ScriptedModels,
+    root_shell: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_server_monitor.agent.change_shell import ChangeShell
+    from ai_server_monitor.agent.shell import ShellResult
+
+    gate = threading.Event()
+
+    async def slow_run(self: ChangeShell, command: str, *, timeout_s: float, max_chars: int) -> Any:
+        while not gate.is_set():
+            await asyncio.sleep(0.01)
+        return ShellResult(exit_code=0, output="done\n", duration_s=60.0)
+
+    monkeypatch.setattr(ChangeShell, "run", slow_run)
+    app = make_app(bootstrap)
+    with TestClient(app) as client:
+        done = ask_for_restart(client, models)[-1]
+        [batch] = client.get("/api/approvals").json()["items"]
+        models.script = ["Restarted after a minute."]
+        decided = client.post(f"/api/approvals/{batch['id']}", json={"decision": "approve"})
+        assert decided.status_code == 200 and decided.json()["counts"] == {"approved": 1}
+        gate.set()
+        wait_for_answer(client, done["session_id"], "Restarted after a minute.")
+        [row] = client.get("/api/actions", params={"action": "host_command"}).json()["items"]
+        assert row["status"] == "executed" and row["result"]["exit_code"] == 0
+        assert row["result"]["output"] == "done\n"
 
 
 @pytest.mark.parametrize("outcome", ["reject", "expire"])

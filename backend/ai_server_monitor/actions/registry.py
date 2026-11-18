@@ -68,6 +68,9 @@ class ActionDef:
     summary: Callable[[list[Any]], str] | None = None
     """What an approval batch of these items asks for, from their parsed arguments. Default:
     the target of a single item, else "<name> × N"."""
+    background: bool = False
+    """True = an approved item runs after the approve call has returned (long commands); its
+    outcome arrives as `action.result` and `approval.progress` events."""
 
     def schema(self) -> dict[str, Any]:
         return self.args_model.model_json_schema()
@@ -98,6 +101,7 @@ _ACTIONS = (
         policy_of=host_command.policy_of,
         run=host_command.execute,
         chat_tool=False,
+        background=True,
     ),
 )
 

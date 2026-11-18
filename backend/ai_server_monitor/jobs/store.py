@@ -10,6 +10,8 @@ from typing import Any
 from ..db import Database
 from .builtins import BUILTINS, BY_SLUG, JobDef
 
+INTERRUPTED = "interrupted (the service stopped)"
+"""The error of a run the service stopped in the middle of (it is rerun after the start)."""
 SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{1,39}$")
 EDITABLE = ("name", "prompt", "interval_s", "cron", "model", "timeout_s", "max_steps")
 """Fields whose change marks a builtin as edited (enabling/disabling does not)."""
@@ -196,14 +198,26 @@ class JobStore:
         return [run_dict(r) for r in rows]
 
     async def latest_runs(self, *, finished_only: bool = True) -> dict[str, dict[str, Any]]:
-        """The newest (finished) run of every job, by slug."""
+        """The newest (finished) run of every job, by slug. A run interrupted by a stop is
+        skipped when the job has a real result: it says nothing about the host."""
         status = "AND status != 'running'" if finished_only else ""
         rows = await self.db.fetchall(
             "SELECT r.* FROM job_runs r JOIN ("
-            f"  SELECT job_slug, MAX(id) AS id FROM job_runs WHERE 1 {status} GROUP BY job_slug"
-            ") last ON last.id = r.id"
+            "  SELECT job_slug, COALESCE(MAX(CASE WHEN error IS NOT ? THEN id END), MAX(id)) AS id"
+            f"  FROM job_runs WHERE 1 {status} GROUP BY job_slug"
+            ") last ON last.id = r.id",
+            (INTERRUPTED,),
         )
         return {r["job_slug"]: run_dict(r) for r in rows}
+
+    async def interrupted_slugs(self) -> list[str]:
+        """Jobs whose newest run was interrupted by a stop (they are rerun after the start)."""
+        rows = await self.db.fetchall(
+            "SELECT job_slug FROM job_runs WHERE id IN "
+            "(SELECT MAX(id) FROM job_runs GROUP BY job_slug) AND error = ? ORDER BY job_slug",
+            (INTERRUPTED,),
+        )
+        return [r["job_slug"] for r in rows]
 
     async def running_runs(self) -> dict[str, int]:
         """slug -> id of its run in progress (at most one per job: the runner holds a lock)."""
@@ -216,7 +230,7 @@ class JobStore:
     async def mark_interrupted(self) -> int:
         """Runs still 'running' from before a restart: stored as error, never left dangling."""
         return await self.db.execute(
-            "UPDATE job_runs SET status = 'error', error = 'interrupted (the service stopped)', "
-            "finished = ? WHERE status = 'running'",
-            (time.time(),),
+            "UPDATE job_runs SET status = 'error', error = ?, finished = ? "
+            "WHERE status = 'running'",
+            (INTERRUPTED, time.time()),
         )

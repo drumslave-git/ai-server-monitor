@@ -20,7 +20,14 @@ from .actions.api import router as actions_router
 from .agent.models import worker_config
 from .chat.api import router as chat_router
 from .chat.engine import change_shell_offered
-from .config import Bootstrap, LLMSettings, Settings, WorkerLLMSettings, settings_json_schema
+from .config import (
+    Bootstrap,
+    LLMSettings,
+    Settings,
+    WorkerLLMSettings,
+    pattern_problem,
+    settings_json_schema,
+)
 from .conntest import KINDS as TEST_KINDS
 from .conntest import run_test
 from .context import AppContext
@@ -61,7 +68,10 @@ def get_ctx(request: Request) -> AppContext:
 
 def _friendly(err: dict[str, Any]) -> str:
     if err["type"] == "string_pattern_mismatch":
-        return "Must be a URL starting with http:// or https://"
+        problem = pattern_problem(err)
+        if problem.startswith("must start"):
+            return "Must be a URL starting with http:// or https://"
+        return "Required" if problem == "is required" else problem.replace("may", "May", 1)
     if err["type"] == "string_too_short":
         return "Required"
     msg = str(err["msg"])
@@ -71,7 +81,7 @@ def _friendly(err: dict[str, Any]) -> str:
 def _validation_error(exc: ValidationError) -> HTTPException:
     errors = [
         {"loc": [str(p) for p in err["loc"]], "msg": _friendly(err)}  # type: ignore[arg-type]
-        for err in exc.errors(include_url=False, include_input=False, include_context=False)
+        for err in exc.errors(include_url=False, include_context=False)  # input: not sent back
     ]
     return HTTPException(status_code=422, detail=errors)
 

@@ -119,6 +119,8 @@ class ActionService:
         """The root shell on the host for `host_command` (agent/change_shell.py)."""
         self._lock = asyncio.Lock()
         self._batch_lock = asyncio.Lock()
+        self._background: set[asyncio.Task[None]] = set()
+        """Approved items of `background` actions that are running now."""
 
     # ------------------------------------------------------------------ requests
 
@@ -239,7 +241,8 @@ class ActionService:
         items: list[int] | None = None,
         decided_by: str = "ui",
     ) -> dict[str, Any]:
-        """Approve (→ executes the items now) or reject the pending items of a batch: all of
+        """Approve (→ executes the items now; a `background` action's items run after this
+        returns and stay "approved" until then) or reject the pending items of a batch: all of
         them, or only the item ids in `items`. Returns the batch view plus `decided` (how many
         items this call decided) and `skipped` (selected items that were no longer pending).
         Raises NotFound / Conflict / ActionError."""
@@ -280,11 +283,19 @@ class ActionService:
                 won.append(item_id)
         if not won:
             raise Conflict("this approval was decided meanwhile")
+        definition = self.registry.get((await self._batch_row(batch_id))["action"])
+        later = decision == "approve" and definition is not None and definition.background
         for item_id in won:
             if decision == "reject":
                 await self._notify(EVENT_RESULT, await self.get(item_id))
-            else:
+            elif not later:
                 await self._run(item_id)
+        if later:
+            task = asyncio.create_task(
+                self._run_later(batch_id, won, decided_by), name=f"approval-{batch_id}"
+            )
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
         view = await self.get_batch(batch_id)
         view["decision"] = decision
         view["decided_by"] = decided_by
@@ -292,6 +303,24 @@ class ActionService:
         view["skipped"] = len(skipped) + len(wanted) - len(won)
         await self._notify(EVENT_DECIDED, view)
         return view
+
+    async def _run_later(self, batch_id: int, item_ids: list[int], decided_by: str) -> None:
+        """Run approved items after the approve call has returned; announce the batch after."""
+        for item_id in item_ids:
+            try:
+                await self._run(item_id)
+            except Exception:
+                log.exception("approved action #%s could not run", item_id)
+                await self._set(item_id, "failed", {"error": "the action could not be started"})
+        view = await self.get_batch(batch_id)
+        view["decision"] = "approve"
+        view["decided_by"] = decided_by
+        await self._notify(EVENT_PROGRESS, view)
+
+    async def wait_background(self) -> None:
+        """Wait for approved items that are still running (tests, shutdown)."""
+        while self._background:
+            await asyncio.gather(*list(self._background), return_exceptions=True)
 
     async def decide(self, action_id: int, decision: str, decided_by: str = "ui") -> dict[str, Any]:
         """Decide one item of its batch (the others stay pending). Returns the item's record."""

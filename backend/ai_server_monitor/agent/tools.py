@@ -111,20 +111,25 @@ def delegate_tool(run_worker: Callable[[str], Awaitable[str]]) -> AgentTool:
 def mcp_agent_tools(tools: list[Tool], ctx: ToolContext) -> list[AgentTool]:
     """The MCP servers' chat tools (`mcp_client`) as agent tools. A tool that always writes
     is approval-required: Pydantic AI defers it and the handler files the approval request
-    (see `file_for_approval`). The generic `mcp_call` decides per call and files writes
-    itself."""
+    (see `file_for_approval`). The generic `mcp_call` is deferred the same way for the calls
+    that reach a write tool (`kind_for`)."""
 
     def wrap(tool: Tool) -> AgentTool:
         async def handler(args: dict[str, Any]) -> Any:
             return await tool.handler(ctx, tool.args_model.model_validate(args))
 
         definition = tool.definition()["function"]
+        kind_for = tool.kind_for
+        writes = tool.kind == "write"
         return AgentTool(
             name=tool.name,
             description=definition["description"],
             parameters=definition["parameters"],
             handler=handler,
-            requires_approval=tool.kind == "write" and tool.kind_for is None,
+            requires_approval=writes and kind_for is None,
+            approval_for=(lambda args: kind_for(args) == "write")
+            if writes and kind_for is not None
+            else None,
         )
 
     return [wrap(t) for t in tools]

@@ -40,6 +40,9 @@ from .tracing import Tracing
 log = logging.getLogger(__name__)
 
 APPROVAL_SWEEP = timedelta(minutes=1)
+RERUN_FIRST = timedelta(minutes=1)
+RERUN_SPACING = timedelta(seconds=30)
+"""Interrupted jobs rerun RERUN_FIRST after the start, one every RERUN_SPACING."""
 
 
 class AppContext:
@@ -118,6 +121,7 @@ class AppContext:
         if interrupted := await self.jobs.store.mark_interrupted():
             log.warning("%d job run(s) were interrupted by the last stop", interrupted)
         await self._start_services()
+        await self._rerun_interrupted()
         await self._refresh_pending_metrics()
         await self._load_job_metrics()
         log.info("started (data=%s, host root=%s)", self.bootstrap.data_dir, self.host_env.root)
@@ -191,6 +195,18 @@ class AppContext:
         jobs = await self.jobs.store.list()
         self.schedule.sync_jobs(jobs, self._scheduled_run)
         self.metrics.forget_jobs(j["slug"] for j in jobs)
+
+    async def _rerun_interrupted(self) -> None:
+        """Jobs whose last run the stop interrupted run again shortly after the start (through
+        the schedule: the pause switch and the concurrency limit apply), the summary last."""
+        slugs = await self.jobs.store.interrupted_slugs()
+        if not slugs:
+            return
+        kinds = {j["slug"]: j["kind"] for j in await self.jobs.store.list()}
+        slugs.sort(key=lambda s: kinds.get(s) == "summary")
+        moved = self.schedule.run_soon(slugs, RERUN_FIRST, RERUN_SPACING)
+        if moved:
+            log.info("rerunning interrupted job(s) soon: %s", ", ".join(moved))
 
     async def _scheduled_run(self, slug: str) -> None:
         await self.jobs.run(slug, "schedule")

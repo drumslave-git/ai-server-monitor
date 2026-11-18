@@ -150,6 +150,21 @@ class Schedule:
                 continue  # unchanged: keep its next run time
             self._sched.add_job(run, trigger, id=job_id, name=job_id, replace_existing=True)
 
+    def run_soon(self, slugs: list[str], first: timedelta, spacing: timedelta) -> list[str]:
+        """Move the next run of these (scheduled) jobs forward to `first`, `first + spacing`, …
+        in this order; their trigger takes over after that run. Disabled jobs are left out.
+        A paused schedule runs them when it is resumed. Returns the slugs moved."""
+        moved = []
+        when = datetime.now(UTC) + first
+        for slug in slugs:
+            job = self._sched.get_job(JOB_PREFIX + slug)
+            if job is None:
+                continue
+            job.modify(next_run_time=when)
+            moved.append(slug)
+            when += spacing
+        return moved
+
     def next_run(self, slug: str) -> float | None:
         job = self._sched.get_job(JOB_PREFIX + slug)
         if job is None or self.paused:

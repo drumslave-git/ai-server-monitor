@@ -277,3 +277,35 @@ async def test_generic_pair_prompt_names_the_servers_and_tools(
         names = {t["function"]["name"] for t in llm.requests[0]["tools"]}
         assert {"mcp_list_tools", "mcp_call"} <= names
         assert "MCP server 'home' offers: get_temperature, set_heating (write)" in system
+
+
+async def test_generic_mcp_call_to_a_write_tool_continues_the_chat_after_approval(
+    tmp_path: Path, fake: FakeMcp
+) -> None:
+    write = {"server": "home", "tool": "set_heating", "arguments": {"room": "hall", "on": True}}
+    read = {"server": "home", "tool": "get_temperature", "arguments": {"room": "hall"}}
+    llm = FakeLLM(
+        call("mcp_call", read),
+        call("mcp_call", write),
+        say("Heating is on now."),
+    )
+    settings = settings_for(fake.url, max_inline_tool_tokens=0)
+    async for app in start_app(tmp_path, llm, settings):
+        events = await ask(app, "warm up the hall")
+        # a read through mcp_call runs at once; a write waits for the owner
+        assert ("get_temperature", {"room": "hall"}) in fake.calls
+        assert events[-1]["text"].startswith("Waiting for approval #")
+        session_id = events[-1]["session_id"]
+        [record] = await app.actions.pending()
+        assert record["target"] == "home · set_heating"
+        done = await app.actions.decide(record["id"], "approve")
+        assert done["status"] == "executed"
+        history: list[dict[str, str]] = []
+        for _ in range(200):
+            await asyncio.gather(*list(app.chat._background))
+            history = await app.chat.store.history(session_id, 10)
+            if history[-1]["content"] == "Heating is on now.":
+                break
+            await asyncio.sleep(0.02)
+        assert history[-1]["content"] == "Heating is on now."
+        assert "heating in hall is now on" in json.dumps(llm.requests[-1]["messages"])

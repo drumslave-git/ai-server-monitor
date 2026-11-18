@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from .config import McpServerSettings, OptionalHttpUrl, Secret, Settings
+from .config import McpServerSettings, OptionalHttpUrl, Secret, Settings, pattern_problem
 from .mcp_client.discovery import check_mcp_server
 from .settings_store import merge_secrets
 
@@ -305,10 +305,10 @@ def _current_node(
 
 def _friendly_errors(exc: ValidationError) -> str:
     parts = []
-    for err in exc.errors(include_url=False, include_input=False, include_context=False):
+    for err in exc.errors(include_url=False, include_context=False):  # input: never shown
         msg = str(err["msg"]).removeprefix("Value error, ")
         if err["type"] == "string_pattern_mismatch":
-            msg = "must start with http:// or https://"
+            msg = pattern_problem(err)
         elif err["type"] == "string_too_short":
             msg = "is required"
         field_name = ".".join(str(p) for p in err["loc"] if not isinstance(p, int))
