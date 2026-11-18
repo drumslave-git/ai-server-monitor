@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from ai_server_monitor.chat.marks import (
     MARKS_SYSTEM,
     add_marks,
+    clean_stray_marks,
     command_groups,
     read_only_marked,
     unmarked_commands,
@@ -82,8 +83,8 @@ def test_an_unmarked_answer_is_stored_with_the_marks_of_the_extra_call(
     assert f"# [read-only]\n{FIND}" in stored["content"]
     assert "# [read-only] List all models" in stored["content"]
     assert "# [write]\nrm /tmp/x" in stored["content"]
-    # The chat turn had the rule; the extra call got the commands and the rule what is write.
-    assert "# [read-only] what it shows" in models.requests[0]["instructions"]
+    # The chat turn has no marking rule; the extra call got the commands and what is write.
+    assert "[read-only]" not in models.requests[0]["instructions"]
     assert models.requests[1]["instructions"] == MARKS_SYSTEM
     assert "Command 3:" in models.requests[1]["text"] and "RealVisXL" in models.requests[1]["text"]
     assert len(models.requests) == 2
@@ -101,7 +102,7 @@ def test_a_run_follow_up_is_marked_too(bootstrap: Bootstrap, models: ScriptedMod
         stored = client.get(f"/api/chat/sessions/{session_id}").json()["messages"][-1]
     assert events[-1]["type"] == "done"
     assert f"```bash\n# [read-only]\n{FIND}\n```" in stored["content"]
-    assert "# [read-only] what it shows" in models.requests[1]["instructions"]
+    assert "[read-only]" not in models.requests[1]["instructions"]
 
 
 @pytest.mark.parametrize(
@@ -134,3 +135,44 @@ def test_an_answer_with_marked_commands_makes_no_extra_call(
     with TestClient(make_app(bootstrap)) as client:
         client.post("/api/chat", json={"message": "x"})
     assert len(models.requests) == 1
+
+
+# Live 0.7.5 (LLM calls 9893, 9903): marks written outside the code block render as headings.
+STRAY = (
+    "# [read-only] Commands to find the largest directories\n\n"
+    "First, check the partitions:\n\n```bash\n# Show all filesystems\ndf -h\n```\n\n"
+    "**How to confirm:**\n# [read-only] Verify disk usage in detail\n"
+    "```bash\ndu -xh --max-depth=1 /mnt/disks/disk14TB | sort -hr | head -20\n```\n\n"
+    "## Storage\n# [write]\nDone."
+)
+
+
+def test_stray_marks_outside_code_blocks_become_plain_text() -> None:
+    cleaned = clean_stray_marks(STRAY)
+    assert cleaned.startswith("Commands to find the largest directories\n\nFirst,")
+    assert "**How to confirm:**\nVerify disk usage in detail\n```bash" in cleaned
+    assert "## Storage\nDone." in cleaned  # a bare mark line goes
+    assert "```bash\n# Show all filesystems\ndf -h\n```" in cleaned  # code blocks untouched
+    assert clean_stray_marks("# Title\n\ntext") == "# Title\n\ntext"
+
+
+def test_a_stray_mark_heading_is_cleaned_and_each_command_gets_one_mark(
+    bootstrap: Bootstrap, models: ScriptedModels
+) -> None:
+    models.script = [STRAY, ("final_result", {"kinds": ["read-only", "read-only"]})]
+    with TestClient(make_app(bootstrap)) as client:
+        response = client.post("/api/chat", json={"message": "which disk is full?"})
+        session_id = frames(response.text)[0]["session_id"]
+        stored = client.get(f"/api/chat/sessions/{session_id}").json()["messages"][-1]["content"]
+    assert stored.startswith("Commands to find the largest directories\n")
+    assert "\nVerify disk usage in detail\n```bash\n# [read-only]\ndu -xh" in stored
+    assert "```bash\n# [read-only] Show all filesystems\ndf -h\n```" in stored
+    assert stored.count("[read-only]") == 2 and "[write]" not in stored
+
+
+def test_prompts_carry_no_marking_rule() -> None:
+    from ai_server_monitor.agent.prompts import chat_prompt
+    from ai_server_monitor.chat.explain import REQUEST
+
+    for text in (chat_prompt("host", "English"), REQUEST):
+        assert "[read-only]" not in text and "[write]" not in text

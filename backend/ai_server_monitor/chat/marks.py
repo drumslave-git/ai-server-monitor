@@ -127,6 +127,37 @@ def add_marks(answer: str, commands: list[Unmarked], kinds: list[Kind]) -> str:
     return "\n".join(lines)
 
 
+_STRAY = re.compile(
+    r"^[ \t]{0,3}#{1,6}[ \t]*\[(?:read-only|write)\][ \t]*(?P<text>.*?)(?:[ \t]+#+)?[ \t]*$",
+    re.IGNORECASE,
+)
+"""A Markdown heading in mark form (`# [read-only] Check the disk`)."""
+
+
+def clean_stray_marks(answer: str) -> str:
+    """A mark written outside any code block is a heading in Markdown (the model imitating the
+    marks it sees in the history): such a line becomes plain text without the `# [...]` part,
+    or goes when nothing else is on it. Nothing else of the answer changes."""
+    lines = answer.split("\n")
+    rows = [
+        token.map[0]
+        for token in MarkdownIt("commonmark").parse(answer)
+        if token.type == "heading_open" and token.map is not None and token.level == 0
+    ]
+    drop: list[int] = []
+    for row in rows:
+        match = _STRAY.match(lines[row])
+        if match is None:
+            continue
+        if match["text"]:
+            lines[row] = match["text"]
+        else:
+            drop.append(row)
+    for row in reversed(drop):
+        del lines[row]
+    return "\n".join(lines)
+
+
 class Marks(BaseModel):
     """For each numbered command, in the same order: read-only or write."""
 

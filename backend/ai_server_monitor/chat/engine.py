@@ -58,6 +58,7 @@ from .marks import (
     RUN_MARK,  # noqa: F401  (re-exported: the mark the Run endpoint reads)
     Marks,
     add_marks,
+    clean_stray_marks,
     marks_prompt,
     read_only_marked,
     unmarked_commands,
@@ -318,6 +319,7 @@ class ChatEngine:
         """The answer with a mark on every command of its shell blocks (see `chat.marks`).
         Commands without a valid one are labelled by one structured call of the main model
         (Logs: purpose `chat_marks`); if it fails they stay unmarked, and the log says so."""
+        answer = clean_stray_marks(answer)
         commands = unmarked_commands(answer)
         if not commands:
             return answer

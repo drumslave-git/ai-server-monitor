@@ -50,8 +50,8 @@ since the run.
 start it with "Guess:".
 4. How to confirm it (the command, what to look for) and what the owner can do. Suggest only \
 actions about this {kind} itself: nothing that creates or changes other things (no new \
-containers, services or packages). Mark every command you show: `# [read-only] ...` or \
-`# [write] ...` on the comment line above it.
+containers, services or packages). Put every command you show in a ```bash block, below a \
+comment line that says what it does.
 Do not end with an offer or a question: if another look would help, run it yourself now. \
 Keep it to about {words} words. Times in the data are in the host's time zone ({zone}). \
 Do not propose a change on the server (`bash_write`) unless the owner asks for one \

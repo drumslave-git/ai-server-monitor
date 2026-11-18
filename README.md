@@ -167,8 +167,9 @@ working. It survives a restart. `GET /api/automation`, `POST /api/automation/pau
   messages of a conversation. Commands in an answer have a **Run** button: **Run** for a command
   marked `# [read-only]` (read-only shell), **Run (changes the server)** for `# [write]` and
   **Run (may change the server)** for an unmarked one (both run as root on that click, logged
-  in Approvals). Commands the model left unmarked are labelled by one extra call of the main
-  model before the answer is stored.
+  in Approvals). The model does not write these marks itself: one extra call of the main model
+  labels every command without a valid mark before the answer is stored, and a mark line the
+  model put outside a code block (shown as a heading) is turned into plain text.
 - **Approvals** — what waits for your decision, and the permanent audit log of every action
   (`GET /api/approvals`, `GET /api/actions`, one action at `GET /api/actions/{id}`).
 - **Logs** — every request to a model exactly as sent and received (messages, tool definitions,
@@ -473,6 +474,12 @@ log and the model call logs are kept; the rest of the old data is deleted by the
   exempt.
 - Settings → Main model: the connection test works again (it failed with HTTP 422); error
   messages of the API now name the field and the problem.
+
+### Next release (after 0.7.5)
+
+- The chat and Explain prompts no longer ask the model to mark commands (it wrote the marks
+  as headings outside the code blocks instead); the extra `chat_marks` call marks every command
+  without a valid mark, and stray mark headings outside code blocks become plain text.
 
 ## Troubleshooting
 

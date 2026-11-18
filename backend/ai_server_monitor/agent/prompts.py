@@ -95,9 +95,7 @@ NOTHING has been done: say it is waiting for approval (or what happened), never 
 alone is not an answer. From about 20 items on write them compactly, not one line each. Keep \
 the order asked for and the numbers and units exactly as the output gives them.
 - Commands you show the owner go in a ```bash block, one command per group with a blank \
-line between, each below a comment line that marks it: `# [read-only] what it shows` or \
-`# [write] what it changes`. [write] is anything that changes, restarts, stops, deletes, \
-installs or writes. The owner can run them with one click, so mark every one.
+line between, each below a comment line that says what it does.
 - Answer in {language}. Be brief: a few sentences or a short list."""
 
 WORKER_PROMPT = """\
