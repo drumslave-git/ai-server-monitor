@@ -415,6 +415,8 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .findings li .badge { font-size: 14px; align-items: baseline; }
 .findings strong { font-weight: 500; }
 .finding-detail { margin: 2px 0 0 16px; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.finding-evidence { margin: 4px 0 0 16px; color: var(--muted); max-height: 7.5em; overflow: auto; }
+.finding-unverified { margin: 2px 0 0 16px; color: var(--muted); font-size: 12px; font-style: italic; }
 .table-panel { padding: 8px 20px; overflow-x: auto; }
 .jobs-table td { vertical-align: middle; }
 .jobs-table tr.off td:not(:first-child) { color: var(--muted); }

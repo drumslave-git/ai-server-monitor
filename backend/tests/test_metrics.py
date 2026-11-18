@@ -4,6 +4,7 @@ import re
 import time
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from prometheus_client.parser import text_string_to_metric_families
 
@@ -15,6 +16,8 @@ from ai_server_monitor.outputs.metrics import CONTENT_TYPE, MetricsHub
 from .jobfakes import ScriptedModels, finish
 from .test_chat import FakeLLM, ask, make_app, say
 from .test_jobs import make_app as make_jobs_app
+
+pytestmark = pytest.mark.usefixtures("skip_evidence")
 
 
 def parse(text: str) -> dict[str, float]:

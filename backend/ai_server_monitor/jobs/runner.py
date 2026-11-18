@@ -18,11 +18,12 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field
 
 from ..agent.prompts import host_line
-from ..agent.runtime import AgentConfig, AgentTool, run_agent
+from ..agent.runtime import NOT_FINISHED, AgentConfig, AgentTool, run_agent
 from ..agent.safety import Scrubber
 from ..agent.tools import app_bash, app_delegate, app_shell
 from ..config import Settings
 from ..llm.text import strip_reasoning
+from .evidence import EvidenceCheck, RecordingShell
 from .prompts import summary_input, summary_instructions, topic_instructions
 from .store import INTERRUPTED, JobStore
 
@@ -40,6 +41,11 @@ class Finding(BaseModel):
     severity: Literal["info", "warn", "crit"]
     title: str = Field(description="Short title of the problem.")
     detail: str = Field(default="", description="Numbers, names, paths.")
+    evidence: list[str] = Field(
+        default_factory=list,
+        description="The exact line(s) of command output this finding rests on, copied "
+        "unchanged. Required for warn and crit.",
+    )
 
 
 class JobResult(BaseModel):
@@ -178,16 +184,20 @@ class JobRunner:
         host = host_line(app.host_env.root)
         language = settings.general.language
         scrub = Scrubber(settings)
-        shell = app_shell(app)
+        # Every command of the run (also the delegated ones) is kept: findings must quote it.
+        sources: list[str] = []
+        shell = RecordingShell(app_shell(app), sources)
         # Not in the chat audit trail: every command is in this run's trace (turn below).
-        tools: list[AgentTool] = [app_bash(app, None, shell)]
+        tools: list[AgentTool] = [app_bash(app, None, shell)]  # type: ignore[arg-type]
         if job["kind"] == "summary":
-            tools.append(app_delegate(app, None, scrub, host, shell))
+            tools.append(app_delegate(app, None, scrub, host, shell))  # type: ignore[arg-type]
             instructions = summary_instructions(host, language, job["prompt"])
             prompt = await self._summary_input(slug)
         else:
             instructions = topic_instructions(host, language, job["prompt"])
             prompt = "Run the check now, then call final_result."
+        sources.append(prompt)  # the summary may quote the topic results it was given
+        evidence = EvidenceCheck(sources)
         cfg = AgentConfig(
             model=app.models.model(job["model"]),
             instructions=instructions,
@@ -199,6 +209,7 @@ class JobRunner:
             tracing=app.tracing,
             trace={"purpose": "job", "link_kind": "job", "link_id": slug, "turn": turn},
             output_type=JobResult,
+            output_validator=evidence,
         )
         end: dict[str, Any] = {}
         async for event in run_agent(cfg, prompt):
@@ -212,13 +223,16 @@ class JobRunner:
         }
         output = end.get("output")
         if not isinstance(output, JobResult):
+            if end.get("stopped") == "step_limit":
+                steps = cfg.max_steps
+                return {**fields, "status": "error", "error": NOT_FINISHED.format(steps=steps)}
             text = strip_reasoning(str(output or ""))[:500]
             return {**fields, "status": "error", "error": f"no result: {text or 'empty answer'}"}
         return {
             **fields,
             "status": output.status,
             "summary": output.summary,
-            "findings": [f.model_dump() for f in output.findings],
+            "findings": evidence.mark([f.model_dump() for f in output.findings]),
         }
 
     async def _summary_input(self, slug: str) -> str:

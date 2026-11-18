@@ -22,6 +22,7 @@ _FAILURES = (
     ("ModelQuotaExceededError", "the model endpoint's quota is used up"),
     ("ModelContextWindowExceededError", "the conversation got too long for the model"),
     ("UsageLimitExceeded", "the run reached its step limit"),
+    ("The model did not finish", "the model did not finish within its step limit"),
     ("timed out", "it took longer than its time limit"),
     ("no result", "the model gave no result"),
     ("cancelled", "the run was cancelled"),

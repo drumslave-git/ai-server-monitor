@@ -37,6 +37,8 @@ TOKEN = "123456:TESTTOKEN-abcdefghijklmnopqrstuvwxyz012"
 CHAT = 111
 OTHER = 222
 STRANGER = 999
+pytestmark = pytest.mark.usefixtures("skip_evidence")
+
 FINDING = {"severity": "warn", "title": "/ is 88% full", "detail": "12 GB free"}
 JSON_PARAMS = {
     "reply_markup",

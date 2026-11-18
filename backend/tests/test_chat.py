@@ -316,7 +316,7 @@ def test_step_limit_takes_the_tools_away_and_asks_for_an_answer(
     assert len(llm.requests) == 3  # two tool rounds, then a final answer without tools
     last = llm.requests[-1]
     assert not last.get("tools")
-    assert "Do not call any more tools" in json.dumps(last["messages"])
+    assert "You are out of steps" in json.dumps(last["messages"])
     assert answer(events) == "Here is what I have: 40%."
 
 

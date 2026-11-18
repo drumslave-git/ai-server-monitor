@@ -933,12 +933,19 @@ export interface components {
              */
             detail: string;
             /**
+             * Evidence
+             * @default []
+             */
+            evidence: string[];
+            /**
              * Severity
              * @enum {string}
              */
             severity: "info" | "warn" | "crit";
             /** Title */
             title: string;
+            /** Verified */
+            verified?: boolean | null;
         };
         /** GeneralSettings */
         GeneralSettings: {

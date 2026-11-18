@@ -201,12 +201,24 @@ tested):
 - It **can** read every file (with `DAC_READ_SEARCH`; without it, what the `adm` and
   `systemd-journal` groups may read), `journalctl`, `ps`/`top` over all host processes, the
   host's listening ports from `/proc/1/net/tcp`, and `docker ps/logs/inspect/stats/system df`
-  through the proxy; pipes, subshells and redirection to `/dev/null` work.
+  through the proxy; pipes, subshells and redirection to `/dev/null` work. On systemd 257 or
+  newer it reads the system state and the failed units from systemd's Varlink socket
+  (`varlinkctl` on `/run/systemd/io.systemd.Manager`; measured on Ubuntu 26.04, systemd 259).
 - It **cannot** write, delete or create any host file (read-only mount), signal any process
   (also not PID 1 or `nobody`'s), open the real Docker socket, change anything through the
   Docker proxy (403), write to devices, `/proc/sys` or `/sys`, enter other namespaces
   (`nsenter`, `unshare`) or see which process owns another user's socket (`ss -p` needs
   `SYS_PTRACE`, which the sandbox never has).
+- It cannot use `systemctl`: the system D-Bus accepts the sandbox uid's authentication and
+  then closes the connection at `Hello` (measured; the uid has no passwd entry on the host),
+  and systemctl's direct socket `/run/systemd/private` is root-only. Giving the sandbox a
+  uid with a passwd entry (`nobody`) would let it signal `nobody`'s processes, so the systemd
+  job uses Varlink and the journal instead.
+- The Varlink socket is open to every local user and also offers `Reload` and `Reexecute`.
+  systemd guards those with polkit (`org.freedesktop.systemd1.reload-daemon`, which needs an
+  administrator's authentication by default), which a sessionless sandbox cannot give; this
+  was read in systemd's source, not tried on a live host. A host with a polkit rule granting
+  that action to all users would let the read-only shell reload systemd (not change units).
 
 Every command a chat runs is in `GET /api/chat/audit` and in the Logs page; a job's commands are
 in its run's trace.

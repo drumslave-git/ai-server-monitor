@@ -16,7 +16,12 @@ from ai_server_monitor.main import create_app
 from .conftest import LLM_URL
 from .jobfakes import ScriptedModels, finish, tool
 
-FINDING = {"severity": "warn", "title": "/ is 88% full", "detail": "12 GB free"}
+FINDING = {
+    "severity": "warn",
+    "title": "/ is 40% full",
+    "detail": "60G free",
+    "evidence": ["/dev/sda1  100G  40G  60G  40% /"],
+}
 
 
 def make_app(bootstrap: Bootstrap, **settings: Any) -> Any:
@@ -66,7 +71,7 @@ def test_a_topic_run_uses_only_bash_and_stores_the_structured_result(
         sub = client.app.state.ctx.events.subscribe("job")  # type: ignore[attr-defined]
         result = run(client, "storage")
         assert result["status"] == "warn" and result["summary"] == "Root is 88% full."
-        assert result["findings"] == [FINDING] and result["error"] is None
+        assert result["findings"] == [{**FINDING, "verified": True}] and result["error"] is None
         assert result["trigger"] == "manual" and result["steps"] == 2
         assert result["model"] == "small" and result["trace_turn"]
         assert result["finished"] >= result["started"]
@@ -82,7 +87,9 @@ def test_a_topic_run_uses_only_bash_and_stores_the_structured_result(
         assert job["last_run"]["id"] == result["id"] and job["last_run"]["status"] == "warn"
         runs = client.get("/api/jobs/storage/runs").json()["items"]
         assert [r["id"] for r in runs] == [result["id"]]
-        assert client.get(f"/api/jobs/runs/{result['id']}").json()["findings"] == [FINDING]
+        assert client.get(f"/api/jobs/runs/{result['id']}").json()["findings"] == [
+            {**FINDING, "verified": True}
+        ]
         events = []
         while len(events) < 2:
             events.append(client.portal.call(sub.__anext__))  # type: ignore[union-attr]
@@ -145,7 +152,10 @@ def test_the_summary_gets_the_topic_results_and_sets_the_overall_status(
     bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
 ) -> None:
     with TestClient(make_app(bootstrap)) as client:
-        models.script = [finish("crit", "Only 2% memory available.", [FINDING])]
+        models.script = [
+            tool("bash", command="free -m"),
+            finish("crit", "Only 2% memory available.", [FINDING]),
+        ]
         run(client, "resources")
         client.put("/api/jobs/docker", json={"enabled": False})
         models.script = [finish("crit", "Memory is nearly exhausted.\nDetails follow.", [FINDING])]
@@ -272,7 +282,10 @@ def test_an_interrupted_run_is_rerun_soon_and_does_not_hide_the_last_result(
 ) -> None:
     from ai_server_monitor.jobs.store import INTERRUPTED
 
-    models.script = [finish("warn", "Root is 88% full.", [FINDING])]
+    models.script = [
+        tool("bash", command="df -h /"),
+        finish("warn", "Root is 40% full.", [FINDING]),
+    ]
     with TestClient(make_app(bootstrap)) as client:
         real = run(client, "storage")
         store = client.app.state.ctx.jobs.store  # type: ignore[attr-defined]
@@ -298,3 +311,65 @@ def test_marking_interrupted_runs_counts_rows_not_ids(bootstrap: Bootstrap) -> N
         for slug in ("storage", "docker"):
             client.portal.call(store.start_run, slug, "schedule", "small")  # type: ignore[union-attr]
         assert client.portal.call(store.mark_interrupted) == 2  # type: ignore[union-attr]
+
+
+def test_a_model_out_of_steps_never_crashes_the_run(
+    bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
+) -> None:
+    """Run 4 of the live systemd job: at the step limit only final_result is offered, the small
+    model calls bash again, and the run died with "Tool 'bash' exceeded max retries count"."""
+    with TestClient(make_app(bootstrap)) as client:
+        client.put("/api/jobs/systemd", json={"max_steps": 2})
+        # keeps calling bash after the limit: a plain error, the trace is kept
+        models.script = [tool("bash", command="systemctl --failed")] * 12
+        stuck = run(client, "systemd")
+        assert stuck["status"] == "error"
+        assert stuck["error"] == "The model did not finish within 2 steps."
+        assert stuck["trace_turn"] and stuck["steps"]
+        past = [r for r in models.requests if r["tools"] == []]
+        assert past and "out of steps" in past[0]["instructions"]
+        assert "call final_result now" in past[0]["instructions"]
+        overall = {j["slug"]: j for j in client.get("/api/status").json()["jobs"]}
+        assert overall["systemd"]["status"] == "error"
+        # strays once at the limit, then gives its result: the result is stored
+        models.script = [
+            tool("bash", command="systemctl --failed"),
+            tool("bash", command="journalctl -p err"),
+            tool("bash", command="systemctl list-units"),
+            finish("warn", "Could not check: systemctl is not available."),
+        ]
+        late = run(client, "systemd")
+        assert late["status"] == "warn" and late["error"] is None
+
+
+def test_findings_must_quote_command_output(
+    bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
+) -> None:
+    """Live storage run 2 reported "/appdata at 896G" where du said 208G: evidence that is not
+    in the command output gets one retry naming it, and is stored as not confirmed."""
+    wrong = {**FINDING, "detail": "90G used", "evidence": ["/dev/sda1  100G  90G  10G  90% /"]}
+    bare = {k: v for k, v in FINDING.items() if k != "evidence"}
+    with TestClient(make_app(bootstrap)) as client:
+        # a wrong quote, repeated after the retry: kept, marked not confirmed
+        models.script = [
+            tool("bash", command="df -h /"),
+            finish("warn", "Root is 90% full.", [wrong]),
+            finish("warn", "Root is 90% full.", [wrong]),
+        ]
+        result = run(client, "storage")
+        retry = models.requests[-1]["text"]
+        assert "Evidence check failed" in retry and "/dev/sda1 100G 90G 10G 90% /" in retry
+        assert result["status"] == "warn" and result["findings"][0]["verified"] is False
+        # warn without evidence: retried; the corrected answer (re-spaced) is confirmed
+        respaced = {**FINDING, "evidence": ["`/dev/sda1 100G 40G 60G 40% /`"]}
+        models.script = [
+            tool("bash", command="df -h /"),
+            finish("warn", "Root is 40% full.", [bare]),
+            finish("warn", "Root is 40% full.", [respaced]),
+        ]
+        fixed = run(client, "storage")
+        assert "has no evidence" in models.requests[-1]["text"]
+        assert fixed["findings"][0]["verified"] is True
+        # an info finding needs no evidence
+        models.script = [finish("ok", "Fine.", [{"severity": "info", "title": "note"}])]
+        assert run(client, "storage")["findings"][0]["verified"] is True

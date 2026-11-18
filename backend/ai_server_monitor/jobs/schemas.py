@@ -76,6 +76,11 @@ class Finding(BaseModel):
     severity: Literal["info", "warn", "crit"]
     title: str
     detail: str = ""
+    evidence: list[str] = []
+    """The line(s) of command output the finding rests on, as the model quoted them."""
+    verified: bool | None = None
+    """True: every evidence line occurs in the run's command output (and warn/crit gave some);
+    False: not confirmed by command output; None: a run from before evidence existed."""
 
 
 class JobRun(BaseModel):

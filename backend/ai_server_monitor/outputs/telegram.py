@@ -247,7 +247,11 @@ def _finding_lines(findings: list[dict[str, Any]], limit: int) -> list[str]:
         lines.append(
             f"• {icon} {html.escape(_one_line(str(f.get('title') or ''), 120))}"
             + (f" — {html.escape(detail)}" if detail else "")
+            + (" <i>(not confirmed by command output)</i>" if f.get("verified") is False else "")
         )
+        evidence = [str(e) for e in f.get("evidence") or [] if str(e).strip()]
+        if evidence:
+            lines.append(f"  <code>{html.escape(_one_line(evidence[0], 120))}</code>")
     if len(findings) > limit:
         lines.append(f"+{len(findings) - limit} more")
     return lines

@@ -131,3 +131,13 @@ def root_shell(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 from .jobfakes import models  # noqa: E402, F401  (the scripted-models fixture)
+
+
+@pytest.fixture
+def skip_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """For tests about something else: findings are taken as given (no evidence retry, no
+    `verified` mark). The evidence check has its own tests in test_jobs.py."""
+    from ai_server_monitor.jobs.evidence import EvidenceCheck
+
+    monkeypatch.setattr(EvidenceCheck, "__call__", lambda self, output: output)
+    monkeypatch.setattr(EvidenceCheck, "mark", lambda self, findings: findings)

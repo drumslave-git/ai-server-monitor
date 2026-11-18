@@ -36,7 +36,7 @@ from pydantic_ai import (
     UsageLimits,
 )
 from pydantic_ai.capabilities import PrepareTools
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -67,6 +67,9 @@ log = logging.getLogger(__name__)
 PROGRESS_EVERY_S = 5.0
 PREVIEW = 400
 MAX_APPROVAL_ROUNDS = 5
+RETRIES = 3
+"""Retries of a tool call or a final result before the model is given up on (Pydantic AI)."""
+NOT_FINISHED = "The model did not finish within {steps} steps."
 Event = dict[str, Any]
 
 
@@ -169,6 +172,8 @@ class AgentConfig:
     trace_tool_prefix: str = ""
     """Prefix of the tool names in the trace (sub-agent calls: 'worker:')."""
     output_type: Any = str
+    output_validator: Callable[[Any], Any] | None = None
+    """Checks a structured result; raising `ModelRetry` sends it back to the model once more."""
     on_approval: Callable[[AgentTool, dict[str, Any]], Awaitable[str | PendingApproval]] | None = (
         None
     )
@@ -322,8 +327,19 @@ class _Run:
             else cfg.output_type,
             model_settings=cfg.model_settings,
             capabilities=[PrepareTools(self.prepare)],
+            # A small model at the step limit may still call a tool that is gone or give a
+            # malformed result a few times before it answers: retry instead of crashing.
+            retries={"tools": RETRIES, "output": RETRIES},
+            end_strategy="early",  # a final result ends the run; calls beside it are dropped
         )
-        limits = UsageLimits(request_limit=cfg.max_steps + 3)
+        if cfg.output_validator is not None:
+            check = cfg.output_validator
+
+            def validate(output: Any) -> Any:
+                return output if isinstance(output, DeferredToolRequests) else check(output)
+
+            agent.output_validator(validate)
+        limits = UsageLimits(request_limit=cfg.max_steps + RETRIES + 2)
         messages = history
         usage = None
         try:
@@ -361,8 +377,14 @@ class _Run:
                 await self.queue.put(("end", ("(stopped: too many approval rounds)", usage)))
         except UsageLimitExceeded:
             self.stopped = "step_limit"
-            text = "I could not finish: the step limit was reached before an answer."
-            await self.queue.put(("end", (text, usage)))
+            await self.queue.put(("end", (NOT_FINISHED.format(steps=cfg.max_steps), usage)))
+        except UnexpectedModelBehavior as exc:
+            if self.stopped != "step_limit":
+                await self.queue.put(("error", exc))
+                return
+            # Out of steps and still no valid answer after the retries: a plain ending.
+            log.info("agent did not finish at the step limit: %s", exc)
+            await self.queue.put(("end", (NOT_FINISHED.format(steps=cfg.max_steps), usage)))
         except BaseException as exc:  # handed to the consumer, which re-raises it
             await self.queue.put(("error", exc))
 

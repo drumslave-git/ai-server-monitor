@@ -555,6 +555,10 @@ export function Findings({ findings }: { findings: Finding[] }) {
               <strong>{f.title}</strong>
             </Badge>
             {f.detail && <p className="finding-detail">{f.detail}</p>}
+            {(f.evidence ?? []).length > 0 && (
+              <pre className="finding-evidence">{(f.evidence ?? []).join("\n")}</pre>
+            )}
+            {f.verified === false && <p className="finding-unverified">Not confirmed by command output</p>}
           </li>
         ))}
       </ul>

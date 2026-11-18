@@ -131,6 +131,13 @@ work; writes (EROFS), signals to uid 1000, 65534 and PID 1 (EPERM), the real soc
 the container has `SYS_ADMIN` and `SYS_PTRACE` (the sandbox's effective set stays `0x4`). Not
 measured: `nvidia-smi`, a real AppArmor host.
 
+systemd: `systemctl` fails in the sandbox (the system bus closes the connection after `Hello`
+for the passwd-less uid; `/run/systemd/private` is 0700 root), so the systemd job reads
+systemd's Varlink socket (`io.systemd.Manager.Describe`, `io.systemd.Unit.List`; systemd ≥ 257)
+and the journal. That socket is 0666 and also has `Reload`/`Reexecute`, which systemd checks
+only through polkit (`reload-daemon`, admin authentication by default): the sandbox's guarantee
+there rests on the host's polkit policy (measured 2026-11-18 on the live host, systemd 259).
+
 `nsenter` into PID 1 needs both `SYS_ADMIN` and `SYS_PTRACE` (measured: neither alone works).
 Only the chat's main model can propose a root command; a person approves it unless the owner
 chose `auto`.
