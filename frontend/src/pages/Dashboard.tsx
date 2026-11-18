@@ -15,7 +15,7 @@ import {
   type JobRun,
 } from "../jobs";
 import { useStream } from "../live";
-import { Badge, Empty, Markdown, PageHead, Panel, useNow, usePoll } from "../ui";
+import { Badge, Dot, Empty, Markdown, PageHead, Panel, useNow, usePoll } from "../ui";
 import { ExplainButton } from "../components/Explain";
 import { Findings } from "./Jobs";
 
@@ -56,6 +56,7 @@ export function DashboardPage() {
         overall={s.overall ?? null}
         run={overallRun.data ?? null}
         summary={summary}
+        names={Object.fromEntries(items.map((j) => [j.slug, j.name]))}
         running={summary ? running.has(summary.slug) : false}
         paused={paused}
         now={now}
@@ -82,6 +83,7 @@ function Overall({
   overall,
   run,
   summary,
+  names,
   running,
   paused,
   now,
@@ -90,6 +92,8 @@ function Overall({
   overall: StatusResponse["overall"] | null;
   run: JobRun | null;
   summary: Job | undefined;
+  /** Job names by slug, for the summary's topic list. */
+  names: Record<string, string>;
   running: boolean;
   paused: boolean;
   now: number;
@@ -161,6 +165,17 @@ function Overall({
         </div>
       </div>
       {error && <p className="error">{error}</p>}
+      {shown && shown.topics.length > 0 && (
+        <ul className="topic-lines" aria-label="Topics">
+          {shown.topics.map((t) => (
+            <li key={t.slug}>
+              <Dot level={t.status === "none" ? "off" : STATUS_LEVEL[t.status]} />
+              <a href={`#/jobs/${t.slug}`}>{names[t.slug] ?? t.slug}</a>
+              <span className="muted">{t.clause}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       {shown?.status === "error" && shown.error && shown.error.trim() !== overall?.headline && <pre className="run-error">{shown.error}</pre>}
       {/* the headline above is the summary's first line */}
       {shown?.summary && withoutFirstLine(shown.summary) && <Markdown text={withoutFirstLine(shown.summary)} />}

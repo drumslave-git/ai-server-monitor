@@ -56,6 +56,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RunUsage
 
 from ..tracing import trace_scope
 from ..tracing.scope import current_scope
@@ -69,7 +70,7 @@ PREVIEW = 400
 MAX_APPROVAL_ROUNDS = 5
 RETRIES = 3
 """Retries of a tool call or a final result before the model is given up on (Pydantic AI)."""
-NOT_FINISHED = "The model did not finish within {steps} steps."
+NOT_FINISHED = "The model did not finish within {steps} steps (the limit is {limit})."
 Event = dict[str, Any]
 
 
@@ -306,6 +307,10 @@ class _Run:
             return []
         return defs
 
+    def not_finished(self) -> str:
+        """The ending of a run out of steps: the steps it really took, and the limit."""
+        return NOT_FINISHED.format(steps=self.steps or self.cfg.max_steps, limit=self.cfg.max_steps)
+
     def limit_note(self, ctx: RunContext[Any]) -> str:
         return STEP_LIMIT_NOTE if ctx.run_step > self.cfg.max_steps else ""
 
@@ -341,7 +346,9 @@ class _Run:
             agent.output_validator(validate)
         limits = UsageLimits(request_limit=cfg.max_steps + RETRIES + 2)
         messages = history
-        usage = None
+        # Filled in place by Pydantic AI: a run that ends in an exception (the step limit, too
+        # many invalid results) still reports what it used.
+        usage = RunUsage()
         try:
             with trace_scope(**cfg.trace):
                 for _ in range(MAX_APPROVAL_ROUNDS + 1):
@@ -377,14 +384,14 @@ class _Run:
                 await self.queue.put(("end", ("(stopped: too many approval rounds)", usage)))
         except UsageLimitExceeded:
             self.stopped = "step_limit"
-            await self.queue.put(("end", (NOT_FINISHED.format(steps=cfg.max_steps), usage)))
+            await self.queue.put(("end", (self.not_finished(), usage)))
         except UnexpectedModelBehavior as exc:
             if self.stopped != "step_limit":
                 await self.queue.put(("error", exc))
                 return
             # Out of steps and still no valid answer after the retries: a plain ending.
             log.info("agent did not finish at the step limit: %s", exc)
-            await self.queue.put(("end", (NOT_FINISHED.format(steps=cfg.max_steps), usage)))
+            await self.queue.put(("end", (self.not_finished(), usage)))
         except BaseException as exc:  # handed to the consumer, which re-raises it
             await self.queue.put(("error", exc))
 

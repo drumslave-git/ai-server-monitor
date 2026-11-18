@@ -34,11 +34,12 @@ def job_dict(row: Any) -> dict[str, Any]:
 
 def run_dict(row: Any) -> dict[str, Any]:
     out = dict(row)
-    raw = out.get("findings")
-    try:
-        out["findings"] = json.loads(raw) if raw else []
-    except ValueError:
-        out["findings"] = []
+    for key in ("findings", "topics"):
+        raw = out.get(key)
+        try:
+            out[key] = json.loads(raw) if raw else []
+        except ValueError:
+            out[key] = []
     started, finished = out.get("started"), out.get("finished")
     out["duration_s"] = round(finished - started, 1) if finished and started else None
     return out
@@ -178,8 +179,9 @@ class JobStore:
             return int(cur.lastrowid or 0)
 
     async def finish_run(self, run_id: int, **fields: Any) -> None:
-        if "findings" in fields:
-            fields["findings"] = json.dumps(fields["findings"], ensure_ascii=False)
+        for key in ("findings", "topics"):
+            if key in fields:
+                fields[key] = json.dumps(fields[key], ensure_ascii=False)
         fields["finished"] = time.time()
         sets = ", ".join(f"{k} = ?" for k in fields)
         await self.db.execute(

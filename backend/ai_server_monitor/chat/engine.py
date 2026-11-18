@@ -15,11 +15,12 @@ import re
 import time
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import httpx
 from openai import APIError
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.exceptions import AgentRunError, UnexpectedModelBehavior
 from pydantic_ai.messages import TextPart
 from pydantic_ai.models.openai import OpenAIChatModelSettings
@@ -28,6 +29,7 @@ from ..agent.models import ModelHub
 from ..agent.prompts import chat_prompt, host_line
 from ..agent.runtime import (
     AgentConfig,
+    AgentTool,
     Suspended,
     history_messages,
     resume_results,
@@ -88,13 +90,15 @@ class ChatEngine:
         title: str | None = None,
         user_meta: dict[str, Any] | None = None,
         limit: int | None = MAX_MESSAGE,
+        require_look: bool = False,
     ) -> AsyncIterator[Event]:
         """Answer `message` in a new or existing session. Yields events until `done`/`error`.
 
         `source` names who asks in the audit log of write actions (default `chat:<session>`);
         `channel` is stored with a new session (web | telegram). A new session given a `title`
         keeps it (no LLM title). `user_meta` is stored with the question; `limit` cuts it
-        (None: a message the app composed, e.g. an explain request, is kept whole)."""
+        (None: a message the app composed, e.g. an explain request, is kept whole).
+        `require_look`: the answer must follow a look at the host (see `LookFirst`)."""
         message = message.strip()[:limit] if limit else message.strip()
         is_new = session_id is None and title is None
         if session_id is None:
@@ -107,7 +111,9 @@ class ChatEngine:
         title_task: asyncio.Task[str | None] | None = None
         async with lock:
             try:
-                async for event in self._answer(session_id, message, source, user_meta):
+                async for event in self._answer(
+                    session_id, message, source, user_meta, require_look
+                ):
                     if event["type"] == "done" and is_new:
                         # Started before `done` goes out, so the model works while the client
                         # reads the answer; nothing below waits for it.
@@ -142,6 +148,7 @@ class ChatEngine:
             title=request.label,
             user_meta={"explain": request.meta},
             limit=None,
+            require_look=True,
         ):
             yield event
 
@@ -195,6 +202,7 @@ class ChatEngine:
         message: str,
         source: str | None,
         user_meta: dict[str, Any] | None = None,
+        require_look: bool = False,
     ) -> AsyncIterator[Event]:
         app = self.app
         settings = app.settings
@@ -204,16 +212,18 @@ class ChatEngine:
             yield {"type": "error", "message": "The LLM is not configured (Settings → Main model)."}
             return
         trace_turn = uuid.uuid4().hex[:12]
-        cfg, kinds = await self._config(session_id, source, trace_turn)
+        cfg, kinds = await self._config(session_id, source, trace_turn, require_look)
         async for event in self._drive(
             session_id, source, cfg, kinds, trace_turn, message, history_messages(history)
         ):
             yield event
 
     async def _config(
-        self, session_id: str, source: str | None, trace_turn: str
+        self, session_id: str, source: str | None, trace_turn: str, require_look: bool = False
     ) -> tuple[AgentConfig, dict[str, str]]:
-        """The main agent of this conversation: tools, instructions, limits, tracing."""
+        """The main agent of this conversation: tools, instructions, limits, tracing.
+        `require_look`: the answer is accepted only after a `bash` or `delegate` call (an
+        explain turn must look at the current state, not only read the data it was given)."""
         app = self.app
         settings = app.settings
         host = host_line(app.host_env.root)
@@ -262,6 +272,10 @@ class ChatEngine:
             },
             on_approval=file_for_approval,
         )
+        if require_look:
+            look = LookFirst()
+            cfg.tools = [look.watch(t) if t.name in LOOKS else t for t in tools]
+            cfg.output_validator = look
         return cfg, kinds
 
     async def _drive(
@@ -473,6 +487,39 @@ class ChatEngine:
                 "text": failed or final,
             },
         )
+
+
+LOOKS = ("bash", "delegate")
+"""The tools that look at the host's current state."""
+LOOK_FIRST = (
+    "Before you answer, run at least one read-only command with `bash` that shows the current "
+    "state of the subject, and say whether it changed since the run. Then answer."
+)
+
+
+class LookFirst:
+    """Output validator of an explain turn: an answer given before any `bash` or `delegate`
+    call goes back to the model once with `LOOK_FIRST` (endpoints such as Ollama ignore a
+    forced `tool_choice`, so this is checked here). A second answer without a look is kept."""
+
+    def __init__(self) -> None:
+        self.looked = False
+        self.retried = False
+
+    def watch(self, tool: AgentTool) -> AgentTool:
+        inner = tool.handler
+
+        async def handler(args: dict[str, Any]) -> Any:
+            self.looked = True
+            return await inner(args)
+
+        return replace(tool, handler=handler)
+
+    def __call__(self, output: Any) -> Any:
+        if self.looked or self.retried or not isinstance(output, str):
+            return output
+        self.retried = True
+        raise ModelRetry(LOOK_FIRST)
 
 
 _DECIDED = {

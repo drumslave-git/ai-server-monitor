@@ -120,6 +120,8 @@ Commands (one call each; do not inspect containers one by one):
   (Status shows "Up", "Restarting", "(unhealthy)", "Exited (code)" and "Created")
 - `{DOCKER_STATS}`
 - only for a container with a problem, at most two: `docker logs --tail 30 NAME 2>&1`
+No per-container `docker inspect` unless a container is unhealthy or restarting: the two
+listings above already show status and health.
 ok: the running containers are up, and healthy where they have a healthcheck.
 warn: a container that restarts again and again, is unhealthy, or exited with a non-zero
 code recently; a container above 90 % of its memory limit.
@@ -191,9 +193,11 @@ Write the overall picture of the server from the latest results of the topic che
 - Only facts from the topic results or your commands: no words they do not contain (no
   "unchanged" unless you compared with the previous summary, no thresholds they do not state).
   Call a thing by the word its topic used: failed units are "failed".
-- summary: one headline sentence of facts from the topics, then one short clause per enabled
-  topic, the fine ones too, each with its key number (e.g. "updates: 12 pending, 3 security",
-  "journal: no errors, kernel audit messages rate-limited 238 times").
+- summary: one headline sentence of facts from the topics, then at most 4 short lines on what
+  needs attention.
+- topics: one entry per topic, the fine ones too: its slug, its status copied, and one clause
+  with its key number (e.g. "38 updates pending, 3 security", "no errors; kernel audit
+  messages rate-limited 238 times").
 - findings: only what needs the owner's attention, merged across topics, most severe first,
   each with the evidence line copied from the topic result or your command.""",
     ),

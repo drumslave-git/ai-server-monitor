@@ -16,7 +16,8 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic_ai import ModelRetry
 
 from ..agent.prompts import host_line
 from ..agent.runtime import NOT_FINISHED, AgentConfig, AgentTool, run_agent
@@ -51,21 +52,41 @@ class Finding(BaseModel):
     @field_validator("evidence", mode="before")
     @classmethod
     def _evidence_list(cls, value: Any) -> Any:
-        value = json_list(value)
-        return [value] if isinstance(value, str) and value.strip() else value
+        if isinstance(value, str) and not value.lstrip().startswith("["):
+            return [value] if value.strip() else []
+        return json_list(value, "evidence", '["/dev/sda1  100G  91G  9G  91% /"]')
 
 
-def json_list(value: Any) -> Any:
-    """A list a model sent as a JSON string ("[{...}]") is taken as that list; small models
-    do this. Anything else is left for the normal validation (and its error message)."""
-    if isinstance(value, str) and value.strip().startswith("["):
+FINDINGS_EXAMPLE = (
+    '[{"severity": "warn", "title": "/ is 91% full", "detail": "9G free", '
+    '"evidence": ["/dev/sda1  100G  91G  9G  91% /"]}]'
+)
+TOPICS_EXAMPLE = (
+    '[{"slug": "storage", "status": "warn", "clause": "/ is 91% full"}, '
+    '{"slug": "updates", "status": "ok", "clause": "12 updates pending"}]'
+)
+
+
+def json_list(value: Any, name: str, example: str) -> Any:
+    """A list a model sent as a JSON string is taken as that list: the first JSON array in the
+    string, whatever follows it (small models add a stray `}` or a remark). A string without a
+    readable array is refused with a message a small model can act on."""
+    if not isinstance(value, str):
+        return value
+    start = value.find("[")
+    if start >= 0:
         try:
-            parsed = json.loads(value)
+            parsed, _ = json.JSONDecoder().raw_decode(value, start)
         except ValueError:
-            return value
+            parsed = None
         if isinstance(parsed, list):
             return parsed
-    return value
+    shown = value.strip()[:80]
+    raise ValueError(
+        f"`{name}` must be a JSON array (a list), not a string. You sent the string "
+        f"{shown!r}, which is not a readable array. Send the array itself, for example:\n"
+        f"{name}: {example}\n(an empty list [] when there is nothing to list)"
+    )
 
 
 class JobResult(BaseModel):
@@ -78,7 +99,93 @@ class JobResult(BaseModel):
     @field_validator("findings", mode="before")
     @classmethod
     def _findings_list(cls, value: Any) -> Any:
-        return json_list(value)
+        return json_list(value, "findings", FINDINGS_EXAMPLE)
+
+
+def _require(schema: dict[str, Any], name: str) -> None:
+    required = schema.setdefault("required", [])
+    if name not in required:
+        required.append(name)
+
+
+TopicStatus = Literal["ok", "warn", "crit", "error", "none"]
+
+
+class TopicLine(BaseModel):
+    slug: str = Field(description="The topic job's slug, as in the results.")
+    status: TopicStatus = Field(
+        description="Its last run's status copied from the results (none: no run yet)."
+    )
+    clause: str = Field(description="One short clause with its key number.")
+
+
+class SummaryResult(JobResult):
+    """The result of the summary."""
+
+    # Required in the schema the model sees; a result without it is not refused by validation
+    # (that would cost the whole run, as in live run 26) but sent back once by `TopicCheck`.
+    model_config = ConfigDict(json_schema_extra=lambda schema: _require(schema, "topics"))
+
+    topics: list[TopicLine] = Field(
+        default_factory=list,
+        description="One entry per topic in the results, the fine ones too, in their order.",
+    )
+
+    @field_validator("topics", mode="before")
+    @classmethod
+    def _topics_list(cls, value: Any) -> Any:
+        return json_list(value, "topics", TOPICS_EXAMPLE)
+
+
+class TopicCheck:
+    """Output validator of the summary: every enabled topic job is listed with the status its
+    latest run really had. One retry names what is wrong; after that the real statuses are
+    stored and missing topics are added as not mentioned."""
+
+    def __init__(self, expected: dict[str, str]):
+        self.expected = expected
+        """slug -> status of its latest run (`none`: no run yet), in the order given."""
+        self.retried = False
+
+    def problems(self, topics: list[Any]) -> list[str]:
+        given = {t.slug: t.status for t in topics}
+        out = [f"{slug} is missing" for slug in self.expected if slug not in given]
+        out += [
+            f"{slug} has status {given[slug]}, but its result says {status}"
+            for slug, status in self.expected.items()
+            if slug in given and given[slug] != status
+        ]
+        out += [f"{s} is not a topic in the results" for s in given if s not in self.expected]
+        return out
+
+    def __call__(self, output: Any) -> Any:
+        topics = getattr(output, "topics", None)
+        if topics is None or self.retried:
+            return output
+        problems = self.problems(topics)
+        if problems:
+            self.retried = True
+            raise ModelRetry(
+                "Topic list check failed: "
+                + "; ".join(problems[:10])
+                + ". `topics` needs one entry for every topic in the results ("
+                + ", ".join(f"{s}: {st}" for s, st in self.expected.items())
+                + "), each with the status copied from its result and one clause with its key "
+                "number. Call final_result again with the complete list."
+            )
+        return output
+
+    def final(self, topics: list[TopicLine]) -> list[dict[str, Any]]:
+        """What is stored: the expected topics in order, with their real status."""
+        given = {t.slug: t for t in topics}
+        return [
+            {
+                "slug": slug,
+                "status": status,
+                "clause": given[slug].clause if slug in given else "(not in the summary)",
+            }
+            for slug, status in self.expected.items()
+        ]
 
 
 class JobRunner:
@@ -214,15 +321,22 @@ class JobRunner:
         shell = RecordingShell(app_shell(app), sources)
         # Not in the chat audit trail: every command is in this run's trace (turn below).
         tools: list[AgentTool] = [app_bash(app, None, shell)]  # type: ignore[arg-type]
+        topic_check: TopicCheck | None = None
         if job["kind"] == "summary":
             tools.append(app_delegate(app, None, scrub, host, shell))  # type: ignore[arg-type]
             instructions = summary_instructions(host, language, job["prompt"])
-            prompt = await self._summary_input(slug)
+            prompt, expected = await self._summary_input(slug)
+            topic_check = TopicCheck(expected)
         else:
             instructions = topic_instructions(host, language, job["prompt"])
             prompt = "Run the check now, then call final_result."
         sources.append(prompt)  # the summary may quote the topic results it was given
         evidence = EvidenceCheck(sources)
+
+        def check(output: Any) -> Any:
+            output = evidence(output)
+            return topic_check(output) if topic_check is not None else output
+
         cfg = AgentConfig(
             model=app.models.model(job["model"]),
             instructions=instructions,
@@ -233,8 +347,8 @@ class JobRunner:
             scrub=scrub,
             tracing=app.tracing,
             trace={"purpose": "job", "link_kind": "job", "link_id": slug, "turn": turn},
-            output_type=JobResult,
-            output_validator=evidence,
+            output_type=SummaryResult if topic_check is not None else JobResult,
+            output_validator=check,
         )
         end: dict[str, Any] = {}
         async for event in run_agent(cfg, prompt):
@@ -249,8 +363,9 @@ class JobRunner:
         output = end.get("output")
         if not isinstance(output, JobResult):
             if end.get("stopped") == "step_limit":
-                steps = cfg.max_steps
-                return {**fields, "status": "error", "error": NOT_FINISHED.format(steps=steps)}
+                steps = end.get("steps") or cfg.max_steps
+                error = NOT_FINISHED.format(steps=steps, limit=cfg.max_steps)
+                return {**fields, "status": "error", "error": error}
             text = strip_reasoning(str(output or ""))[:500]
             return {**fields, "status": "error", "error": f"no result: {text or 'empty answer'}"}
         return {
@@ -258,10 +373,20 @@ class JobRunner:
             "status": output.status,
             "summary": output.summary,
             "findings": evidence.mark([f.model_dump() for f in output.findings]),
+            **(
+                {"topics": topic_check.final(output.topics)}
+                if topic_check is not None and isinstance(output, SummaryResult)
+                else {}
+            ),
         }
 
-    async def _summary_input(self, slug: str) -> str:
+    async def _summary_input(self, slug: str) -> tuple[str, dict[str, str]]:
+        """The summary's input, and the status of every enabled topic it must list."""
         jobs = await self.store.list()
         topics = [j for j in jobs if j["kind"] == "topic" and j["enabled"]]
         latest = await self.store.latest_runs()
-        return summary_input(topics, latest, latest.get(slug))
+        expected = {
+            j["slug"]: str(latest[j["slug"]]["status"]) if j["slug"] in latest else "none"
+            for j in topics
+        }
+        return summary_input(topics, latest, latest.get(slug)), expected

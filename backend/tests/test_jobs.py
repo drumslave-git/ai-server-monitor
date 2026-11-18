@@ -15,7 +15,7 @@ from ai_server_monitor.jobs.builtins import BUILTINS, BY_SLUG
 from ai_server_monitor.main import create_app
 
 from .conftest import LLM_URL
-from .jobfakes import ScriptedModels, finish, tool
+from .jobfakes import ScriptedModels, finish, tool, topics_of
 
 FINDING = {
     "severity": "warn",
@@ -325,7 +325,9 @@ def test_a_model_out_of_steps_never_crashes_the_run(
         models.script = [tool("bash", command="systemctl --failed")] * 12
         stuck = run(client, "systemd")
         assert stuck["status"] == "error"
-        assert stuck["error"] == "The model did not finish within 2 steps."
+        steps = stuck["steps"]
+        assert stuck["error"] == f"The model did not finish within {steps} steps (the limit is 2)."
+        assert stuck["steps"] > 2 and stuck["prompt_tokens"] and stuck["completion_tokens"]
         assert stuck["trace_turn"] and stuck["steps"]
         past = [r for r in models.requests if r["tools"] == []]
         assert past and "out of steps" in past[0]["instructions"]
@@ -398,3 +400,85 @@ def test_lists_sent_as_json_strings_are_accepted(
     assert result["steps"] == 2  # accepted on the first try: no validation retry
     assert [f["evidence"] for f in result["findings"]] == [FINDING["evidence"]] * 2
     assert all(f["verified"] for f in result["findings"])
+
+
+def test_a_list_with_trailing_garbage_is_read_and_an_unreadable_one_is_explained(
+    bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
+) -> None:
+    """Live run 26: `findings` as a JSON string with one stray `}` at the end was refused four
+    times with "Input should be a valid array"."""
+    models.script = [
+        tool("bash", command="df -h /"),
+        tool("final_result", status="warn", summary="Root.", findings=json.dumps([FINDING]) + "}"),
+    ]
+    with TestClient(make_app(bootstrap)) as client:
+        result = run(client, "storage")
+        assert result["status"] == "warn" and result["steps"] == 2
+        assert [f["title"] for f in result["findings"]] == [FINDING["title"]]
+        # Not readable at all: the model is told what it sent, what is expected, an example.
+        models.script = [
+            tool("bash", command="df -h /"),
+            tool("final_result", status="warn", summary="Root.", findings="see above"),
+            finish("warn", "Root.", [FINDING]),
+        ]
+        result = run(client, "storage")
+        assert result["status"] == "warn" and result["findings"][0]["verified"]
+        told = models.requests[-1]["text"]
+        assert "`findings` must be a JSON array (a list), not a string" in told
+        assert "'see above'" in told and '"severity": "warn"' in told
+
+
+def summary_without(slug: str) -> Any:
+    """A summary result whose topic list leaves `slug` out."""
+
+    def step(messages: Any, info: Any) -> tuple[str, dict[str, Any]]:
+        topics = [t for t in topics_of(messages) if t["slug"] != slug]
+        return ("final_result", {"status": "warn", "summary": "Disk.", "topics": topics})
+
+    return step
+
+
+def test_the_summary_lists_every_topic_with_its_real_status(
+    bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
+) -> None:
+    """Live: the summary left out updates (38 pending) and resources. Its result has one entry
+    per enabled topic job; a missing one is sent back once, then stored with the real status."""
+    models.script = [
+        tool("bash", command="df -h /"),
+        finish("warn", "Root is 40% full.", [FINDING]),
+        summary_without("storage"),  # sent back once, naming it
+        finish("warn", "Disk."),
+    ]
+    with TestClient(make_app(bootstrap)) as client:
+        run(client, "storage")
+        result = run(client, "summary")
+        assert result["status"] == "warn"
+        topics = {t["slug"]: t for t in result["topics"]}
+        assert list(topics) == ["docker", "journal", "resources", "storage", "systemd", "updates"]
+        assert topics["storage"]["status"] == "warn" and topics["docker"]["status"] == "none"
+        assert "storage is missing" in models.requests[-1]["text"]
+        stored = client.get(f"/api/jobs/runs/{result['id']}").json()
+        assert stored["topics"] == result["topics"]
+        # Left out again after the retry: stored all the same, with the real status.
+        models.script = [summary_without("storage"), summary_without("storage")]
+        again = run(client, "summary")
+        storage = next(t for t in again["topics"] if t["slug"] == "storage")
+        assert again["status"] == "warn"
+        assert storage == {"slug": "storage", "status": "warn", "clause": "(not in the summary)"}
+
+
+def test_the_telegram_summary_shows_one_line_per_topic() -> None:
+    from ai_server_monitor.outputs.telegram import summary_message
+
+    text = summary_message(
+        {
+            "status": "warn",
+            "summary": "Root disk at 91%",
+            "findings": [],
+            "topics": [
+                {"slug": "storage", "status": "warn", "clause": "/ at 91%"},
+                {"slug": "updates", "status": "ok", "clause": "38 pending"},
+            ],
+        }
+    )
+    assert text.splitlines()[1:] == ["⚠️ storage: / at 91%", "✅ updates: 38 pending"]

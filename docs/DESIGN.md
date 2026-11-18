@@ -58,7 +58,10 @@ main model's context (Ollama's `/api/show` context length, else 32k tokens): the
 whole, outputs are cut in the middle to a fair share, then the oldest outputs the findings do not
 quote are left out, each with a note. Outputs are wrapped as untrusted data. The chat engine runs
 it as an ordinary turn; the stored question carries `meta.explain.label`, which is the session
-title and what the UI shows (the source folded under it). Telegram's summary message has an
+title and what the UI shows (the source folded under it). The turn must look before it answers:
+`LookFirst` (an output validator) sends an answer given before any `bash`/`delegate` call back
+once; a forced `tool_choice` is not used because Ollama ignores it and some endpoints reject
+`required`. Run times in the data are in the host's time zone. Telegram's summary message has an
 Explain button (signed callback `x:<run>:<sig>`) that runs the same turn in that chat.
 
 ## Jobs and scheduling
@@ -69,7 +72,12 @@ later releases, edited ones keep the owner's version until *Reset*); `job_runs` 
 under a per-job lock and a global semaphore (`jobs.max_concurrent_runs`) with a time limit.
 Every failure is stored as `error` with the reason; the overall headline turns it into plain
 words (`jobs/status.py`). The summary's input is the latest result of every enabled topic job
-and the previous summary.
+and the previous summary. Its result (`SummaryResult`) also has `topics`: one entry per enabled
+topic job (slug, status, one clause). `TopicCheck` sends a list with a missing topic or a status
+other than that topic's latest run back once; what is stored has every topic with its real
+status (`job_runs.topics`), shown under the headline on the Dashboard and in Telegram. List
+fields sent as a JSON string are read from their first JSON array (trailing characters ignored);
+an unreadable one is answered with what was sent, what is expected and an example.
 
 `schedule.py` is APScheduler's `AsyncIOScheduler` in memory, rebuilt from the `jobs` table after
 every change (`sync_jobs`): interval or cron triggers in the host's time zone, `coalesce`,

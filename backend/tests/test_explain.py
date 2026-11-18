@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
-from ai_server_monitor.chat.explain import Command, compose
+from ai_server_monitor.chat.explain import Command, compose, host_zone, zone_name
 from ai_server_monitor.config import Bootstrap
 from ai_server_monitor.tracing import codec
 
@@ -46,7 +47,9 @@ def test_explain_a_finding_and_a_run_starts_a_chat_with_the_source_data(
     models.script = [
         tool("bash", command="df -h /"),
         finish("warn", "Root is 40% full.", [FINDING]),
+        tool("bash", command="df -h /"),  # an explain turn looks at the current state first
         "It is the root disk; 60G are free.",
+        tool("bash", command="df -h /"),
         "The storage check looked at one disk.",
     ]
     with TestClient(make_app(bootstrap)) as client:
@@ -74,6 +77,7 @@ def test_explain_a_finding_and_a_run_starts_a_chat_with_the_source_data(
         assert "### 1. `df -h /`" in text and 'trust="untrusted"' in text
         assert "/dev/sda1  100G  40G  60G  40% /" in text.split("### 1.")[1]
         assert "Answer in English" in text and "bash_write" in text
+        assert "about 300 words" in text and '"Guess:"' in text
         # The model got exactly that message, with the chat's tools.
         request = models.requests[2]
         assert "bash" in request["tools"] and "delegate" in request["tools"]
@@ -82,11 +86,39 @@ def test_explain_a_finding_and_a_run_starts_a_chat_with_the_source_data(
         # The run as a whole: no subject, a label with the job and the time.
         events = explain(client, result["id"])
         session = session_of(client, events)
-        stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(result["started"]))
+        # times in the host's time zone, named
+        zone = host_zone(client.app.state.ctx)  # type: ignore[attr-defined]
+        stamp = datetime.fromtimestamp(result["started"], zone).strftime("%Y-%m-%d %H:%M")
         assert session["title"] == f"Explain: Storage run from {stamp}"
+        assert f"started {stamp}, finished " in session["messages"][0]["content"]
+        assert f"({zone_name(zone)})" in session["messages"][0]["content"]
+        assert "about 450 words" in session["messages"][0]["content"]
         assert "## Subject" not in session["messages"][0]["content"]
         assert session["messages"][0]["meta"]["explain"]["finding"] is None
         assert client.get("/api/chat/sessions").json()["total"] == 2
+
+
+def test_an_explain_answer_without_a_look_goes_back_once(
+    bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
+) -> None:
+    """Live: both explanations ran no command. An answer before any bash or delegate call is
+    sent back with the request to look first; the second answer is kept either way."""
+    models.script = [
+        "It is probably the Telegram downloads.",  # no look: sent back
+        tool("bash", command="df -h /"),
+        "Now: / is at 40%, unchanged since the run.",
+        "Without a look again.",  # a follow-up question in the same chat: no look required
+    ]
+    with TestClient(make_app(bootstrap)) as client:
+        run_id = seed_run(client, "storage", status="warn", findings=[FINDING])
+        events = explain(client, run_id, 0)
+        assert events[-1]["type"] == "done"
+        assert events[-1]["text"] == "Now: / is at 40%, unchanged since the run."
+        assert shell == ["df -h /"]
+        assert "run at least one read-only command" in models.requests[1]["text"]
+        session_id = events[0]["session_id"]
+        follow = client.post("/api/chat", json={"message": "and?", "session_id": session_id})
+        assert "Without a look again." in follow.text
 
 
 def seed_run(client: TestClient, slug: str, turn: str | None = None, **fields: Any) -> int:
@@ -198,10 +230,11 @@ def test_the_context_budget_keeps_the_subject_and_its_evidence_and_cuts_outputs(
 
 @pytest.mark.usefixtures("skip_evidence")
 def test_telegram_summary_has_an_explain_button_that_answers_in_the_chat(
-    bootstrap: Bootstrap, models: ScriptedModels
+    bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
 ) -> None:
     models.script = [
         finish("warn", "Disk is filling up.", [FINDING]),
+        tool("bash", command="df -h /"),
         "The disk explanation.",
     ]
     tg = FakeTelegram()

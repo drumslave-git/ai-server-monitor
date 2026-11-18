@@ -1129,6 +1129,11 @@ export interface components {
             steps?: number | null;
             /** Summary */
             summary?: string | null;
+            /**
+             * Topics
+             * @default []
+             */
+            topics: components["schemas"]["TopicLine"][];
             /** Trace Turn */
             trace_turn?: string | null;
             /**
@@ -2122,6 +2127,18 @@ export interface components {
             ts: number;
             /** Turn */
             turn?: string | null;
+        };
+        /** TopicLine */
+        TopicLine: {
+            /** Clause */
+            clause: string;
+            /** Slug */
+            slug: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "warn" | "crit" | "error" | "none";
         };
         /** TraceStats */
         TraceStats: {

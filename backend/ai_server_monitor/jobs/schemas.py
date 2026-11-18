@@ -83,6 +83,14 @@ class Finding(BaseModel):
     False: not confirmed by command output; None: a run from before evidence existed."""
 
 
+class TopicLine(BaseModel):
+    slug: str
+    status: Literal["ok", "warn", "crit", "error", "none"]
+    """The status of the topic's latest run when the summary ran (none: it had not run)."""
+    clause: str
+    """The summary's one clause about it, with its key number."""
+
+
 class JobRun(BaseModel):
     id: int
     job_slug: str
@@ -94,6 +102,8 @@ class JobRun(BaseModel):
     summary: str | None = None
     """Markdown."""
     findings: list[Finding] = []
+    topics: list[TopicLine] = []
+    """Summary runs: one entry per enabled topic job."""
     error: str | None = None
     model: str | None = None
     prompt_tokens: int | None = None

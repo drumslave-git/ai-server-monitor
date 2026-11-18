@@ -418,6 +418,10 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .findings li { padding: 8px 0; border-top: 1px solid var(--border); }
 .findings li .badge { font-size: 14px; align-items: baseline; }
 .findings strong { font-weight: 500; }
+.topic-lines { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: auto auto minmax(0, 1fr); column-gap: 8px; row-gap: 2px; align-items: baseline; font-size: 13px; max-width: 76ch; }
+.topic-lines li { display: contents; }
+.topic-lines .dot { align-self: center; }
+.topic-lines .muted { overflow-wrap: anywhere; }
 .finding-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .btn-explain { padding: 0 6px; font-size: 12px; line-height: 18px; gap: 4px; align-self: center; }
 .btn-explain svg { flex: none; }

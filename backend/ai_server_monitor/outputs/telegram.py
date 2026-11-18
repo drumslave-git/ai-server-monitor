@@ -266,6 +266,10 @@ def summary_message(run: dict[str, Any]) -> str:
         f"{ICONS.get(status, '❔')} <b>{WORDS.get(status, status)}</b>"
         + (f" — {first}" if first else "")
     ]
+    for topic in run.get("topics") or []:  # one line per topic job, the fine ones too
+        icon = ICONS.get(str(topic.get("status")), "▫️")
+        clause = html.escape(_one_line(str(topic.get("clause") or ""), 120))
+        lines.append(f"{icon} {html.escape(str(topic.get('slug') or ''))}: {clause}")
     attention = _attention(run)
     if attention:
         lines.append("")
