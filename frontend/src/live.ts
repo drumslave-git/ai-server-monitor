@@ -14,6 +14,8 @@ const EVENT_TYPES = [
   "approval.progress",
   "approval.decided",
   "approval.expired",
+  "job.started",
+  "job.finished",
 ];
 
 const listeners = new Set<Listener>();

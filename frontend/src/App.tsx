@@ -1,4 +1,4 @@
-import { Activity, MessageSquare, ScrollText, Settings, ShieldCheck, type LucideIcon } from "lucide-react";
+import { Activity, CalendarClock, MessageSquare, ScrollText, Settings, ShieldCheck, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, type StatusResponse } from "./api";
 import { AutomationBar, AutomationProvider } from "./automation";
@@ -6,11 +6,13 @@ import { useConnected, useStream } from "./live";
 import { ApprovalsPage } from "./pages/Approvals";
 import { ChatPage } from "./pages/Chat";
 import { DashboardPage } from "./pages/Dashboard";
+import { JobsPage } from "./pages/Jobs";
 import { LogsPage } from "./pages/Logs";
 import { SettingsPage } from "./pages/Settings";
 
 const PAGES: { key: string; title: string; icon: LucideIcon }[] = [
   { key: "dashboard", title: "Dashboard", icon: Activity },
+  { key: "jobs", title: "Jobs", icon: CalendarClock },
   { key: "approvals", title: "Approvals", icon: ShieldCheck },
   { key: "chat", title: "Chat", icon: MessageSquare },
   { key: "logs", title: "Logs", icon: ScrollText },
@@ -94,7 +96,9 @@ export function App() {
       </aside>
       <main className="content">
         <AutomationBar />
-        {page === "approvals" ? (
+        {page === "jobs" ? (
+          <JobsPage params={params} />
+        ) : page === "approvals" ? (
           <ApprovalsPage params={params} />
         ) : page === "chat" ? (
           <ChatPage />

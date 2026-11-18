@@ -57,6 +57,7 @@ export function linkLabel(call: Pick<LlmCallSummary, "link_kind" | "link_id" | "
 
 export function linkHref(call: Pick<LlmCallSummary, "link_kind" | "link_id">): string | null {
   if (call.link_kind === "chat") return "#/chat";
+  if (call.link_kind === "job" && call.link_id) return `#/jobs/${encodeURIComponent(call.link_id)}`;
   return null;
 }
 
@@ -64,9 +65,10 @@ export const PURPOSE_LABEL: Record<string, string> = {
   chat: "Chat",
   chat_title: "Chat title",
   subagent: "Worker sub-task",
-  probe: "Model probe",
+  job: "Job",
   test: "Connection test",
   other: "Other",
 };
 
-export const purposeLabel = (p: string) => PURPOSE_LABEL[p] ?? p.replace(/_/g, " ");
+/** Purposes of removed features (benchmarks, reports, ...) still sit in old rows: one neutral label. */
+export const purposeLabel = (p: string) => PURPOSE_LABEL[p] ?? "Earlier feature";
