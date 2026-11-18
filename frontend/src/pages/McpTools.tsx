@@ -147,7 +147,7 @@ export function McpToolsPage() {
               total={tools.filter((t) => t.domain_id == null)}
               open={!closed.has("unsorted")}
               onToggle={(o) => setClosed(toggle(closed, "unsorted", o))}
-              onSwitch={(on) => switchAll(tools.filter((t) => t.domain_id == null), on)}
+              onSwitch={(on) => switchAll(unsorted, on)}
               warn
             >
               {unsorted.map((t) => <Row key={t.name} tool={t} domains={page.domains} servers={servers} act={act} reason />)}
@@ -168,7 +168,7 @@ export function McpToolsPage() {
                 total={all}
                 open={filtering || !closed.has(d.name)}
                 onToggle={(o) => setClosed(toggle(closed, d.name, o))}
-                onSwitch={(on) => switchAll(all, on)}
+                onSwitch={(on) => switchAll(rows, on)}
                 domain={d}
                 act={act}
               >
@@ -218,10 +218,10 @@ function Section({
         <span className="mt-dmeta">
           {count.length !== total.length && <span>{count.length} shown · </span>}
           {on} of {total.length} on
-          <button type="button" className="link-btn mt-dswitch" disabled={on === total.length} onClick={(e) => { e.preventDefault(); onSwitch(true); }}>
+          <button type="button" className="link-btn mt-dswitch" disabled={count.every((t) => t.enabled)} onClick={(e) => { e.preventDefault(); onSwitch(true); }}>
             Select all
           </button>
-          <button type="button" className="link-btn mt-dswitch" disabled={on === 0} onClick={(e) => { e.preventDefault(); onSwitch(false); }}>
+          <button type="button" className="link-btn mt-dswitch" disabled={!count.some((t) => t.enabled)} onClick={(e) => { e.preventDefault(); onSwitch(false); }}>
             Deselect all
           </button>
           {domain && domain.used_by.length > 0 && <span title={domain.used_by.join(", ")}> · {domain.used_by.length} job{domain.used_by.length === 1 ? "" : "s"}</span>}
