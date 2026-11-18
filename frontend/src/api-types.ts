@@ -1663,8 +1663,7 @@ export interface components {
             token: string;
             /**
              * Tool Filter
-             * @description The tools the chat may use. Empty = none: pick them after pressing Test (small models
-             *     cope badly with dozens of tools, so choose only what you need).
+             * @description The tools the agents may use. Empty = none: pick them after pressing Test.
              */
             tool_filter?: string[];
             /**

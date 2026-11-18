@@ -395,8 +395,7 @@ class McpServerSettings(_Model):
     timeout: Duration = timedelta(seconds=30)
     """Connect timeout and per-call timeout."""
     tool_filter: list[str] = Field(default_factory=list)
-    """The tools the chat may use. Empty = none: pick them after pressing Test (small models
-    cope badly with dozens of tools, so choose only what you need)."""
+    """The tools the agents may use. Empty = none: pick them after pressing Test."""
     default_policy: Policy = "approve"
     """For tools that change things: suggest = only record the request; approve = ask you
     first (UI / Telegram); auto = just do it. Read-only tools always run."""
