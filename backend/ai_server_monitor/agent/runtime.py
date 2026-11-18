@@ -36,6 +36,7 @@ from pydantic_ai import (
     ToolDenied,
     UsageLimits,
 )
+from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai.capabilities import AbstractCapability, PrepareTools
 from pydantic_ai.exceptions import (
     ModelRetry,
@@ -128,6 +129,8 @@ class Suspended:
     pending: dict[str, PendingApproval]
     names: dict[str, str]
     """Call id -> tool name of every deferred call."""
+    domains: list[str] = field(default_factory=list)
+    """The MCP domains the run was offered (the chat sets it): the resumed run gets them."""
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -138,6 +141,7 @@ class Suspended:
                 for cid, p in self.pending.items()
             },
             "names": self.names,
+            "domains": self.domains,
         }
 
     @classmethod
@@ -147,6 +151,7 @@ class Suspended:
             resolved=dict(data["resolved"]),
             pending={cid: PendingApproval(**p) for cid, p in data["pending"].items()},
             names=dict(data["names"]),
+            domains=list(data.get("domains", [])),
         )
 
 
@@ -206,6 +211,9 @@ class AgentConfig:
     notes: Callable[[], str] | None = None
     """Extra instructions decided when the run is under way (e.g. MCP servers that could not
     be reached)."""
+    capabilities: Sequence[AbstractCapability[Any]] = ()
+    """More Pydantic AI capabilities (the chat's MCP domains, some deferred: then the library
+    adds `load_capability` and the catalog). Which ones the run loaded: `end` event `loaded`."""
 
 
 @dataclass
@@ -217,8 +225,8 @@ class _ToolCalls(AbstractCapability[Any]):
     async def wrap_tool_execute(
         self, ctx: RunContext[Any], *, call: Any, tool_def: ToolDefinition, args: Any, handler: Any
     ) -> Any:
-        if tool_def.name in self.run.by_name:
-            return await handler(args)
+        if tool_def.name in self.run.by_name or tool_def.name == "load_capability":
+            return await handler(args)  # (the library's own tool: its typed return stays)
         return await self.run.execute(
             tool_def.name, call.tool_call_id or "", dict(args or {}), lambda: handler(args)
         )
@@ -257,6 +265,8 @@ class _Run:
         self.cfg = cfg
         self.steps = 0
         self.stopped: str | None = None
+        self.loaded: set[str] = set()
+        """Capability ids loaded with `load_capability` (in the history or this run)."""
         self.outcomes: dict[str, _ToolOutcome] = {}
         self.queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         self.by_name = {t.name: t for t in cfg.tools}
@@ -380,10 +390,10 @@ class _Run:
             toolsets=list(cfg.toolsets),
             output_type=[cfg.output_type, DeferredToolRequests]
             if any(t.requires_approval for t in cfg.tools)
-            or (cfg.toolsets and cfg.approval_tool is not None)
+            or ((cfg.toolsets or cfg.capabilities) and cfg.approval_tool is not None)
             else cfg.output_type,
             model_settings=cfg.model_settings,
-            capabilities=[PrepareTools(self.prepare), _ToolCalls(run=self)],
+            capabilities=[PrepareTools(self.prepare), _ToolCalls(run=self), *cfg.capabilities],
             # A small model at the step limit may still call a tool that is gone or give a
             # malformed result a few times before it answers: retry instead of crashing.
             retries={"tools": RETRIES, "output": RETRIES},
@@ -423,6 +433,7 @@ class _Run:
                                 await self.queue.put(("event", event))
                     assert result is not None
                     usage = result.usage
+                    self.loaded |= parse_loaded_capabilities(result.all_messages())
                     if not isinstance(result.output, DeferredToolRequests):
                         await self.queue.put(("end", (result.output, usage)))
                         return
@@ -555,6 +566,7 @@ async def run_agent(
                     "output": output,
                     "steps": run.steps,
                     "stopped": run.stopped,
+                    "loaded": sorted(run.loaded),
                     "usage": {
                         "prompt_tokens": getattr(usage, "input_tokens", 0) or 0,
                         "completion_tokens": getattr(usage, "output_tokens", 0) or 0,

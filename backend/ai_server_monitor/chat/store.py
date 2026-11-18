@@ -124,6 +124,17 @@ class ChatStore:
         )
         return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
+    async def loaded_domains(self, session_id: str) -> list[str]:
+        """The MCP domains the model loaded (`load_capability`) in earlier turns of this
+        conversation (turn log: assistant message meta `mcp_domains.loaded`)."""
+        rows = await self.db.fetchall(
+            "SELECT DISTINCT value AS name FROM chat_messages, "
+            "json_each(json_extract(meta, '$.mcp_domains.loaded')) "
+            "WHERE session_id = ? AND role = 'assistant' AND json_valid(meta)",
+            (session_id,),
+        )
+        return sorted(r["name"] for r in rows)
+
     async def used_tools(self, session_id: str, limit: int = 60) -> list[str]:
         """Names of the tools called in this conversation (newest results first, distinct)."""
         rows = await self.db.fetchall(

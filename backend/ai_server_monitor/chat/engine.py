@@ -9,6 +9,7 @@ error, title) and the title of a new conversation. The model must support native
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -49,6 +50,7 @@ from ..agent.tools import (
 )
 from ..jobs.tools import job_tools
 from ..llm.text import strip_reasoning
+from ..mcp_client import turn as mcp_turn
 from ..tracing import trace_scope
 from ..tracing.parse import empty_answer_message
 from .audit import record_call
@@ -368,16 +370,43 @@ class ChatEngine:
             yield {"type": "error", "message": "The LLM is not configured (Settings → Main model)."}
             return
         trace_turn = uuid.uuid4().hex[:12]
-        cfg, kinds = await self._config(session_id, source, trace_turn, require_look)
-        async for event in self._drive(
-            session_id, source, cfg, kinds, trace_turn, message, history_messages(history)
-        ):
-            yield event
+        async with contextlib.AsyncExitStack() as stack:  # the MCP servers of this turn
+            cfg, kinds, turn = await self._config(
+                session_id,
+                source,
+                trace_turn,
+                stack,
+                request=message,
+                keep=await self.store.loaded_domains(session_id),
+                require_look=require_look,
+            )
+            async for event in self._drive(
+                session_id,
+                source,
+                cfg,
+                kinds,
+                trace_turn,
+                message,
+                history_messages(history),
+                turn=turn,
+            ):
+                yield event
 
     async def _config(
-        self, session_id: str, source: str | None, trace_turn: str, require_look: bool = False
-    ) -> tuple[AgentConfig, Callable[[str], str]]:
+        self,
+        session_id: str,
+        source: str | None,
+        trace_turn: str,
+        stack: contextlib.AsyncExitStack,
+        *,
+        request: str | None,
+        keep: list[str],
+        require_look: bool = False,
+    ) -> tuple[AgentConfig, Callable[[str], str], mcp_turn.McpTurn]:
         """The main agent of this conversation: tools, instructions, limits, tracing.
+        MCP: the servers are connected (closed by `stack`), new tools sorted, `request`
+        classified (None: a resumed run) and the domains given as capabilities, `keep` ones
+        directly (see `mcp_client.turn`).
         `require_look`: the answer is accepted only after a `bash` or `delegate` call (an
         explain turn must look at the current state, not only read the data it was given)."""
         app = self.app
@@ -388,6 +417,16 @@ class ChatEngine:
         who = source or f"chat:{session_id}"
         shell = app_shell(app)
         mcp = app.mcp.run(who)
+        with trace_scope(link_kind="chat", link_id=session_id, turn=trace_turn):
+            turn = await mcp_turn.prepare(
+                mcp,
+                stack,
+                app.domains,
+                sort_model=app.sort_model(),
+                classify_model=app.models.model("worker"),
+                request=request,
+                keep=keep,
+            )
         fixed = {"job_save": "write", "job_delete": "write", "bash_write": "write"}
 
         def kinds(name: str) -> str:
@@ -403,6 +442,8 @@ class ChatEngine:
         instructions = chat_prompt(host, settings.general.language)
         if mcp.servers:
             instructions += "\n" + MCP_NOTE
+        if turn.deferred:
+            instructions += "\n" + mcp_turn.LOAD_NOTE
         cfg = AgentConfig(
             model=app.models.model("main"),
             instructions=instructions,
@@ -419,15 +460,15 @@ class ChatEngine:
                 "turn": trace_turn,
             },
             on_approval=file_for_approval,
-            toolsets=mcp.toolsets,
+            capabilities=turn.capabilities,
             approval_tool=mcp_approval_tool(app, who, f"turn:{ctx.turn}"),
-            notes=lambda: "\n".join(mcp.unavailable()),
+            notes=lambda: "\n".join([*mcp.unavailable(), *turn.notes()]),
         )
         if require_look:
             look = LookFirst()
             cfg.tools = [look.watch(t) if t.name in LOOKS else t for t in tools]
             cfg.output_validator = look
-        return cfg, kinds
+        return cfg, kinds, turn
 
     async def _drive(
         self,
@@ -440,6 +481,7 @@ class ChatEngine:
         history: list[Any],
         deferred: Any = None,
         meta_extra: dict[str, Any] | None = None,
+        turn: mcp_turn.McpTurn | None = None,
     ) -> AsyncIterator[Event]:
         """One agent run of the conversation: stores the tool traffic and the answer, yields
         the stream events and finally `done`. A run that stops at calls waiting for approval
@@ -495,7 +537,10 @@ class ChatEngine:
                 end = event
         output = end.get("output")
         waiting: list[int] = []
+        domains = turn.log(end.get("loaded", [])) if turn is not None and turn.used else None
         if isinstance(output, Suspended):
+            if domains is not None:  # the resumed run gets the same domains
+                output.domains = sorted({*domains["offered"], *domains["loaded"]})
             await self._suspend(session_id, source, output)
             waiting = [i for p in output.pending.values() for i in p.action_ids]
             final = "\n".join(p.message for p in output.pending.values())
@@ -517,6 +562,7 @@ class ChatEngine:
             "stopped": end.get("stopped"),
             "trace_turn": trace_turn,
             **({"waiting_for": waiting} if waiting else {}),
+            **({"mcp_domains": domains} if domains is not None else {}),
             **(meta_extra or {}),
         }
         message_id = await self.store.add_message(session_id, "assistant", final, meta=meta)
@@ -608,21 +654,31 @@ class ChatEngine:
         async with lock:
             try:
                 trace_turn = uuid.uuid4().hex[:12]
-                cfg, kinds = await self._config(session_id, source, trace_turn)
-                cfg.resolved = resolved
-                async for event in self._drive(
-                    session_id,
-                    source,
-                    cfg,
-                    kinds,
-                    trace_turn,
-                    None,
-                    suspended.messages,
-                    deferred=results,
-                    meta_extra={"continued": True},
-                ):
-                    if event["type"] == "done":
-                        final, message_id = event["text"], event["message_id"]
+                async with contextlib.AsyncExitStack() as stack:
+                    keep = await self.store.loaded_domains(session_id)
+                    cfg, kinds, turn = await self._config(
+                        session_id,
+                        source,
+                        trace_turn,
+                        stack,
+                        request=None,
+                        keep=sorted({*keep, *suspended.domains}),
+                    )
+                    cfg.resolved = resolved
+                    async for event in self._drive(
+                        session_id,
+                        source,
+                        cfg,
+                        kinds,
+                        trace_turn,
+                        None,
+                        suspended.messages,
+                        deferred=results,
+                        meta_extra={"continued": True},
+                        turn=turn,
+                    ):
+                        if event["type"] == "done":
+                            final, message_id = event["text"], event["message_id"]
             except Exception as exc:
                 log.warning("chat: could not continue after the approval: %s", exc)
                 failed = f"Could not continue after the approval: {exc}"

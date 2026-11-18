@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,52 @@ from ai_server_monitor.context import AppContext
 
 from .conftest import LLM_URL
 from .mcp_fake import FakeMcp
-from .test_chat import FakeLLM, call, say
+from .test_chat import FakeLLM, call, completion, say, sse_body
+
+
+class McpLLM(FakeLLM):
+    """FakeLLM that answers the MCP side calls itself, outside the script: the sorting of
+    tools into domains (`sort_into(tool)` names the domain; default: all into 'home') and the
+    classification of a request (`picks`; None = every domain offered)."""
+
+    def __init__(self, *script: Any):
+        super().__init__(*script)
+        self.sort_into = lambda tool: "home"
+        self.picks: list[str] | None = None
+        self.sort_requests: list[dict[str, Any]] = []
+        self.classify_requests: list[dict[str, Any]] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            body = json.loads(request.content)
+            system = str(body["messages"][0]["content"])
+            if system.startswith("You sort the tools"):
+                self.sort_requests.append(body)
+                return self._answer(body, self._sorting(body))
+            if system.startswith("Pick the domains"):
+                self.classify_requests.append(body)
+                text = body["messages"][-1]["content"]
+                offered = re.findall(r"^- ([a-z0-9-]+):", text.split("Request:")[0], re.M)
+                picks = offered if self.picks is None else self.picks
+                return self._answer(body, call("final_result", {"response": picks}))
+        return super().handler(request)
+
+    def _sorting(self, body: dict[str, Any]) -> dict[str, Any]:
+        text = body["messages"][-1]["content"]
+        names = re.findall(r"^- (\S+?):", text.split("Tools to sort:")[1], re.M)
+        groups: dict[str, list[str]] = {}
+        for name in names:
+            groups.setdefault(self.sort_into(name.partition("_")[2]), []).append(name)
+        out = [{"name": d, "description": f"All about {d}", "tools": t} for d, t in groups.items()]
+        return call("final_result", {"response": out})
+
+    @staticmethod
+    def _answer(body: dict[str, Any], message: dict[str, Any]) -> httpx.Response:
+        if body.get("stream"):
+            return httpx.Response(
+                200, content=sse_body(message), headers={"content-type": "text/event-stream"}
+            )
+        return completion(message)
 
 
 def settings_for(url: str | None, **mcp: Any) -> Settings:
@@ -68,7 +114,7 @@ def used_tools(events: list[dict[str, Any]]) -> list[str]:
 
 
 async def test_read_tool_is_answered_directly_and_audited(tmp_path: Path, fake: FakeMcp) -> None:
-    llm = FakeLLM(call("home_get_temperature", {"room": "kitchen"}), say("It is 21.5 C."))
+    llm = McpLLM(call("home_get_temperature", {"room": "kitchen"}), say("It is 21.5 C."))
     async for app in start_app(tmp_path, llm, settings_for(fake.url)):
         events = await ask(app, "how warm is the kitchen?")
         assert used_tools(events) == ["home_get_temperature"]
@@ -92,7 +138,7 @@ async def test_read_tool_is_answered_directly_and_audited(tmp_path: Path, fake: 
 async def test_write_tool_becomes_a_pending_approval_then_runs_on_approve(
     tmp_path: Path, fake: FakeMcp
 ) -> None:
-    llm = FakeLLM(
+    llm = McpLLM(
         call("home_set_heating", {"room": "bedroom", "on": False}),
         say("I asked for approval."),
     )
@@ -127,7 +173,7 @@ async def test_write_tool_becomes_a_pending_approval_then_runs_on_approve(
 
 
 async def test_mcp_dry_run_is_its_own_switch(tmp_path: Path, fake: FakeMcp) -> None:
-    llm = FakeLLM()
+    llm = McpLLM()
     settings = settings_for(fake.url, dry_run=True)
     settings.mcp.servers[0].default_policy = "auto"
     async for app in start_app(tmp_path, llm, settings):
@@ -140,7 +186,7 @@ async def test_mcp_dry_run_is_its_own_switch(tmp_path: Path, fake: FakeMcp) -> N
 
 
 async def test_policies_and_checks_of_the_mcp_action(tmp_path: Path, fake: FakeMcp) -> None:
-    llm = FakeLLM()
+    llm = McpLLM()
     settings = settings_for(fake.url)
     raw = settings.model_dump(mode="json", context={"reveal_secrets": True})
     raw["mcp"]["servers"][0]["tool_overrides"] = [{"name": "set_heating", "policy": "suggest"}]
@@ -160,7 +206,7 @@ async def test_policies_and_checks_of_the_mcp_action(tmp_path: Path, fake: FakeM
 
 
 async def test_dead_server_does_not_break_the_chat(tmp_path: Path) -> None:
-    llm = FakeLLM(say("Nothing wrong with the server."))
+    llm = McpLLM(say("Nothing wrong with the server."))
     async for app in start_app(tmp_path, llm, settings_for(None)):
         events = await ask(app, "hello")
         assert events[-1]["type"] == "done"
@@ -170,7 +216,7 @@ async def test_dead_server_does_not_break_the_chat(tmp_path: Path) -> None:
 
 
 async def test_settings_change_rebuilds_the_manager(tmp_path: Path, fake: FakeMcp) -> None:
-    llm = FakeLLM()
+    llm = McpLLM()
     async for app in start_app(tmp_path, llm, settings_for(fake.url)):
         old = app.mcp
         assert await app.actions.mcp.call("home", "get_temperature", {"room": "a"}, "t") == (
