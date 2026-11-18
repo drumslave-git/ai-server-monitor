@@ -169,3 +169,26 @@ async def test_a_dead_server_is_named_in_the_turn_log(tmp_path: Path) -> None:
         meta = await turn_meta(app, events[-1]["session_id"])
         assert "home" in meta["mcp_domains"]["unreachable"]
         assert "unavailable this run" in json.dumps(llm.requests[0]["messages"])
+
+
+async def test_a_failed_classification_leaves_every_domain_loadable(
+    tmp_path: Path, fake46: FakeMcp, caplog: pytest.LogCaptureFixture
+) -> None:
+    llm = mcp_llm(
+        call("load_capability", {"id": "domain-climate"}),
+        call("home_get_temperature", {"room": "kitchen"}, "c2"),
+        say("21.5 C."),
+        picks=["no-such-domain"],  # not one of the offered names: unusable after the retry
+    )
+    async for app in start_app(tmp_path, llm, settings(fake46.url)):
+        events = await ask(app, "how warm is the kitchen?")
+        assert events[-1]["text"] == "21.5 C."
+        assert len(llm.classify_requests) == 2  # the library's one retry, then given up
+        assert mcp_tools(llm.requests[0]) == set() and "load_capability" in offered(llm.requests[0])
+        meta = (await turn_meta(app, events[-1]["session_id"]))["mcp_domains"]
+        assert meta["picked"] == [] and meta["loaded"] == ["climate"]
+        assert meta["classify_error"].startswith("classification failed: ")
+        assert any(
+            r.levelname == "WARNING" and "classification failed" in r.getMessage()
+            for r in caplog.records
+        )

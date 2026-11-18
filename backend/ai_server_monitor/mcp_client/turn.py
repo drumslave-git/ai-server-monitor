@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -23,6 +24,8 @@ from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
 from ..tracing import trace_scope
 from .domains import DomainStore, full_name, listed
 from .toolsets import McpRun, failure_text
+
+log = logging.getLogger(__name__)
 
 CAPABILITY = "domain-{}"
 LOAD_NOTE = (
@@ -45,6 +48,8 @@ class McpTurn:
     unsorted: list[str] = field(default_factory=list)
     """Enabled tools without a domain (`server_tool`): not offered."""
     unreachable: dict[str, str] = field(default_factory=dict)
+    classify_error: str | None = None
+    """Why the classification failed (then nothing is picked: every domain is loadable)."""
 
     @property
     def used(self) -> bool:
@@ -73,6 +78,7 @@ class McpTurn:
             ),
             **({"unsorted": self.unsorted} if self.unsorted else {}),
             **({"unreachable": self.unreachable} if self.unreachable else {}),
+            **({"classify_error": self.classify_error} if self.classify_error else {}),
         }
 
 
@@ -149,7 +155,11 @@ async def prepare(
     if not domains:
         return turn
     if request is not None:
-        turn.picked = await classify(classify_model, domains, request)
+        try:
+            turn.picked = await classify(classify_model, domains, request)
+        except Exception as exc:  # a miss of everything: the model loads what it needs
+            turn.classify_error = f"classification failed: {type(exc).__name__}: {exc}"[:500]
+            log.warning("MCP %s", turn.classify_error)
     names = {d["name"] for d in domains}
     turn.offered = sorted(names & {*turn.picked, *keep})
     for d in domains:
