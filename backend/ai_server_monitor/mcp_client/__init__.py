@@ -1,5 +1,7 @@
 """MCP client: lets the chat use tools of external MCP servers (remote, Streamable HTTP or
-HTTP+SSE; tools only, no stdio). See `docs/handover-mcp.md` for how it plugs in."""
+HTTP+SSE; tools only, no stdio). `context.py` owns one `McpManager` (rebuilt on every settings
+change, servers connected lazily); writes go through the action layer as `mcp_call` (see
+`actions.py`); `docs/DESIGN.md` has the decisions."""
 
 from .connection import (
     CallOutcome,

@@ -90,6 +90,18 @@ stored and published as `chat.message`; Telegram sends it to the chat that asked
 `/api/status.change_shell` says why not. Its approval runs in the background so the approve call
 returns at once; the result arrives as `action.result` / `approval.progress`.
 
+## MCP client
+
+`mcp_client/` uses the official `mcp` SDK (`<2`: 2.x moved to a new client API): Streamable
+HTTP and the older HTTP+SSE (`auto` tries the first and falls back on protocol failures, not
+on network errors or 401/403); no stdio; tools only (no prompts, resources or sampling). One
+runner task per server owns the SDK's context managers, and calls race against it, because
+the SDK leaves a request hanging when a Streamable HTTP server dies. Connect failures back off
+2, 4, … 60 s; a timed-out call drops the connection. A tool is read only when the server marks
+it `readOnlyHint` and the owner did not override it; the manager enforces the tool allow-list
+itself. Results are capped and scrubbed of the server's own token and header values. Above
+`mcp.max_inline_tool_tokens` the chat gets the generic `mcp_list_tools` / `mcp_call` pair.
+
 ## Storage (SQLite, `data/monitor.db`)
 
 | Table | Holds |

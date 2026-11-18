@@ -6,7 +6,7 @@ must survive restarts: the audit row holds `{server, tool, arguments}` and every
 request is made and again when it is approved.
 
 The functions here are the pieces of an `ActionDef`; `actions/registry.py` assembles them
-(see docs/handover-mcp.md for the small generalization the action service needs).
+through its per-action hooks (`policy_of`, `max_per_hour_of`, `uses_dry_run`, `run`).
 """
 
 from __future__ import annotations
