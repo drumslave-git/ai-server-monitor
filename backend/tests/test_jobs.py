@@ -288,3 +288,13 @@ def test_an_interrupted_run_is_rerun_soon_and_does_not_hide_the_last_result(
         # rerun about a minute after the start, not in 4 hours; other jobs keep their times
         assert job["next_run"] - time.time() < 120
         assert client.get("/api/jobs/journal").json()["next_run"] - time.time() > 600
+
+
+def test_marking_interrupted_runs_counts_rows_not_ids(bootstrap: Bootstrap) -> None:
+    with TestClient(make_app(bootstrap)) as client:
+        store = client.app.state.ctx.jobs.store  # type: ignore[attr-defined]
+        # a fresh install: seven builtins were just inserted, no run was interrupted
+        assert client.portal.call(store.mark_interrupted) == 0  # type: ignore[union-attr]
+        for slug in ("storage", "docker"):
+            client.portal.call(store.start_run, slug, "schedule", "small")  # type: ignore[union-attr]
+        assert client.portal.call(store.mark_interrupted) == 2  # type: ignore[union-attr]

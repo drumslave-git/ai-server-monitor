@@ -138,3 +138,20 @@ async def test_probe_long_output_keeps_head_and_tail(
     monkeypatch.setattr(shell_module, "MAX_STREAM_BYTES", 1000)
     flood = await shell.run("yes", timeout_s=10, max_chars=500)
     assert flood.stopped == "output limit"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups and uvloop are POSIX only")
+def test_processes_run_under_uvloop_as_in_the_image() -> None:
+    """The image serves with uvicorn[standard], i.e. uvloop, whose subprocess_exec rejects
+    some asyncio arguments (`process_group`): the shell must start and time out there too."""
+    uvloop = pytest.importorskip("uvloop")
+    env = {"PATH": "/usr/bin:/bin"}
+
+    async def both() -> tuple[ShellResult, ShellResult]:
+        done = await shell_module.run_process(["sh", "-c", "echo hi"], env, 10, 1000)
+        slow = await shell_module.run_process(["sh", "-c", "sleep 30"], env, 0.5, 1000)
+        return done, slow
+
+    done, slow = uvloop.run(both())
+    assert done.exit_code == 0 and done.output == "hi\n"
+    assert slow.stopped == "timeout" and slow.duration_s < 10

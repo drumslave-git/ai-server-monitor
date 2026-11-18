@@ -254,7 +254,9 @@ async def run_process(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         env=env,
-        process_group=0,
+        # Its own session, so its own process group (killpg below). Not `process_group=0`:
+        # uvloop, which uvicorn uses in the image, rejects that argument.
+        start_new_session=True,
     )
     assert proc.stdout is not None
     stopped: str | None = None
