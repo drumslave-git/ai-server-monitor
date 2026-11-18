@@ -141,6 +141,12 @@ pre { margin: 0; font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wra
 .run-cmd .btn-run { position: absolute; top: 5px; right: 6px; padding: 0 8px; font-size: 12px; line-height: 20px; gap: 4px; color: var(--text); border-color: var(--border); background: var(--surface); }
 .run-cmd .btn-run.running { color: var(--muted); }
 .no-run .btn-run { display: none; }
+.markdown .run-write pre, .markdown .run-unmarked pre { padding-right: 220px; }
+.run-cmd.run-write .btn-run, .run-cmd.run-unmarked .btn-run { color: var(--warn); }
+@media (max-width: 640px) {
+  .markdown .run-block pre, .markdown .run-write pre, .markdown .run-unmarked pre { padding-right: 12px; }
+  .run-cmd .btn-run { position: static; margin: 0 0 8px 12px; }
+}
 .bubble-run { align-self: flex-end; width: min(100%, 76ch); display: grid; gap: 4px; }
 .markdown table { border-collapse: collapse; }
 .markdown th, .markdown td { padding: 4px 12px 4px 0; text-align: left; border-bottom: 1px solid var(--border); }

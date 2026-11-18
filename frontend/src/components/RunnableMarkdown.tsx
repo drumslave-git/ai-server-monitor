@@ -44,6 +44,27 @@ function runnable(group: string, lang: string): string {
   return lines.length ? lines.map((l) => l.replace(/^\s*\$ /, "")).join("\n") : group;
 }
 
+/** The answer's mark on a command (chat prompt): `# [read-only] ...` or `# [write] ...`
+ *  above it. The server reads the same mark: only read-only runs in the sandbox. */
+const MARK = /^\s*#\s*\[(read-only|write)\]/gim;
+
+export function commandMode(group: string): "read-only" | "write" | "unmarked" {
+  const marks = new Set([...group.matchAll(MARK)].map((m) => m[1].toLowerCase()));
+  if (marks.size === 1 && marks.has("read-only")) return "read-only";
+  return marks.has("write") ? "write" : "unmarked";
+}
+
+const LABELS = {
+  "read-only": "Run",
+  write: "Run (changes the server)",
+  unmarked: "Run (may change the server)",
+};
+const TITLES = {
+  "read-only": "Run this read-only command on the server; the result goes to the chat and the model answers it",
+  write: "Run this command as root on the server (it changes the server); the result goes to the chat",
+  unmarked: "Not marked read-only by the answer: it runs as root and may change the server",
+};
+
 function render(text: string): { html: string; commands: string[] } {
   const commands: string[] = [];
   const marked = new Marked({
@@ -54,11 +75,11 @@ function render(text: string): { html: string; commands: string[] } {
         if (!SHELLS.has(tag)) return false;
         const parts = commandGroups(code).map((group) => {
           const index = commands.push(runnable(group, tag)) - 1;
+          const mode = commandMode(group);
           return (
-            `<div class="run-cmd"><pre><code>${escape(group)}</code></pre>` +
+            `<div class="run-cmd run-${mode}"><pre><code>${escape(group)}</code></pre>` +
             `<button type="button" class="btn btn-sm btn-quiet btn-run" data-run="${index}" ` +
-            `title="Run this command on the server (read-only shell); the result is added to the chat">` +
-            `${PLAY}<span>Run</span></button></div>`
+            `data-label="${LABELS[mode]}" title="${TITLES[mode]}">${PLAY}<span>${LABELS[mode]}</span></button></div>`
           );
         });
         return `<div class="run-block">${parts.join("")}</div>`;
@@ -86,7 +107,7 @@ export function RunnableMarkdown({ text, onRun }: { text: string; onRun?: (comma
     } finally {
       button.disabled = false;
       button.classList.remove("running");
-      if (label) label.textContent = "Run";
+      if (label) label.textContent = button.dataset.label ?? "Run";
     }
   };
   return <div className={`markdown${onRun ? "" : " no-run"}`} onClick={click} dangerouslySetInnerHTML={{ __html: html }} />;

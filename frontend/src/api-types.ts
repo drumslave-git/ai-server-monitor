@@ -270,9 +270,12 @@ export interface paths {
         put?: never;
         /**
          * Run Command
-         * @description Run a command from an answer in the read-only host shell (as the `bash` tool does) and
-         *     add it with its result to the conversation. The model sees it with the next question; no
-         *     model turn starts now.
+         * @description Run a command from an answer; the click is the owner's approval. A command marked
+         *     `# [read-only]` runs in the read-only shell, any other as root through the change shell (a
+         *     `host_command` action decided by `user:run-button`). SSE: first `run` {command, mode
+         *     (read-only | write), action_id, exit_code, duration_s, stopped ('error': could not run,
+         *     `output` says why), truncated, output}, then the model's answer to it with the events of
+         *     `/api/chat` (session, tool_call, token, done | error).
          */
         post: operations["run_command_api_chat_sessions__session_id__run_post"];
         delete?: never;
@@ -947,26 +950,6 @@ export interface components {
              * @default 20
              */
             worker_max_steps: number;
-        };
-        /** CommandRun */
-        CommandRun: {
-            /** Command */
-            command: string;
-            /** Duration S */
-            duration_s: number;
-            /** Exit Code */
-            exit_code?: number | null;
-            /** Message Id */
-            message_id: number;
-            /** Output */
-            output: string;
-            /** Stopped */
-            stopped?: string | null;
-            /**
-             * Truncated
-             * @default false
-             */
-            truncated: boolean;
         };
         /**
          * ConnectionTestResult
@@ -2769,14 +2752,21 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Successful Response */
+            /** @description SSE stream */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CommandRun"];
+                    "text/event-stream": unknown;
                 };
+            };
+            /** @description No such session */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

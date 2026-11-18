@@ -154,11 +154,28 @@ class ChatEngine:
         ):
             yield event
 
-    async def run_command(self, session_id: str, command: str) -> dict[str, Any]:
-        """The owner pressed Run on a command in an answer: run it in the read-only shell as
-        the `bash` tool does (same sandbox, time limit, output cap, scrubbing), store it as a
-        message of the session (`meta.run`; the content is what the model sees later, as
-        untrusted data) and return it. No model turn is started."""
+    async def run_command(self, session_id: str, command: str) -> AsyncIterator[Event]:
+        """The owner pressed Run on a command in an answer. A command the answer marked
+        `# [read-only]` runs in the read-only shell as the `bash` tool does; any other runs as
+        root through the change shell, on the path of an approved `bash_write` (a
+        `host_command` action, approved by this click). The result is the first event
+        (`run`), is stored as a message of the session (`meta.run`; the content is what the
+        model reads, as untrusted data), and the model answers it at once like any question."""
+        if read_only_marked(command):
+            run, seen = await self._run_read_only(session_id, command)
+        else:
+            run, seen = await self._run_write(session_id, command)
+        yield {"type": "run", **run}
+        content = (
+            "I ran this command with the Run button. Say briefly what the result means; if "
+            "it failed, say why.\n" + wrap_untrusted("bash", f"$ {command}\n{seen}")
+        )
+        async for event in self.run(
+            content, session_id, source=f"chat:{session_id}", user_meta={"run": run}, limit=None
+        ):
+            yield event
+
+    async def _run_read_only(self, session_id: str, command: str) -> tuple[dict[str, Any], str]:
         app = self.app
         chat = app.settings.chat
         scrub = Scrubber(app.settings)
@@ -180,22 +197,68 @@ class ChatEngine:
         )
         run = {
             "command": command,
+            "mode": "read-only",
             "exit_code": result.exit_code,
             "duration_s": round(result.duration_s, 2),
             "stopped": result.stopped,
             "truncated": result.truncated,
             "output": scrub.text(scrub_output(result.output)),
         }
-        seen = scrub.text(scrub_output(result.text()))
-        content = "I ran this command on the server myself:\n" + wrap_untrusted(
-            "bash", f"$ {command}\n{seen}"
-        )
-        lock = self._locks.setdefault(session_id, asyncio.Lock())
-        async with lock:  # after an answer that is being written, not in the middle of it
-            message_id = await self.store.add_message(
-                session_id, "user", content, meta={"run": run}
-            )
-        return {"message_id": message_id, **run}
+        return run, scrub.text(scrub_output(result.text()))
+
+    async def _run_write(self, session_id: str, command: str) -> tuple[dict[str, Any], str]:
+        """A `host_command` action approved by the click (the Approvals log keeps it, decided
+        by `user:run-button`); waits for it to run (it runs in the background once approved)."""
+        from ..actions import ActionError
+        from ..actions.host_command import ACTION_NAME
+
+        app = self.app
+        actions = app.actions
+        reason = "Run button in the chat"
+        events = app.events.subscribe("action.result")
+        try:
+            try:
+                record = await actions.request(
+                    ACTION_NAME,
+                    {"command": command, "reason": reason},
+                    f"user:run-button:{session_id}",
+                    reason=reason,
+                    label="Chat · Run button",
+                )
+                if record["status"] == "pending":
+                    await actions.decide_batch(
+                        int(record["batch_id"]),
+                        "approve",
+                        [int(record["id"])],
+                        decided_by="user:run-button",
+                    )
+                record = await actions.get(int(record["id"]))
+                async with asyncio.timeout(app.settings.chat.tool_timeout.total_seconds()):
+                    while record["status"] not in FINAL_STATUSES:
+                        async for event in events:
+                            if event.data.get("id") == record["id"]:
+                                break
+                        record = await actions.get(int(record["id"]))
+            except (ActionError, TimeoutError) as exc:
+                record = {"status": "failed", "result": {"error": str(exc) or "timed out"}}
+        finally:
+            events.close()
+        result = record.get("result") or {}
+        ran = record["status"] == "executed" or isinstance(result.get("exit_code"), int)
+        scrub = Scrubber(app.settings)
+        output = result.get("output") if ran else result.get("error") or result.get("detail")
+        run = {
+            "command": command,
+            "mode": "write",
+            "action_id": record.get("id"),
+            "exit_code": result.get("exit_code") if ran else None,
+            "duration_s": round(float(result.get("duration_s") or 0), 2),
+            "stopped": result.get("stopped") if ran else "error",
+            "truncated": bool(result.get("truncated")),
+            "output": scrub.text(str(output or (record["status"] if not ran else ""))),
+        }
+        seen = command_outcome(record) if record.get("id") else f"not run: {run['output']}"
+        return run, scrub.text(seen if isinstance(seen, str) else json.dumps(seen))
 
     # ------------------------------------------------------------------ titles
 
@@ -532,6 +595,17 @@ class ChatEngine:
                 "text": failed or final,
             },
         )
+
+
+RUN_MARK = re.compile(r"^\s*#\s*\[(read-only|write)\]", re.IGNORECASE | re.MULTILINE)
+"""How an answer marks a command it shows (chat prompt): `# [read-only] ...` or
+`# [write] ...` on a comment line above it. The web UI reads the same mark for its label."""
+
+
+def read_only_marked(command: str) -> bool:
+    """Only a command the answer explicitly marked read-only (and not also write) goes to the
+    read-only shell; a write or unmarked one runs through the change shell."""
+    return {m.lower() for m in RUN_MARK.findall(command)} == {"read-only"}
 
 
 LOOKS = ("bash", "delegate")

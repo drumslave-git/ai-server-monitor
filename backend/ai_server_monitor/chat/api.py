@@ -176,33 +176,35 @@ async def get_session(session_id: str, request: Request) -> ChatSession:
 
 class RunRequest(BaseModel):
     command: str = Field(min_length=1, max_length=MAX_MESSAGE)
-    """The command exactly as shown in the answer."""
+    """The command exactly as shown in the answer, with its comment lines (the mark)."""
 
 
-class CommandRun(BaseModel):
-    message_id: int
-    """The stored message of the session that shows it (`meta.run`)."""
-    command: str
-    exit_code: int | None = None
-    """None when it was stopped or could not run."""
-    duration_s: float
-    stopped: str | None = None
-    """'timeout', 'output limit', or 'error' (could not run; `output` says why)."""
-    truncated: bool = False
-    output: str
-
-
-@router.post("/api/chat/sessions/{session_id}/run")
-async def run_command(session_id: str, body: RunRequest, request: Request) -> CommandRun:
-    """Run a command from an answer in the read-only host shell (as the `bash` tool does) and
-    add it with its result to the conversation. The model sees it with the next question; no
-    model turn starts now."""
+@router.post(
+    "/api/chat/sessions/{session_id}/run",
+    response_class=StreamingResponse,
+    responses={
+        200: {"content": {"text/event-stream": {}}, "description": "SSE stream"},
+        404: {"description": "No such session"},
+    },
+)
+async def run_command(session_id: str, body: RunRequest, request: Request) -> StreamingResponse:
+    """Run a command from an answer; the click is the owner's approval. A command marked
+    `# [read-only]` runs in the read-only shell, any other as root through the change shell (a
+    `host_command` action decided by `user:run-button`). SSE: first `run` {command, mode
+    (read-only | write), action_id, exit_code, duration_s, stopped ('error': could not run,
+    `output` says why), truncated, output}, then the model's answer to it with the events of
+    `/api/chat` (session, tool_call, token, done | error)."""
     ctx = _ctx(request)
     if not await ctx.chat.store.session_exists(session_id):
         raise HTTPException(status_code=404, detail=f"no session {session_id}")
     if not body.command.strip():
         raise HTTPException(status_code=422, detail="the command is empty")
-    return CommandRun.model_validate(await ctx.chat.run_command(session_id, body.command))
+
+    async def frames() -> AsyncIterator[str]:
+        async for event in ctx.chat.run_command(session_id, body.command):
+            yield _frame(event)
+
+    return StreamingResponse(frames(), media_type="text/event-stream", headers=SSE_HEADERS)
 
 
 @router.delete("/api/chat/sessions/{session_id}", status_code=204)
