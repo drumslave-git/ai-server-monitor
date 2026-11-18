@@ -490,8 +490,18 @@ log and the model call logs are kept; the rest of the old data is deleted by the
   as headings outside the code blocks instead); the extra `chat_marks` call marks every command
   without a valid mark, and stray mark headings outside code blocks become plain text.
 
-### Next release (after 0.7.6)
+### 0.8.0
 
+- **MCP tools in domains.** The main model sorts the tools of your MCP servers into domains
+  (after a Settings test or save, at the start of a run when new tools appear, and on demand);
+  renaming a server sorts its tools afresh. Every chat request is classified by the worker
+  model and gets only the tools of the picked domains; the model can load further domains
+  during the turn. Every job has a domain list (Jobs → Domains, with a **Classify** button),
+  gets exactly the enabled tools of those domains, and fails with "missing tools" when they
+  are not enough. Builtin jobs start with no domains.
+- New **MCP tools** page: one card per domain with its tools (on/off, read/write, server),
+  rename, describe or delete a domain, move a tool to another domain, and *Sort into
+  domains…*.
 - Settings → Main model / Worker model → **Test** now runs the model like a real chat turn or
   topic job (streamed, the real instructions and tools, the saved settings) and asks it to run
   `echo` with `bash`; a model that writes its tool call as text fails it. Run the test again
