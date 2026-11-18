@@ -8,6 +8,7 @@ import respx
 from fastapi.testclient import TestClient
 
 from ai_server_monitor.config import SECRET_MASK, Bootstrap, Settings
+from ai_server_monitor.jobs.builtins import BUILTINS
 from ai_server_monitor.main import create_app
 
 from .conftest import LLM_URL
@@ -28,6 +29,7 @@ def test_healthz_and_info(bootstrap: Bootstrap, settings: Settings) -> None:
         "trace_prune",
         "approvals:sweep",
         "approvals:drain",
+        *(f"job:{d.slug}" for d in BUILTINS),
     }
     assert (bootstrap.data_dir / "monitor.db").exists()
 

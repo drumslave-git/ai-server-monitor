@@ -285,4 +285,4 @@ def test_http_api_audit_and_approvals(bootstrap: Bootstrap, fake_action: FakeAct
         assert client.get("/api/actions", params={"action": "mcp_call"}).json()["items"] == []
         assert events.count("approval.pending") == 2 and events.count("action.result") == 2
         assert events.count("approval.decided") == 2
-        assert "approvals:sweep" in ctx.scheduler.jobs
+        assert "approvals:sweep" in {j["name"] for j in ctx.schedule.status()}

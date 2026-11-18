@@ -31,7 +31,7 @@ from .mcp_client import McpManager
 from .outputs.action_events import ActionEventBridge
 from .outputs.metrics import Family, MetricsHub, Sample
 from .outputs.telegram import TelegramBot
-from .scheduler import Scheduler
+from .schedule import Schedule
 from .settings_store import SettingsStore
 from .tracing import Tracing
 
@@ -75,8 +75,11 @@ class AppContext:
         )
         """The LLM trace and the app log; survives settings changes like the event bus."""
         self.automation = AutomationState()
-        """The global pause switch (persisted); a new scheduler is built to match it."""
-        self.scheduler = Scheduler()
+        """The global pause switch (persisted); a new schedule is built to match it."""
+        self.schedule = Schedule()
+        """APScheduler: the LLM jobs and the housekeeping jobs (pruning, approval sweeps)."""
+        self._cancelled: list[str] = []
+        """The scheduled runs the last pause cancelled."""
         self.models = ModelHub(self.settings, tracing=self.tracing, transport=llm_transport)
         """The agents' models (main, worker), rebuilt with every settings change."""
         self.mcp = McpManager(self.settings.mcp, audit=audit_hook(self.db, "mcp"))
@@ -135,19 +138,17 @@ class AppContext:
     async def _start_services(self) -> None:
         s = self.settings
         logging.getLogger().setLevel(s.general.log_level.upper())
-        self.scheduler = Scheduler()
-        if self.automation.paused:
-            self.scheduler.hold(self.automation.since)
+        self.schedule = Schedule(paused=self.automation.paused)
         self.tracing.apply_settings(s.logs)
         self.models = ModelHub(s, tracing=self.tracing, transport=self._llm_transport)
         self.jobs.apply_settings(s)
-        self.scheduler.add(
+        self.schedule.add_housekeeping(
             "prune",
             lambda: self.db.prune(s.storage.retention),
             s.storage.prune_interval,
             initial_delay=timedelta(seconds=30),
         )
-        self.scheduler.add(
+        self.schedule.add_housekeeping(
             "trace_prune",
             self.tracing.prune,
             s.storage.prune_interval,
@@ -160,9 +161,12 @@ class AppContext:
             notifiers=self.action_notifiers,
             mcp=self.mcp,
         )
-        self.scheduler.add("approvals:sweep", self.actions.sweep_expired, APPROVAL_SWEEP)
-        self.scheduler.add("approvals:drain", self.actions.drain_queue, APPROVAL_SWEEP)
-        await self.scheduler.start()
+        self.schedule.add_housekeeping(
+            "approvals:sweep", self.actions.sweep_expired, APPROVAL_SWEEP
+        )
+        self.schedule.add_housekeeping("approvals:drain", self.actions.drain_queue, APPROVAL_SWEEP)
+        self.schedule.start()
+        await self.jobs_changed()
         tg = s.outputs.telegram
         if tg.enabled and tg.token.get_secret_value():
             self.telegram = TelegramBot(self, tg, transport=self._telegram_transport)
@@ -170,10 +174,14 @@ class AppContext:
 
     async def jobs_changed(self) -> None:
         """A job was created, changed or deleted: bring the schedule in line."""
+        self.schedule.sync_jobs(await self.jobs.store.list(), self._scheduled_run)
+
+    async def _scheduled_run(self, slug: str) -> None:
+        await self.jobs.run(slug, "schedule")
 
     def job_next_run(self, slug: str) -> float | None:
-        """When the scheduler runs `slug` next (None: not scheduled)."""
-        return None
+        """When the scheduler runs `slug` next (None: disabled or paused)."""
+        return self.schedule.next_run(slug)
 
     async def pending_approvals_count(self) -> int:
         row = await self.db.fetchone("SELECT COUNT(*) AS n FROM actions WHERE status = 'pending'")
@@ -217,7 +225,7 @@ class AppContext:
         if self.telegram is not None:
             await self.telegram.stop()
             self.telegram = None
-        await self.scheduler.stop()
+        self.schedule.stop()
         await self.mcp.close()
         await self.models.aclose()
 
@@ -229,34 +237,34 @@ class AppContext:
         return {
             **self.automation.to_dict(),
             "queued_actions": int(row["n"]) if row else 0,
-            "jobs": len(self.scheduler.jobs),
-            "jobs_cancelled": [
-                j.name for j in self.scheduler.jobs.values() if j.last_status == "cancelled"
-            ],
+            "jobs": len(self.schedule.status()),
+            "jobs_cancelled": self._cancelled,
         }
 
     async def pause_automation(self, by: str = "ui") -> list[str]:
         """Turn the switch on: persist it, cancel what is running, hold every job. Idempotent.
         Returns the jobs that were cancelled mid-run."""
         async with self._lock:
-            if self.automation.paused and self.scheduler.paused:
+            if self.automation.paused and self.schedule.paused:
                 return []
             self.automation = AutomationState(paused=True, since=time.time(), by=by)
             await self.db.kv_set(AUTOMATION_KEY, self.automation.to_dict())
-            self.scheduler.paused_since = self.automation.since
-            cancelled = await self.scheduler.pause()
+            self.schedule.pause()
+            cancelled = await self.jobs.cancel_all("automation paused")
+            self._cancelled = cancelled
             log.warning("automation paused by %s (cancelled: %s)", by, ", ".join(cancelled) or "-")
         self.events.publish("automation.changed", await self.automation_status())
         return cancelled
 
     async def resume_automation(self, by: str = "ui") -> None:
-        """Turn the switch off: jobs come due on their normal schedule, those that were due
-        meanwhile start a couple of seconds apart. Idempotent."""
+        """Turn the switch off: jobs come due on their normal schedule; each one missed meanwhile
+        runs once (one model run at a time, Settings → Jobs). Idempotent."""
         async with self._lock:
-            if not self.automation.paused and not self.scheduler.paused:
+            if not self.automation.paused and not self.schedule.paused:
                 return
             self.automation = AutomationState()
             await self.db.kv_set(AUTOMATION_KEY, self.automation.to_dict())
-            self.scheduler.resume()
+            self._cancelled = []
+            self.schedule.resume()
             log.info("automation resumed by %s", by)
         self.events.publish("automation.changed", await self.automation_status())

@@ -157,7 +157,7 @@ def create_app(
                 "worker_model": ctx.models.name("worker"),
             },
             "automation": await ctx.automation_status(),
-            "jobs": ctx.scheduler.status(),
+            "jobs": ctx.schedule.status(),
         }
 
     @app.get("/api/automation")
