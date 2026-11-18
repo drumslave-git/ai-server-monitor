@@ -1,51 +1,122 @@
 """The Settings "Test" button of the Main and Worker model sections: is the endpoint reachable,
-does it have the model, and can the model call a tool (one native tool-call round trip)?
+does it have the model, and does the model call a tool the way a real run needs it?
 
-A model without native tool calling cannot run this product, so that is said plainly."""
+The tool-call part runs like a real run of that profile (`agent.runtime.run_agent`: streamed,
+the saved model settings, nothing forced): main = the chat's instructions and its own tools,
+worker = a topic job's instructions and tools. The model is asked to run `echo check-<word>`
+with `bash` (the read-only shell). Only a real `bash` tool call passes; a model that writes
+the call as text, or answers without it, fails with that said plainly. Of the chat's other
+tools only the definitions are offered: they do nothing here."""
 
 from __future__ import annotations
 
 import secrets
 import time
-from typing import Any
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 import openai
-from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
-from pydantic_ai.messages import ToolCallPart
-from pydantic_ai.models.openai import OpenAIChatModelSettings
-from pydantic_ai.usage import UsageLimits
 
 from ..agent.models import ModelHub
+from ..agent.runtime import AgentConfig, AgentTool, run_agent
 from ..config import LLMSettings, Settings
-from ..tracing import trace_scope
 from .text import strip_reasoning
 
-CHECK_TOOL = "get_check_word"
+if TYPE_CHECKING:
+    from ..context import AppContext
+
 NO_TOOLS = (
     "The model answered without calling the tool: it cannot call tools (native OpenAI tool "
     "calling), so this app cannot use it. Pick a model with tool support."
 )
+TEXT_INSTEAD = "tool call failed: the model answered with text instead of calling the tool"
+TEST_ID = "settings:test"
 
 
-def _instructions(word_tool: str) -> str:
+def _request(word: str) -> str:
     return (
-        f"This is a connection test. Call the tool `{word_tool}` exactly once, then reply with "
-        "only the word it returned."
+        f"This is a connection test. Run `echo {word}` with the `bash` tool now, then reply "
+        "with only the word it printed."
     )
+
+
+async def _unused(args: dict[str, Any]) -> str:
+    return "Not available in the connection test: only `bash` runs here."
+
+
+def _test_tools(app: AppContext, profile: Literal["main", "worker"]) -> list[AgentTool]:
+    """The tools a real run of `profile` offers. `bash` runs (read-only shell, not in the chat
+    audit trail); every other tool is only offered."""
+    from ..agent.prompts import host_line
+    from ..agent.safety import Scrubber
+    from ..agent.tools import app_bash, app_shell
+
+    shell = app_shell(app)
+    bash = app_bash(app, None, shell)
+    if profile == "worker":
+        return [bash]
+    from ..chat.engine import chat_tools
+
+    tools = chat_tools(
+        app, TEST_ID, TEST_ID, TEST_ID, shell, Scrubber(app.settings), host_line(app.host_env.root)
+    )
+    return [
+        bash if t.name == "bash" else replace(t, handler=_unused, requires_approval=False)
+        for t in tools
+    ]
+
+
+def _test_config(
+    app: AppContext, profile: Literal["main", "worker"], model: Any, word: str
+) -> tuple[AgentConfig, str]:
+    """The agent configuration and prompt of a real run of `profile`, asking for the echo."""
+    from ..agent.prompts import chat_prompt, host_line
+    from ..agent.safety import Scrubber
+
+    settings = app.settings
+    host = host_line(app.host_env.root)
+    language = settings.general.language
+    tools = _test_tools(app, profile)
+    common = {
+        "model": model,
+        "tools": tools,
+        "tool_timeout_s": settings.chat.tool_timeout.total_seconds(),
+        "result_chars": settings.chat.max_tool_result_chars,
+        "scrub": Scrubber(settings),
+        "tracing": app.tracing,
+        "trace": {"purpose": "test"},
+    }
+    if profile == "worker":
+        from ..jobs.prompts import topic_instructions
+        from ..jobs.runner import JobResult
+
+        cfg = AgentConfig(
+            instructions=topic_instructions(host, language, _request(word)),
+            max_steps=settings.jobs.max_steps,
+            output_type=JobResult,
+            **common,
+        )
+        return cfg, "Run the check now, then call final_result."
+    cfg = AgentConfig(
+        instructions=chat_prompt(host, language), max_steps=settings.chat.max_steps, **common
+    )
+    return cfg, _request(word)
 
 
 async def check_model(
     cfg: LLMSettings,
+    app: AppContext,
     *,
+    profile: Literal["main", "worker"] = "main",
     transport: httpx.AsyncBaseTransport | None = None,
-    tracing: Any = None,
 ) -> dict[str, Any]:
-    """{ok, reply, latency_s, models, model_listed, tool_call} or {ok: False, error, ...}."""
+    """{ok, reply, latency_s, models, model_listed, tool_call} or {ok: False, error, ...}.
+    `cfg` is the model to test (for the worker already merged with the main endpoint)."""
     hub = ModelHub(
         Settings(llm=cfg.model_copy(update={"max_retries": 0})),
-        tracing=tracing,
+        tracing=app.tracing,
         transport=transport,
     )
     model = hub.model("main")
@@ -67,38 +138,40 @@ async def check_model(
             }
 
         word = f"check-{secrets.token_hex(3)}"
-        agent: Agent[None, str] = Agent(model, instructions=_instructions(CHECK_TOOL))
-
-        @agent.tool_plain(name=CHECK_TOOL)
-        def get_check_word() -> str:
-            """Returns the word to reply with."""
-            return word
-
+        agent_cfg, prompt = _test_config(app, profile, model, word)
+        called = False
+        printed: str | None = None
+        output: Any = None
         started = time.monotonic()
         try:
-            with trace_scope("test"):
-                result = await agent.run(
-                    "Run the test.",
-                    model_settings=OpenAIChatModelSettings(
-                        temperature=0, max_tokens=1024, openai_reasoning_effort="none"
-                    ),
-                    usage_limits=UsageLimits(request_limit=3),
-                )
+            async for event in run_agent(agent_cfg, prompt):
+                if event["type"] == "tool_call" and event["name"] == "bash":
+                    called = True
+                elif event["type"] == "tool_result" and event["name"] == "bash":
+                    printed = event["text"]
+                elif event["type"] == "end":
+                    output = event["output"]
         except ModelHTTPError as exc:
             body = str(exc.body or "")[:300]
             if "tool" in body.lower():
                 return {**_base(models, listed), "error": f"{NO_TOOLS} ({exc.status_code}: {body})"}
             return {**_base(models, listed), "error": f"HTTP {exc.status_code}: {body}"}
-        except (ModelAPIError, UnexpectedModelBehavior) as exc:
+        except UnexpectedModelBehavior as exc:
+            # e.g. a worker that keeps answering with text where a structured result is due
+            error = str(exc)[:300] if called else f"{TEXT_INSTEAD} ({str(exc)[:200]})"
+            return {**_base(models, listed), "error": error}
+        except ModelAPIError as exc:
             return {**_base(models, listed), "error": str(exc)[:300]}
-        called = any(
-            isinstance(part, ToolCallPart) and part.tool_name == CHECK_TOOL
-            for message in result.all_messages()
-            for part in getattr(message, "parts", ())
-        )
-        reply = strip_reasoning(str(result.output))[:200]
+        answer = getattr(output, "summary", output)
+        text = strip_reasoning(str(answer or ""))[:200]
         if not called:
-            return {**_base(models, listed), "error": NO_TOOLS, "reply": reply}
+            return {**_base(models, listed), "error": TEXT_INSTEAD, "reply": text}
+        if printed is not None and word in printed:
+            reply = f"{word} (printed by bash)"
+        else:
+            lines = (printed or "").strip().splitlines()
+            detail = lines[0][:120] if lines else "no output"
+            reply = f"bash was called; the shell could not run it here ({detail})"
         return {
             "ok": True,
             "reply": reply,

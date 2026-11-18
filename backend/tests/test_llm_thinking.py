@@ -17,7 +17,7 @@ from ai_server_monitor.main import create_app
 from ai_server_monitor.settings_store import upgrade_stored
 
 from .conftest import LLM_URL, sse
-from .test_chat import FakeLLM, ask, call, completion, make_app, say
+from .test_chat import FakeLLM, ask, call, make_app, say, streamed
 from .test_chat_title import QUESTION
 
 # --------------------------------------------------------------------------- settings
@@ -63,10 +63,11 @@ def test_chat_title_asks_for_no_thinking_and_has_room(bootstrap: Bootstrap) -> N
 
 
 @respx.mock
-def test_settings_test_asks_for_no_thinking_and_has_room(bootstrap: Bootstrap) -> None:
+def test_settings_test_sends_the_saved_settings(bootstrap: Bootstrap, shell: list[str]) -> None:
+    """The test runs like a chat turn: the saved settings, no reasoning or length override."""
     respx.get(f"{LLM_URL}/models").mock(return_value=httpx.Response(404))
     route = respx.post(f"{LLM_URL}/chat/completions").mock(
-        side_effect=[completion(call("get_check_word", {})), completion(say("OK"))]
+        side_effect=[streamed(call("bash", {"command": "echo x"})), streamed(say("OK"))]
     )
     with TestClient(create_app(bootstrap)) as client:
         result = client.post(
@@ -74,7 +75,7 @@ def test_settings_test_asks_for_no_thinking_and_has_room(bootstrap: Bootstrap) -
         ).json()
     assert result["ok"] is True
     sent = json.loads(route.calls.last.request.content)
-    assert sent["reasoning_effort"] == "none" and sent["max_tokens"] >= 1024
+    assert "reasoning_effort" not in sent and sent["stream"] is True
 
 
 @respx.mock

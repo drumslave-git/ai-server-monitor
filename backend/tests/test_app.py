@@ -12,7 +12,7 @@ from ai_server_monitor.jobs.builtins import BUILTINS
 from ai_server_monitor.main import create_app
 
 from .conftest import LLM_URL
-from .test_chat import completion
+from .test_chat import call, streamed
 
 
 def test_healthz_and_info(bootstrap: Bootstrap, settings: Settings) -> None:
@@ -108,17 +108,14 @@ def test_settings_rejects_incomplete_instances_with_readable_errors(bootstrap: B
 
 
 @respx.mock
-def test_test_llm_endpoint(bootstrap: Bootstrap) -> None:
+def test_test_llm_endpoint(bootstrap: Bootstrap, shell: list[str]) -> None:
     respx.get(f"{LLM_URL}/models").mock(
         return_value=httpx.Response(200, json={"data": [{"id": "test-model"}, {"id": "other"}]})
     )
-    tool_call = [
-        {"id": "c1", "type": "function", "function": {"name": "get_check_word", "arguments": "{}"}}
-    ]
     route = respx.post(f"{LLM_URL}/chat/completions").mock(
         side_effect=[
-            completion({"content": None, "tool_calls": tool_call}),
-            completion({"content": "<think>hmm</think>OK"}),
+            streamed(call("bash", {"command": "echo check-1"})),
+            streamed({"content": "OK"}),
         ]
     )
     with TestClient(create_app(bootstrap)) as client:
@@ -127,7 +124,7 @@ def test_test_llm_endpoint(bootstrap: Bootstrap) -> None:
             json={"base_url": LLM_URL, "model": "test-model", "api_key": "sk-x"},
         ).json()
         unconfigured = client.post("/api/settings/test-llm", json={"base_url": ""}).json()
-    assert result["ok"] is True and result["reply"] == "OK", result
+    assert result["ok"] is True and shell == ["echo check-1"], result
     assert result["model_listed"] is True and result["models"] == ["test-model", "other"]
     assert result["tool_call"] is True
     assert json.loads(route.calls.last.request.content)["model"] == "test-model"

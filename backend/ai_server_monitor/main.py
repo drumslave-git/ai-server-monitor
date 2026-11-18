@@ -267,7 +267,7 @@ def create_app(
             )
         if not cfg.configured:
             return {"ok": False, "error": "Set the base URL and model first."}
-        return await check_model(cfg, transport=llm_transport, tracing=ctx.tracing)
+        return await check_model(cfg, ctx, profile=profile, transport=llm_transport)
 
     @app.post("/api/settings/llm-model-info")
     async def llm_model_info(request: Request, body: JsonBody) -> api_models.ModelInfoResult:

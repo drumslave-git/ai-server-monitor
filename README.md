@@ -25,7 +25,9 @@ What it does:
   request as sent and received.
 
 **The models must support native tool calling** (OpenAI-style `tools`). Settings → Main model →
-**Test** checks the endpoint, the model and one tool-call round trip.
+**Test** checks the endpoint and the model, then runs the model the way a real run does (main:
+the chat's instructions and tools; worker: a topic job's) and asks it to run `echo` with `bash`.
+It passes only on a real tool call; a model that writes the call as text fails the test.
 
 - [Quick start](#quick-start) · [The compose file](#the-compose-file) · [Models](#models)
 - [Jobs](#jobs) · [Using it](#using-it) · [Security model](#security-model)
@@ -110,7 +112,9 @@ Two model settings, both any OpenAI-compatible endpoint:
 | **Worker model** | the topic jobs, `delegate` sub-tasks from the chat and the summary | `worker` (empty model = the main model) |
 
 - **Native tool calling is required** for both. There is no fallback for models that cannot call
-  tools.
+  tools. A chat answer that is only a tool call written as text (e.g. `bash[ARGS]{...}`) is sent
+  back once; written like that again it is stored with a note to pick another model. Nothing
+  is ever run from text.
 - *Max output tokens* counts a thinking model's reasoning too: keep it at 4096 or more (default
   16384). With Ollama also raise `OLLAMA_CONTEXT_LENGTH`, or long prompts are cut silently.
 - A small local model (e.g. `gemma4:e4b` on Ollama) works as the worker; give the main model
@@ -485,6 +489,15 @@ log and the model call logs are kept; the rest of the old data is deleted by the
 - The chat and Explain prompts no longer ask the model to mark commands (it wrote the marks
   as headings outside the code blocks instead); the extra `chat_marks` call marks every command
   without a valid mark, and stray mark headings outside code blocks become plain text.
+
+### Next release (after 0.7.6)
+
+- Settings → Main model / Worker model → **Test** now runs the model like a real chat turn or
+  topic job (streamed, the real instructions and tools, the saved settings) and asks it to run
+  `echo` with `bash`; a model that writes its tool call as text fails it. Run the test again
+  for the models you use.
+- A chat answer that is only a tool call written as text is sent back once; written like that
+  again it is stored with a note that the model cannot use tools reliably.
 
 ## Troubleshooting
 

@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from ai_server_monitor.config import Bootstrap, Settings
 
 from .conftest import LLM_URL
-from .test_chat import FakeLLM, ask, call, completion, make_app, say
+from .test_chat import FakeLLM, ask, call, make_app, say, streamed
 
 
 def flush(client: TestClient, app: Any) -> None:
@@ -91,7 +91,9 @@ def test_a_failing_tool_shows_up_failed_in_the_timeline(
         assert events[-1]["type"] == "done"
 
 
-def test_the_settings_llm_test_is_recorded_as_a_test(bootstrap: Bootstrap) -> None:
+def test_the_settings_llm_test_is_recorded_as_a_test(
+    bootstrap: Bootstrap, shell: list[str]
+) -> None:
     from ai_server_monitor.main import create_app
 
     seen: list[httpx.Request] = []
@@ -101,8 +103,8 @@ def test_the_settings_llm_test_is_recorded_as_a_test(bootstrap: Bootstrap) -> No
             return httpx.Response(404)
         if len(seen) == 0:
             seen.append(request)
-            return completion(call("get_check_word", {}), 7, 1)
-        return completion(say("OK"), 7, 1)
+            return streamed(call("bash", {"command": "echo x"}))
+        return streamed(say("OK"))
 
     app = create_app(
         bootstrap,

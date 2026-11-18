@@ -129,6 +129,13 @@ def call(name: str, args: dict[str, Any] | str, call_id: str = "c1") -> dict[str
     }
 
 
+def streamed(message: dict[str, Any]) -> httpx.Response:
+    """A streamed chat completion response (as a real run, e.g. the Settings test, asks for)."""
+    return httpx.Response(
+        200, content=sse_body(message), headers={"content-type": "text/event-stream"}
+    )
+
+
 def make_app(
     bootstrap: Bootstrap,
     llm: FakeLLM,
@@ -460,9 +467,12 @@ def test_session_titles_are_cut_at_a_word_boundary() -> None:
 
 
 def test_the_worker_model_test_uses_the_main_endpoint_when_its_own_is_empty(
-    bootstrap: Bootstrap,
+    bootstrap: Bootstrap, shell: list[str]
 ) -> None:
-    llm = FakeLLM(call("get_check_word", {}), say("check-1"))
+    llm = FakeLLM(
+        call("bash", {"command": "echo check-1"}),
+        call("final_result", {"status": "ok", "summary": "printed", "findings": []}),
+    )
     app = make_app(bootstrap, llm)
     with TestClient(app) as client:
         none = client.post("/api/settings/test-llm?profile=worker", json={"model": ""}).json()

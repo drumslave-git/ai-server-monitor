@@ -432,13 +432,7 @@ class ChatEngine:
         def kinds(name: str) -> str:
             return fixed.get(name) or mcp.kind(name) or "read"
 
-        tools = [
-            app_bash(app, session_id, shell),
-            app_delegate(app, session_id, scrub, host, shell),
-            *job_tools(app, session_id),
-        ]
-        if change_shell_offered(app):
-            tools.append(bash_write_tool(app, who, f"turn:{ctx.turn}"))
+        tools = chat_tools(app, session_id, who, f"turn:{ctx.turn}", shell, scrub, host)
         instructions = chat_prompt(host, settings.general.language)
         if mcp.servers:
             instructions += "\n" + MCP_NOTE
@@ -464,10 +458,13 @@ class ChatEngine:
             approval_tool=mcp_approval_tool(app, who, f"turn:{ctx.turn}"),
             notes=lambda: "\n".join([*mcp.unavailable(), *turn.notes()]),
         )
-        if require_look:
-            look = LookFirst()
-            cfg.tools = [look.watch(t) if t.name in LOOKS else t for t in tools]
-            cfg.output_validator = look
+        look = LookFirst() if require_look else None
+        text_call = TextCall({t.name for t in tools}, look)
+        cfg.tools = [
+            text_call.watch(look.watch(t) if look is not None and t.name in LOOKS else t)
+            for t in tools
+        ]
+        cfg.output_validator = text_call if look is None else lambda out: look(text_call(out))
         return cfg, kinds, turn
 
     async def _drive(
@@ -712,6 +709,8 @@ class LookFirst:
     def __init__(self) -> None:
         self.looked = False
         self.retried = False
+        self.rejected: str | None = None
+        """The answer sent back (kept by `TextCall` if what follows is only a text-form call)."""
 
     def watch(self, tool: AgentTool) -> AgentTool:
         inner = tool.handler
@@ -726,7 +725,64 @@ class LookFirst:
         if self.looked or self.retried or not isinstance(output, str):
             return output
         self.retried = True
+        self.rejected = output
         raise ModelRetry(LOOK_FIRST)
+
+
+TEXT_CALL = (
+    "You wrote a tool call as text. Call the tool instead of writing it: use the tool-calling "
+    "interface, not text."
+)
+TEXT_CALL_NOTE = (
+    "The model wrote a tool call as text instead of calling the tool, so nothing was run. It "
+    "cannot use tools reliably: pick another model in Settings → Main model."
+)
+_TEXT_CALL = re.compile(
+    r"\s*(?:\[TOOL_CALLS\]\s*)?(?P<name>[A-Za-z_][\w.-]*)\s*(?:\[ARGS\])?\s*\{.*\}\s*", re.DOTALL
+)
+"""A whole answer that is a tool call written as text: `bash {...}`, `bash[ARGS]{...}` (the
+Mistral form whose `[TOOL_CALLS]` token the endpoint did not turn into a call)."""
+
+
+def text_tool_call(answer: str, offered: set[str]) -> bool:
+    """Whether the whole answer is a text-form call of one of the `offered` tools."""
+    match = _TEXT_CALL.fullmatch(answer)
+    return match is not None and match["name"] in offered
+
+
+class TextCall:
+    """Output validator of a chat turn: an answer that is only a tool call written as text (a
+    model whose endpoint did not parse its call), with no real tool call in the turn, goes
+    back once with `TEXT_CALL`. If it comes back like that again it is stored with
+    `TEXT_CALL_NOTE` (and the text, as data); an answer `LookFirst` sent back before is kept
+    above it. Nothing is ever run from text."""
+
+    def __init__(self, offered: set[str], look: LookFirst | None = None) -> None:
+        self.offered = offered
+        self.look = look
+        self.called = False
+        self.retried = False
+
+    def watch(self, tool: AgentTool) -> AgentTool:
+        inner = tool.handler
+
+        async def handler(args: dict[str, Any]) -> Any:
+            self.called = True
+            return await inner(args)
+
+        return replace(tool, handler=handler)
+
+    def __call__(self, output: Any) -> Any:
+        if self.called or not isinstance(output, str):
+            return output
+        if not text_tool_call(strip_reasoning(output), self.offered):
+            return output
+        if not self.retried:
+            self.retried = True
+            raise ModelRetry(TEXT_CALL)
+        earlier = self.look.rejected if self.look is not None else None
+        stored = f"{TEXT_CALL_NOTE}\n\n```\n{output.strip()}\n```"
+        return f"{earlier.strip()}\n\n---\n\n{stored}" if earlier else stored
 
 
 _DECIDED = {
@@ -748,6 +804,28 @@ def outcome_line(record: dict[str, Any]) -> str:
         words += f" ({result['error']})"
     approval = f"Approval #{record['batch_id']}: " if record.get("batch_id") else ""
     return f"{approval}{record['target']}: {words}."
+
+
+def chat_tools(
+    app: AppContext,
+    session_id: str,
+    who: str,
+    run_key: str,
+    shell: Any,
+    scrub: Scrubber,
+    host: str,
+) -> list[AgentTool]:
+    """The chat's own tools (MCP tools come as toolsets/capabilities): bash, delegate, the job
+    tools, and `bash_write` when the change shell is offered. Also used by the Settings
+    connection test, so it offers the model exactly what a chat turn does."""
+    tools = [
+        app_bash(app, session_id, shell),
+        app_delegate(app, session_id, scrub, host, shell),
+        *job_tools(app, session_id),
+    ]
+    if change_shell_offered(app):
+        tools.append(bash_write_tool(app, who, run_key))
+    return tools
 
 
 def change_shell_offered(app: AppContext) -> bool:

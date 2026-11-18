@@ -18,7 +18,7 @@ from ai_server_monitor.main import create_app
 from ai_server_monitor.settings_store import upgrade_stored
 
 from .conftest import LLM_URL
-from .test_chat import call, completion, say
+from .test_chat import call, say, streamed
 
 SHOW = {
     "parameters": 'temperature 1\ntop_k 64\ntop_p 0.95\nstop "<end>"',
@@ -132,10 +132,10 @@ def test_model_info_endpoint(bootstrap: Bootstrap) -> None:
 
 
 @respx.mock
-def test_settings_test_works_with_auto_sampling(bootstrap: Bootstrap) -> None:
+def test_settings_test_works_with_auto_sampling(bootstrap: Bootstrap, shell: list[str]) -> None:
     respx.get(f"{LLM_URL}/models").mock(return_value=httpx.Response(404))
     route = respx.post(f"{LLM_URL}/chat/completions").mock(
-        side_effect=[completion(call("get_check_word", {})), completion(say("OK"))]
+        side_effect=[streamed(call("bash", {"command": "echo x"})), streamed(say("OK"))]
     )
     with TestClient(create_app(bootstrap)) as client:
         result = client.post(
@@ -144,4 +144,4 @@ def test_settings_test_works_with_auto_sampling(bootstrap: Bootstrap) -> None:
         ).json()
     assert result["ok"] is True
     sent = json.loads(route.calls.last.request.content)
-    assert sent["temperature"] == 0 and "top_p" not in sent and "top_k" not in sent
+    assert "temperature" not in sent and "top_p" not in sent and "top_k" not in sent
