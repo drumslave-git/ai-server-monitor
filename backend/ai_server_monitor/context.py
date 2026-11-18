@@ -30,6 +30,7 @@ from .events import EventBus
 from .hostenv import HostEnv, resolve_timezone
 from .jobs import JobRunner
 from .mcp_client import McpServers
+from .mcp_client.domains import DomainStore
 from .outputs.action_events import ActionEventBridge
 from .outputs.metrics import MetricsHub
 from .outputs.telegram import TelegramBot
@@ -99,6 +100,9 @@ class AppContext:
         self.chat = ChatEngine(self)
         self.action_notifiers.append(self.chat.on_action)
         self.jobs = JobRunner(self)
+        self.domains = DomainStore(self.db)
+        """MCP tools as last listed and their domains (survives settings changes)."""
+        self._listing: set[asyncio.Task[Any]] = set()
         """Runs scheduled LLM jobs; lives as long as the app (runs survive settings changes)."""
 
     # ------------------------------------------------------------------ lifecycle
@@ -129,6 +133,9 @@ class AppContext:
         log.info("started (data=%s, host root=%s)", self.bootstrap.data_dir, self.host_env.root)
 
     async def stop(self) -> None:
+        for task in self._listing:
+            task.cancel()
+        await asyncio.gather(*self._listing, return_exceptions=True)
         await self._stop_services()
         await self.jobs.close()
         self.events.close()
@@ -139,6 +146,30 @@ class AppContext:
         await self.tracing.stop()
         await self.db.close()
         log.info("stopped")
+
+    def sort_model(self) -> Any:
+        """The model that sorts MCP tools into domains: main (None when not configured)."""
+        return self.models.model("main") if self.models.configured("main") else None
+
+    async def mcp_settings_saved(self) -> None:
+        """After a save in Settings: forget the tools of removed servers, then list the enabled
+        servers and sort new tools in the background (the save does not wait; a run that
+        starts meanwhile waits for the sorting)."""
+        servers = self.settings.mcp.servers
+        await self.domains.forget_servers(s.name for s in servers)
+        enabled = [s for s in servers if s.enabled]
+        if not enabled:
+            return
+
+        async def refresh() -> None:
+            try:
+                await self.domains.refresh(enabled, self.sort_model())
+            except Exception:
+                log.exception("listing MCP servers after the settings save failed")
+
+        task = asyncio.create_task(refresh())
+        self._listing.add(task)
+        task.add_done_callback(self._listing.discard)
 
     async def apply_settings(self, settings: Settings) -> None:
         """Persist new settings and restart the services that depend on them."""

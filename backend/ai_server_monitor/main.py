@@ -35,6 +35,8 @@ from .jobs.api import router as jobs_router
 from .jobs.status import job_status
 from .llm.check import check_model
 from .llm.modelinfo import read_model_info
+from .mcp_client.api import router as mcp_router
+from .mcp_client.api import sort_tested
 from .outputs.metrics import CONTENT_TYPE
 from .outputs.sse import SSE_HEADERS, event_stream, parse_types
 from .settings_store import SettingsStore, merge_secrets
@@ -116,6 +118,7 @@ def create_app(
     app.include_router(chat_router)
     app.include_router(jobs_router)
     app.include_router(logs_router)
+    app.include_router(mcp_router)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz(request: Request) -> JSONResponse:
@@ -236,6 +239,7 @@ def create_app(
         except ValidationError as exc:
             raise _validation_error(exc) from exc
         await ctx.apply_settings(new)
+        await ctx.mcp_settings_saved()
         return api_models.SettingsValues.model_validate({"values": ctx.settings.public_dict()})
 
     @app.post("/api/settings/test-llm")
@@ -297,6 +301,8 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no connection test {kind!r}")
         ctx = get_ctx(request)
         result = await run_test(kind, body, ctx.settings, mode=mode, index=index)
+        if kind == "mcp" and result.ok:
+            result.message += " " + await sort_tested(ctx, body, result.details)
         return api_models.ConnectionTestResult(
             ok=result.ok, message=result.message, details=result.details
         )

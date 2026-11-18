@@ -595,6 +595,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp/domains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Domain */
+        post: operations["create_domain_api_mcp_domains_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/domains/{domain_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Edit Domain
+         * @description Rename or describe a domain (kept by later re-sorts).
+         */
+        put: operations["edit_domain_api_mcp_domains__domain_id__put"];
+        post?: never;
+        /**
+         * Delete Domain
+         * @description Refused while a job uses the domain (names the jobs). Its tools lose their domain and
+         *     are sorted at the next listing.
+         */
+        delete: operations["delete_domain_api_mcp_domains__domain_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/sort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sort
+         * @description List the server (or all enabled servers) live and sort its tools into domains again
+         *     with the main model. The owner's placements stay unless `include_owner`; domain names
+         *     and descriptions the owner wrote always stay.
+         */
+        post: operations["sort_api_mcp_sort_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Tools
+         * @description Every tool of the configured servers as last listed, with its domain; the domains;
+         *     each server's state (last listing and why it failed).
+         */
+        get: operations["get_tools_api_mcp_tools_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/tools/{server}/{tool}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Edit Tool
+         * @description Move a tool to a domain (kept by later re-sorts) and/or switch it on or off.
+         */
+        patch: operations["edit_tool_api_mcp_tools__server___tool__patch"];
+        trace?: never;
+    };
     "/api/settings": {
         parameters: {
             query?: never;
@@ -974,6 +1079,16 @@ export interface components {
             decision: "approve" | "reject";
             /** Items */
             items?: number[] | null;
+        };
+        /** DomainEdit */
+        DomainEdit: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Name */
+            name: string;
         };
         /** ExplainRequest */
         ExplainRequest: {
@@ -1603,6 +1718,27 @@ export interface components {
              */
             store_bodies: boolean;
         };
+        /** McpDomain */
+        McpDomain: {
+            /** Description */
+            description: string;
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /**
+             * Set By
+             * @enum {string}
+             */
+            set_by: "model" | "owner";
+            /** Tools */
+            tools: number;
+            /**
+             * Used By
+             * @description Names of the jobs that have this domain.
+             */
+            used_by: string[];
+        };
         /** McpHeader */
         McpHeader: {
             /**
@@ -1686,6 +1822,23 @@ export interface components {
              */
             url: string;
         };
+        /** McpServerState */
+        McpServerState: {
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Error
+             * @description Why the last listing failed (None: it worked).
+             */
+            error: string | null;
+            /**
+             * Listed Ts
+             * @description Last listing attempt (None: never listed).
+             */
+            listed_ts: number | null;
+            /** Name */
+            name: string;
+        };
         /** McpSettings */
         McpSettings: {
             /**
@@ -1700,6 +1853,49 @@ export interface components {
              *     server are not used).
              */
             servers?: components["schemas"]["McpServerSettings"][];
+        };
+        /** McpTool */
+        McpTool: {
+            /** Description */
+            description: string;
+            /** Domain */
+            domain: string | null;
+            /** Domain Id */
+            domain_id: number | null;
+            /**
+             * Enabled
+             * @description Chosen for the agents (the server's tool_filter).
+             */
+            enabled: boolean;
+            /**
+             * Kind
+             * @description Effective, after the owner's override.
+             * @enum {string}
+             */
+            kind: "read" | "write";
+            /**
+             * Name
+             * @description What the model sees: server_tool.
+             */
+            name: string;
+            /**
+             * Read Only
+             * @description The server's readOnlyHint.
+             */
+            read_only: boolean | null;
+            /** Seen Ts */
+            seen_ts: number;
+            /** Server */
+            server: string;
+            /**
+             * Set By
+             * @enum {string}
+             */
+            set_by: "model" | "owner";
+            /** Sort Error */
+            sort_error: string | null;
+            /** Tool */
+            tool: string;
         };
         /** McpToolOverride */
         McpToolOverride: {
@@ -1724,6 +1920,15 @@ export interface components {
              * @enum {string}
              */
             policy: "inherit" | "suggest" | "approve" | "auto";
+        };
+        /** McpToolsPage */
+        McpToolsPage: {
+            /** Domains */
+            domains: components["schemas"]["McpDomain"][];
+            /** Servers */
+            servers: components["schemas"]["McpServerState"][];
+            /** Tools */
+            tools: components["schemas"]["McpTool"][];
         };
         /** MetricsSettings */
         MetricsSettings: {
@@ -1945,6 +2150,31 @@ export interface components {
         SettingsValues: {
             values: components["schemas"]["Settings"];
         };
+        /** SortRequest */
+        SortRequest: {
+            /**
+             * Include Owner
+             * @description Also re-sort the tools the owner placed by hand.
+             * @default false
+             */
+            include_owner: boolean;
+            /**
+             * Server
+             * @description One server; None = all enabled.
+             */
+            server?: string | null;
+        };
+        /** SortResult */
+        SortResult: {
+            /** Error */
+            error: string | null;
+            /** Sorted */
+            sorted: number;
+            /** Unreachable */
+            unreachable: {
+                [key: string]: string;
+            };
+        };
         /** StatusResponse */
         StatusResponse: {
             /** Automation */
@@ -2147,6 +2377,19 @@ export interface components {
             ts: number;
             /** Turn */
             turn?: string | null;
+        };
+        /** ToolEdit */
+        ToolEdit: {
+            /**
+             * Domain Id
+             * @description Move the tool to this domain.
+             */
+            domain_id?: number | null;
+            /**
+             * Enabled
+             * @description Switch the tool on or off.
+             */
+            enabled?: boolean | null;
         };
         /** TopicLine */
         TopicLine: {
@@ -3325,6 +3568,192 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ToolCallDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_domain_api_mcp_domains_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DomainEdit"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpDomain"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_domain_api_mcp_domains__domain_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                domain_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DomainEdit"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpDomain"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_domain_api_mcp_domains__domain_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                domain_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sort_api_mcp_sort_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SortRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SortResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_tools_api_mcp_tools_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpToolsPage"];
+                };
+            };
+        };
+    };
+    edit_tool_api_mcp_tools__server___tool__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server: string;
+                tool: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolEdit"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpTool"];
                 };
             };
             /** @description Validation Error */
