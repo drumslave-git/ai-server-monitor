@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import re
 import shutil
 import signal
 import socket
@@ -44,6 +45,22 @@ CAP_NOTE = (
     "lacks the DAC_READ_SEARCH capability. The owner can enable read-only access to them by "
     "adding `cap_add: [DAC_READ_SEARCH]` to the ai-server-monitor service in compose.yaml."
 )
+
+
+_WRITE_DENIED = re.compile(
+    r"cannot (touch|create|remove|delete|move|write|make|overwrite|change|set|link|kill)"
+    r"|for writing|operation not permitted|\bkill\b|\.sock\b|signal",
+    re.IGNORECASE,
+)
+
+
+def read_denied(output: str) -> bool:
+    """Whether a "Permission denied" in `output` is a failed read (the capability would help),
+    not a refused write, signal or socket connect (it would not)."""
+    return any(
+        "permission denied" in line.lower() and not _WRITE_DENIED.search(line)
+        for line in output.splitlines()
+    )
 
 
 def capability_bounded(cap: int, status: Path = Path("/proc/self/status")) -> bool:
@@ -218,7 +235,7 @@ class HostShell:
                 stopped="error",
             )
         started = time.monotonic()
-        collector = HeadTail(max_chars * 35 // 100, max_chars * 65 // 100)
+        sink = HeadTail(max_chars * 35 // 100, max_chars * 65 // 100)
         env = {"PATH": SEARCH_PATH} if self.isolated else self.environment()
         proc = await asyncio.create_subprocess_exec(
             *self.argv(command, timeout_s),
@@ -233,8 +250,8 @@ class HostShell:
         try:
             async with asyncio.timeout(timeout_s):
                 while chunk := await proc.stdout.read(65536):
-                    collector.feed(chunk)
-                    if collector.total > MAX_STREAM_BYTES:
+                    sink.feed(chunk)
+                    if sink.total > MAX_STREAM_BYTES:
                         stopped = "output limit"
                         break
                 if stopped is None:
@@ -247,16 +264,16 @@ class HostShell:
                     os.killpg(proc.pid, signal.SIGKILL)
                 with contextlib.suppress(Exception):
                     await asyncio.wait_for(proc.wait(), 5)
-        output = collector.render()
+        output = sink.render()
         note = None
-        if self.isolated and not self.read_all and "ermission denied" in output:
+        if self.isolated and not self.read_all and read_denied(output):
             note = CAP_NOTE
         return ShellResult(
             exit_code=None if stopped else proc.returncode,
             output=output,
             duration_s=round(time.monotonic() - started, 2),
             stopped=stopped,
-            output_bytes=collector.total,
-            truncated=collector.truncated,
+            output_bytes=sink.total,
+            truncated=sink.truncated,
             note=note,
         )

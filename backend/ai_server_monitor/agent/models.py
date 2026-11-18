@@ -7,6 +7,8 @@ each call lands in `llm_calls` (bodies, tokens, timing) whatever agent made it.
 
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -20,6 +22,8 @@ from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 from pydantic_ai.settings import ModelSettings
 
 from ..config import LLMSettings, Settings
+
+log = logging.getLogger(__name__)
 
 Profile = Literal["main", "worker"]
 NO_KEY = "not-needed"
@@ -70,6 +74,57 @@ def model_settings(cfg: LLMSettings) -> ModelSettings:
     return OpenAIChatModelSettings(**out)  # type: ignore[typeddict-item]
 
 
+class EffortGuard(httpx.AsyncBaseTransport):
+    """Leaves out `reasoning_effort` for an endpoint that rejects it: the first HTTP 400 that
+    names the field is retried once without it, and every later request of this model profile
+    goes without it (until the settings change)."""
+
+    def __init__(self, inner: httpx.AsyncBaseTransport):
+        self._inner = inner
+        self.rejected = False
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if self.rejected:
+            request = await _without_effort(request) or request
+        response = await self._inner.handle_async_request(request)
+        if self.rejected or response.status_code != 400:
+            return response
+        await response.aread()
+        if "reasoning_effort" not in response.text:
+            return response
+        retry = await _without_effort(request)
+        if retry is None:
+            return response
+        self.rejected = True
+        log.warning("%s rejects reasoning_effort: it is no longer sent", request.url.host)
+        return await self._inner.handle_async_request(retry)
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
+async def _without_effort(request: httpx.Request) -> httpx.Request | None:
+    """The same request without `reasoning_effort` in its JSON body; None when it has none."""
+    body = await request.aread()
+    if b"reasoning_effort" not in body:
+        return None
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or data.pop("reasoning_effort", None) is None:
+        return None
+    headers = httpx.Headers(request.headers)
+    headers.pop("content-length", None)
+    return httpx.Request(
+        request.method,
+        request.url,
+        headers=headers,
+        content=json.dumps(data).encode(),
+        extensions=request.extensions,
+    )
+
+
 class ModelHub:
     """Builds and owns the models (and their HTTP clients) of one settings generation."""
 
@@ -110,6 +165,7 @@ class ModelHub:
         transport = self._transport
         if self._tracing is not None:
             transport = self._tracing.wrap_transport(transport)
+        transport = EffortGuard(transport or httpx.AsyncHTTPTransport())
         client = httpx.AsyncClient(
             timeout=httpx.Timeout(cfg.timeout.total_seconds(), connect=10.0),
             transport=transport,

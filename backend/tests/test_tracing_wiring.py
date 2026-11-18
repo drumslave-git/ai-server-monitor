@@ -1,33 +1,18 @@
 """The trace as wired into the app: every caller tags its calls, chat turns read as a timeline,
-reports link back, settings switch it."""
+settings switch it."""
 
 from __future__ import annotations
 
 import json
-import time
 from typing import Any
 
 import httpx
 from fastapi.testclient import TestClient
 
-from ai_server_monitor.collectors import CollectorManager
-from ai_server_monitor.collectors.base import CollectorResult
 from ai_server_monitor.config import Bootstrap, Settings
-from ai_server_monitor.db import Database
-from ai_server_monitor.digest import WindowObserver
-from ai_server_monitor.events import EventBus
-from ai_server_monitor.llm import LLMClient
-from ai_server_monitor.llm.probe import probe_tool_mode
-from ai_server_monitor.promauto import Planner
-from ai_server_monitor.report.engine import ReportEngine
-from ai_server_monitor.scheduler import Scheduler
-from ai_server_monitor.tracing import Tracing
 
-from .conftest import LLM_URL, chat_response
-from .fake_llm import stream_response
-from .test_chat import FakeLLM, StubSystem, ask, call, make_app, say
-from .test_digest import healthy_system
-from .test_report_engine import StubSystem as ReportStubSystem
+from .conftest import LLM_URL
+from .test_chat import FakeLLM, ask, call, completion, make_app, say
 
 
 def flush(client: TestClient, app: Any) -> None:
@@ -109,28 +94,31 @@ def test_a_failing_tool_shows_up_failed_in_the_timeline(
 def test_the_settings_llm_test_is_recorded_as_a_test(bootstrap: Bootstrap) -> None:
     from ai_server_monitor.main import create_app
 
+    seen: list[httpx.Request] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
             return httpx.Response(404)
-        return chat_response("OK", usage={"prompt_tokens": 7, "completion_tokens": 1})
+        if len(seen) == 0:
+            seen.append(request)
+            return completion(call("get_check_word", {}), 7, 1)
+        return completion(say("OK"), 7, 1)
 
     app = create_app(
         bootstrap,
         llm_transport=httpx.MockTransport(handler),
-        collector_registry={"system": StubSystem},
         seed_settings=Settings.model_validate({"llm": {"base_url": LLM_URL, "model": "fake"}}),
     )
     with TestClient(app) as client:
         body = {"base_url": LLM_URL, "model": "fake"}
         assert client.post("/api/settings/test-llm", json=body).json()["ok"] is True
         flush(client, app)
-        # (the startup tool-mode probe is in there too)
-        assert [c["purpose"] for c in calls(client)].count("test") == 1
+        assert [c["purpose"] for c in calls(client)] == ["test", "test"]  # tool call, answer
 
 
 def test_llm_trace_can_be_switched_off_and_bodies_dropped(bootstrap: Bootstrap) -> None:
     settings = {
-        "llm": {"base_url": LLM_URL, "model": "fake", "max_retries": 0, "tool_mode": "none"},
+        "llm": {"base_url": LLM_URL, "model": "fake", "max_retries": 0},
         "logs": {"llm_trace": False},
     }
     llm = FakeLLM(say("hello"))
@@ -163,7 +151,6 @@ def make_app_with(bootstrap: Bootstrap, llm: FakeLLM, settings: dict[str, Any]) 
     return create_app(
         bootstrap,
         llm_transport=httpx.MockTransport(llm.handler),
-        collector_registry={"system": StubSystem},
         seed_settings=Settings.model_validate(settings),
     )
 
@@ -181,81 +168,3 @@ def test_app_log_is_attached_for_the_app_lifetime(bootstrap: Bootstrap) -> None:
         assert len(stored["items"]) == 1
     logging.getLogger("ai_server_monitor.test_marker").warning("after shutdown")
     assert not app.state.tracing.applog.ring.query(q="after shutdown")
-
-
-async def test_report_calls_are_linked_to_their_report(db: Database) -> None:
-    settings = Settings(
-        llm={"base_url": LLM_URL, "model": "test-model", "max_retries": 0, "tool_mode": "none"}
-    )
-    tracing = Tracing(db, events=EventBus())
-    llm = LLMClient(
-        settings.llm,
-        transport=httpx.MockTransport(lambda r: stream_response()),
-        tracing=tracing,
-    )
-    manager = CollectorManager(settings, db, Scheduler(), registry={"system": ReportStubSystem})
-    manager.states["system"] = "active"
-    manager.latest["system"] = CollectorResult(
-        "system", time.time(), ok=True, data=healthy_system()
-    )
-    engine = ReportEngine(settings, db, llm, manager, EventBus(), WindowObserver(), tracing=tracing)
-    outcome = await engine.run()
-    assert outcome.status == "ok" and outcome.report_id is not None
-    await tracing.flush()
-
-    items, total, _ = await tracing.store.list_calls(
-        link_kind="report", link_id=str(outcome.report_id)
-    )
-    assert total == 1 and items[0]["purpose"] == "report" and items[0]["status"] == "ok"
-    call_detail = await tracing.store.get_call(items[0]["id"])
-    assert call_detail is not None
-    assert "<digest>" in call_detail["messages"][1]["content"]
-    assert call_detail["content"].startswith("```json")
-    report = await db.fetchone(
-        "SELECT tokens_in, tokens_out FROM reports WHERE id = ?", (outcome.report_id,)
-    )
-    assert report is not None and report["tokens_in"] == call_detail["prompt_tokens"]
-    await llm.aclose()
-
-
-async def test_a_failed_report_is_linked_too(db: Database) -> None:
-    settings = Settings(
-        llm={"base_url": LLM_URL, "model": "test-model", "max_retries": 0, "tool_mode": "none"}
-    )
-    tracing = Tracing(db)
-    llm = LLMClient(
-        settings.llm,
-        transport=httpx.MockTransport(lambda r: httpx.Response(500, text="boom")),
-        tracing=tracing,
-    )
-    manager = CollectorManager(settings, db, Scheduler(), registry={"system": ReportStubSystem})
-    manager.states["system"] = "active"
-    manager.latest["system"] = CollectorResult(
-        "system", time.time(), ok=True, data=healthy_system()
-    )
-    engine = ReportEngine(settings, db, llm, manager, EventBus(), WindowObserver(), tracing=tracing)
-    outcome = await engine.run()
-    assert outcome.status == "failed" and outcome.report_id is not None
-    await tracing.flush()
-    items, total, _ = await tracing.store.list_calls(
-        link_kind="report", link_id=str(outcome.report_id)
-    )
-    assert total == 1 and items[0]["status"] == "error" and "boom" in items[0]["error"]
-    await llm.aclose()
-
-
-async def test_probe_and_prom_plan_are_tagged(db: Database) -> None:
-    settings = Settings(llm={"base_url": LLM_URL, "model": "m", "max_retries": 0})
-    tracing = Tracing(db)
-    llm = LLMClient(
-        settings.llm,
-        transport=httpx.MockTransport(lambda r: chat_response("[]", usage={"prompt_tokens": 3})),
-        tracing=tracing,
-    )
-    await probe_tool_mode(llm)  # no tool call in the reply: native, then the JSON fallback
-    planner = Planner(settings, db, llm)
-    await planner._ask([{"role": "user", "content": "plan"}])
-    await tracing.flush()
-    items, _, _ = await tracing.store.list_calls()
-    assert sorted(i["purpose"] for i in items) == ["probe", "probe", "prom_plan"]
-    await llm.aclose()

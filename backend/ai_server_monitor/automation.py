@@ -1,9 +1,8 @@
 """The global "pause automation" switch.
 
-While it is on, the monitor does nothing nobody asked for: every scheduler job (collectors,
-reports, the Prometheus planner, the LLM probe, approval sweeps, pruning) is held back and the
-runs in flight are cancelled. What a person starts keeps working: chat, the Settings test
-buttons, approving or rejecting, the Telegram bot, and the "run a report now" buttons. The
+While it is on, the monitor does nothing nobody asked for: every scheduler job (approval
+sweeps, pruning) is held back and the runs in flight are cancelled. What a person starts keeps
+working: chat, the Settings test buttons, approving or rejecting and the Telegram bot. The
 point is a quiet host and a quiet LLM.
 
 The state is stored in the database (kv), so a restart while paused stays paused.

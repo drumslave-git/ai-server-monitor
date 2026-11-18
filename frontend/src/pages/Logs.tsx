@@ -7,7 +7,7 @@ import "./logs/logs.css";
 /** Routes (params after `#/logs`):
  *    (none) | llm            LLM calls list
  *    llm/<id>                one call
- *    llm/for/<kind>/<id>[/<turn>]   calls belonging to a report / chat; jumps to the call when
+ *    llm/for/<kind>/<id>[/<turn>]   calls belonging to a chat; jumps to the call when
  *                            there is one (or to the first call of a chat turn)
  *    app                     app log
  */

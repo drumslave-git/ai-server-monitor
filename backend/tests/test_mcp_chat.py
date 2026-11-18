@@ -18,7 +18,7 @@ from ai_server_monitor.context import AppContext
 
 from .conftest import LLM_URL
 from .mcp_fake import FakeMcp
-from .test_chat import FakeLLM, StubSystem, call, say
+from .test_chat import FakeLLM, call, say
 
 
 def settings_for(url: str | None, **mcp: Any) -> Settings:
@@ -31,7 +31,7 @@ def settings_for(url: str | None, **mcp: Any) -> Settings:
     }
     return Settings.model_validate(
         {
-            "llm": {"base_url": LLM_URL, "model": "fake", "tool_mode": "native", "max_retries": 0},
+            "llm": {"base_url": LLM_URL, "model": "fake", "max_retries": 0},
             "mcp": {"servers": [server], **mcp},
         }
     )
@@ -49,7 +49,6 @@ async def start_app(tmp_path: Path, llm: FakeLLM, settings: Settings) -> AsyncIt
     app = AppContext(
         Bootstrap(data_dir=tmp_path / "data", host_root=tmp_path / "no-host"),
         llm_transport=httpx.MockTransport(llm.handler),
-        collector_registry={"system": StubSystem},
         seed_settings=settings,
     )
     await app.start()
@@ -226,8 +225,7 @@ async def test_unknown_action_still_raises(db: Any) -> None:
         await ActionService(db, Settings(), registry={}).request("nope", {}, "t")
 
 
-async def test_settings_test_endpoint_unmasks_the_stored_token(tmp_path: Path) -> None:
-    from ai_server_monitor.collectors.base import HostEnv
+async def test_settings_test_endpoint_unmasks_the_stored_token() -> None:
     from ai_server_monitor.conntest import run_test
 
     server = FakeMcp("streamable_http", token="tok-stored-123456")
@@ -242,17 +240,15 @@ async def test_settings_test_endpoint_unmasks_the_stored_token(tmp_path: Path) -
         )
         body = stored.public_dict()["mcp"]["servers"][0]  # the token is masked, as in the form
         assert "tok-stored" not in json.dumps(body)
-        result = await run_test("mcp", body, stored, HostEnv.detect(tmp_path), index=0)
+        result = await run_test("mcp", body, stored, index=0)
         assert result.ok, result.message
         assert result.details["server"]["name"] == "fake-home"
         assert {t["name"] for t in result.details["tools"]} >= {"get_temperature", "set_heating"}
         assert "tok-stored" not in json.dumps(result.details) + result.message
         wrong = {**body, "token": "wrong-token-000"}
-        bad = await run_test("mcp", wrong, stored, HostEnv.detect(tmp_path))
+        bad = await run_test("mcp", wrong, stored)
         assert not bad.ok and "credentials" in bad.message
-        invalid = await run_test(
-            "mcp", {"name": "x y", "url": "ftp://z"}, stored, HostEnv.detect(tmp_path)
-        )
+        invalid = await run_test("mcp", {"name": "x y", "url": "ftp://z"}, stored)
         assert not invalid.ok and invalid.message.startswith("Fix this first")
     finally:
         await server.stop()

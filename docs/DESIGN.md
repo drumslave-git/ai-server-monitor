@@ -1,25 +1,20 @@
 # AI Server Monitor — Design (v1)
 
-An AI-powered monitor for a single self-hosted Linux server. It continuously collects
-read-only information about the host (resources, hardware, Docker, updates, logs,
-Prometheus), has an LLM (any OpenAI-compatible API) write a status report every N
-minutes, streams that report to a web UI and Telegram, answers questions in chat, and
-can call tools of external MCP servers under per-action policy.
+An AI-powered monitor for a single self-hosted Linux server. An LLM (any OpenAI-compatible API
+with native tool calling) answers questions in chat by looking at the host through a read-only
+shell, and can call tools of external MCP servers under per-action policy.
 
 ## Goals and non-goals
 
 **Goals**
-- Works with *any* OpenAI-compatible endpoint, including small local models (7–14B)
-  with weak or no tool-calling, as well as strong cloud models.
+- Works with any OpenAI-compatible endpoint that supports native tool calling, small local
+  models as well as strong cloud models.
 - Strictly read-only towards the host. The only write access is MCP tool calls,
   and every write is policy-gated and audited.
 - Single container, simple config, no external database.
-- Useful output: what is happening, what is eating resources, health, pending updates,
-  trends — not a metrics dump.
 
 **Non-goals (v1)**
-- Multi-host monitoring (hub + agents). Keep collector interfaces clean so it can be
-  added later.
+- Multi-host monitoring (hub + agents).
 - Remediation on the host itself (restarting containers, installing updates, etc.).
 - Built-in authentication — a reverse proxy (Authelia/Authentik/etc.) is expected in front.
 - SMART / disk-health monitoring.
@@ -33,63 +28,23 @@ can call tools of external MCP servers under per-action policy.
 | Deployment | One Docker container on a Debian/Ubuntu host |
 | LLM | OpenAI-compatible API (`base_url`, `api_key`, `model`), streaming |
 | Storage | SQLite (WAL), configurable retention (default 30 days), permanent action audit log |
-| Report cadence | Full LLM report every N minutes (default 5, configurable) |
 | Outputs | Web UI (live via SSE), Telegram bot, Prometheus `/metrics` |
-| Chat | UI + Telegram, with tool-calling |
+| Chat | UI + Telegram, with native tool calling |
 | Configuration | Web UI only (stored in SQLite, applied live); compose sets only mounts, data dir, port, Docker proxy |
 | Auth | None built in; reverse proxy handles it |
 | Repo / CI | GitHub, GitHub Actions publishes `ghcr.io/drumslave-git/ai-server-monitor` (amd64) on version bumps |
 
 ## Architecture
 
-```
-                ┌─────────────────────────── container ───────────────────────────┐
- /proc,/sys ──► │ Collectors ──► Snapshot store (SQLite) ──► Snapshot digester     │
- docker.sock ─► │   system, docker, apt,          ▲               │                │
- journal ─────► │   gpu, systemd/journal,         │               ▼                │
- apt state ───► │   prometheus, image-updates     │         Report engine ──► LLM  │
- Prometheus ──► │                                 │               │  (stream)      │
-                │ MCP client ◄─────────── Action layer (policy, limits, audit)     │
-                │        ▲                        ▲               │                │
-                │        └──── Tool registry ─────┴── Chat engine ┤                │
-                │                                                 ▼                │
-                │            Event bus ──► SSE (web UI) / Telegram / /metrics      │
-                └──────────────────────────────────────────────────────────────────┘
-```
+See `docs/handover-agent-runtime.md` for the agent runtime.
 
 ### Components
 
-- **Scheduler** — asyncio tasks. Each collector has its own interval (fast ones like CPU
-  every 15–30s, slow ones like apt/image updates every few hours). The report job runs
-  every `report.interval` (default 5m).
-- **Collectors** — implement a common interface `async collect() -> CollectorResult`
-  (typed data + collection errors). A failing collector never breaks a report; its
-  error is included so the LLM can mention it.
-- **Snapshot store** — stores raw collector results and periodic compact snapshots in
-  SQLite for trends (e.g. "disk grew 40 GB this week", "container X restarted 6 times
-  today").
-- **Snapshot digester** — the key to supporting weak models. Turns raw data into a
-  compact, pre-analyzed text/JSON digest *before* the LLM sees it:
-  top-N processes and containers by CPU/RAM/IO, deltas since the last report,
-  threshold breaches, rule-based anomaly flags, trend summaries, pending updates,
-  failed units, log error bursts. Has a token budget and
-  truncates by priority.
-- **Report engine** — one streamed chat-completion call per interval with a fixed
-  system prompt + digest + the previous report's summary (for continuity). No
-  tool-calling required. Output: Markdown report with a structured header
-  (overall health `ok|warn|crit`, health score 0–100, key findings) parsed from a
-  small JSON block, with a fallback if the model gets the format wrong.
-  Optional setting `skip_if_unchanged` (default off) to avoid paying for identical
-  reports.
-- **Chat engine** — conversational loop over the tool registry.
-  - Native OpenAI tool-calling when the model supports it.
-  - Fallback mode for models without tool-calling: JSON-in-text protocol
-    (`{"tool": ..., "args": ...}`) parsed and validated by us.
-  - Mode is auto-detected at startup with a probe, overridable in config.
-- **Tool registry** — single source of truth for everything the LLM can call: read
-  tools (query metrics, list containers, read logs, PromQL query)
-  and write tools (MCP tool calls). Each tool has a JSON schema, a description, and
-  a `kind: read|write`. Write tools always go through the action layer.
+- **Chat engine** — conversational loop over the tool registry, with native OpenAI
+  tool calling.
+- **Tool registry** — single source of truth for everything the LLM can call, each with a
+  JSON schema, a description, and a `kind: read|write`. Write tools (MCP tool calls)
+  always go through the action layer.
 - **Action layer** — every write passes through here:
   - Per-action policy: `off | suggest | approve | auto`.
   - Rate limits / caps (e.g. max N calls per hour).
@@ -97,40 +52,13 @@ can call tools of external MCP servers under per-action policy.
     inline keyboards; they expire after a configurable time.
   - Everything (suggested, approved, rejected, executed, failed) is written to the
     audit log.
-- **Event bus** — in-process pub/sub. Report tokens, new findings, pending approvals,
-  and action results are published once and fanned out to SSE, Telegram, and metrics.
+- **Event bus** — in-process pub/sub. Pending approvals and action results are published
+  once and fanned out to SSE, Telegram, and metrics.
 - **Outputs**
-  - **Web UI** — dashboard (live metrics, health, top consumers), live report stream,
-    report history, chat, approvals queue, action audit log, settings view.
-  - **Telegram** — report every interval (or configurable: every Nth / only on status
-    change), alerts, chat, approval inline buttons. Restricted to an allowlist of chat IDs.
-  - **Prometheus `/metrics`** — health score, finding counts by severity, collector
-    success/latency, LLM latency/tokens/errors,
-    actions by type/result, pending approvals.
-
-## Data sources
-
-All host access is read-only. The container needs just two things for everything below:
-`pid: host` and the host root mounted at `/host` read-only (`/:/host:ro,rslave`), plus
-Docker API access through a GET-only socket proxy (see `docker/compose.example.yaml`).
-
-| Source | How (as built in M2) |
-|---|---|
-| CPU, memory, swap, load, disks, network, temps, processes | `psutil` (host `/proc` via `pid: host`). Host mounts from `/proc/1/mounts`, usage via `statvfs` under `/host`; interfaces from `/proc/1/net/dev` (host net namespace); process owners from host `/etc/passwd`; process → container via `/proc/<pid>/cgroup` |
-| Docker | Engine API over httpx (unix socket or `tcp://` socket proxy): state, health (running only), restarts + deltas, one-shot stats (CPU% from deltas), log error scan since last run, `/system/df` every 30 min |
-| Container image updates | Running containers' images via the Docker API (`/images/{id}/json` `RepoDigests`) vs the digest the registry serves for the tag (`HEAD /v2/<repo>/manifests/<tag>`, anonymous Bearer tokens, multi-arch index digest), cached per ref, 429 backoff; private/locally built → `unknown` + reason |
-| apt updates | Container's `apt list --upgradable -o Dir=/host` with caches + locking disabled; security flag from `-security` suites; `reboot-required(.pkgs)`; age of host apt lists |
-| NVIDIA GPU | NVML (`nvidia-ml-py`) in a thread: util, VRAM, temp, power, fan, per-process VRAM. `enabled: auto` (needs NVIDIA runtime, `utility` capability) |
-| systemd units | `dbus-fast` → `/host/run/dbus/system_bus_socket`: `ListUnits`, failed units with result + since, `NRestarts` deltas, `SystemState` |
-| Journal | `journalctl --directory=/host/var/log/journal -o json -p warning`, continued by cursor: counts by priority/source, grouped normalized messages, notable kernel events (OOM, I/O, FS errors, segfaults, MCE, thermal, GPU Xid) |
-| Prometheus | PromQL HTTP API (`promql.py`: instant/range queries, normalized and capped results); configured named queries run by the collector, free-form `promql_query` chat tool comes later |
-
-Collector results are kept in memory (latest per collector, served at
-`/api/collectors[/{name}]`) and persisted to `collector_samples` at most every
-`storage.sample_interval` (default 5m), using a slimmed `persist_view`.
-
-Every collector can be disabled in config, and missing mounts or devices degrade
-gracefully (the collector reports "unavailable").
+  - **Web UI** — chat, approvals queue, action audit log, logs, settings view.
+  - **Telegram** — chat, approval inline buttons. Restricted to an allowlist of chat IDs.
+  - **Prometheus `/metrics`** — LLM latency/tokens/errors, actions by type/result,
+    pending approvals.
 
 ## Configuration
 
@@ -142,7 +70,7 @@ There are no config files.
   the JSON schema and section titles; the UI renders the form from the schema, so a new
   backend setting appears in the UI automatically, with its docstring as help text.
   `PUT /api/settings` validates (422 with per-field messages), saves, and rebuilds the
-  scheduler, LLM client and collectors in place. Sending a masked secret back keeps the
+  scheduler and LLM client in place. Sending a masked secret back keeps the
   stored value. `POST /api/settings/test-llm` tries unsaved LLM settings.
 - **On upgrade**, stored settings are validated leniently: parts that no longer fit fall
   back to defaults (with a logged warning and a backup copy in `kv`) instead of failing.
@@ -155,44 +83,28 @@ There are no config files.
 
 ## Storage schema (SQLite)
 
-- `collector_samples(ts, collector, data_json)` — raw/compact samples, pruned by retention.
-- `reports(id, ts, status, health, score, summary, findings, markdown, digest, digest_hash, model, tokens_in, tokens_out, latency_ms, error, parsed)` —
-  `status` ∈ ok | failed | skipped (failed/skipped rows carry the reason in `error`; an identical
-  repeat only moves the last row's `ts`); `parsed` = 0 when the model's JSON header could not be
-  read and the rule-based fallback was used.
 - `chat_sessions`, `chat_messages` — chat history.
 - `actions(id, ts, action, target, args_json, policy, status, source, result_json, decided_by)` —
   permanent audit log; `status` ∈ suggested | pending | approved | rejected | expired | executed | failed | dry_run.
 
 ## API (backend ↔ SPA)
 
-- `GET /api/status` — dashboard header in one call: latest successful report (health, score,
-  summary, findings), the newest failed/skipped attempt, next report time, collector states and
-  key resource numbers (typed: `StatusResponse`).
-- `GET /api/stream` — SSE over the in-process event bus; `?types=report,metrics` filters by
-  prefix. Events: `report.started|token|done|failed`, `metrics.tick` (compact cpu/mem/load/net
-  or per-GPU numbers after each system/gpu collect), `collector.status` (ok/failing changes),
-  `action.suggested|result`, `approval.pending|decided|expired` (action layer, compact payloads).
+- `GET /api/status` — version, uptime, model names, pending approvals and automation state.
+- `GET /api/stream` — SSE over the in-process event bus; `?types=approval,action` filters by
+  prefix. Events: `action.suggested|result`, `approval.pending|decided|expired` (action layer, compact payloads).
   Every frame has an `id:`; `retry: 3000` is sent first; a `: keepalive` comment every 15 s;
   each client has a bounded queue (a slow client loses its oldest events, publishers never
   wait). There is no replay on reconnect: clients re-fetch state via `/api/status`. The action
   layer (M9) should publish `approval.pending`, `approval.decided`, `action.result`.
-- `GET /api/reports` (paginated, newest first, no Markdown), `GET /api/reports/{id}`;
-  `POST /api/reports/run` (202; 409 if one is running); `GET /api/reports/digest` (the digest
-  the next report would be written from, `?format=text` for plain text).
 - `POST /api/chat` (SSE response), `GET /api/chat/sessions`.
 - `GET /api/actions`, `GET /api/approvals`, `POST /api/approvals/{id}` (approve/reject).
 - There is no separate `/api/config`: `GET /api/settings` already returns the settings with secrets masked.
 - `GET /metrics` (Prometheus text format, hand-rolled in `outputs/metrics.py`; on/off and an
   optional scrape bearer token in Settings → Outputs → metrics), `GET /healthz`. Series (prefix
-  `asm_`): `health_score`, `health_status{status}`, `findings{severity}`,
-  `report_last_success_timestamp_seconds`, `report_generation_seconds`, `reports_total{result}`,
-  `collector_up|duration_seconds|errors_total|last_success_timestamp_seconds{collector}`,
-  `llm_request_duration_seconds` (histogram), `llm_requests_total{result}`,
+  `asm_`): `llm_request_duration_seconds` (histogram), `llm_requests_total{result}`,
   `llm_tokens_total{direction}`, `llm_errors_total{type}`, `build_info{version}`, and for the
   action layer: `actions_total{action,result}`, `pending_approvals`, `pending_approval_batches`. Other modules
   add series with `MetricsHub.add_provider` (the action layer lists its names in `metrics.py`).
-  An example Grafana dashboard is in `docs/grafana-dashboard.json`.
 
 ## Security notes
 
@@ -218,15 +130,10 @@ backend/
     db.py              # SQLite access, migrations (PRAGMA user_version), retention, kv
     migrations/        # NNNN_name.sql
     scheduler.py       # asyncio interval scheduler (trigger, timeouts, status)
-    llm/               # httpx-based OpenAI-compatible client (not the OpenAI SDK, to
-                       # handle local-server quirks), tool-mode probe, JSON tool fallback
-    collectors/        # system, docker, apt, gpu, systemd, journal, prometheus, image_updates
-    digest/            # snapshot digester, anomaly rules, trends
-    report/            # report engine, prompts, output parsing
     chat/              # chat engine
     tools/             # tool registry + read tools
     actions/           # policy, limits, approvals, audit
-    outputs/           # sse (+ live metric ticks); telegram, metrics later
+    outputs/           # sse, telegram, metrics
   tests/
 frontend/              # React + Vite SPA (schema-driven settings form, overview)
                        #   src/api-types.ts is generated: `npm run gen:api` (backend OpenAPI schema
@@ -237,14 +144,11 @@ docs/
 
 ## Milestones
 
-1. **Foundation** — repo, config, SQLite + migrations, scheduler, LLM client (streaming, tool-mode probe), Dockerfile.
-2. **Host collectors** — system, Docker, apt, GPU, systemd, journal.
-3. **External collectors** — Prometheus, container image updates.
-4. **Digest + report engine** — digester, anomaly rules, trends, report prompt/parsing, history.
-5. **Event bus + API + SSE**.
-6. **Web UI** — dashboard, live report, history, chat, approvals, audit log.
-7. **Telegram bot** — reports, alerts, chat, approval buttons.
-8. **Prometheus `/metrics` exporter**.
-9. **Action layer** — policy, limits, approvals, audit.
-10. **Chat tool-calling** — tool registry, native + JSON fallback modes.
-11. **Packaging & docs** — compose example, README, GitHub Actions image publish.
+1. **Foundation** — repo, config, SQLite + migrations, scheduler, LLM client, Dockerfile.
+2. **Event bus + API + SSE**.
+3. **Web UI** — chat, approvals, audit log.
+4. **Telegram bot** — chat, approval buttons.
+5. **Prometheus `/metrics` exporter**.
+6. **Action layer** — policy, limits, approvals, audit.
+7. **Chat tool-calling** — tool registry.
+8. **Packaging & docs** — compose example, README, GitHub Actions image publish.

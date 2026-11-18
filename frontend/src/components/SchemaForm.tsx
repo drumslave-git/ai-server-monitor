@@ -8,13 +8,13 @@ import { api, type ConnectionTestResult, type Json, type JsonObject, type JsonSc
 export const SECRET_MASK = "********";
 const ACRONYMS: Record<string, string> = {
   url: "URL", llm: "LLM", api: "API", id: "ID", ids: "IDs", gpu: "GPU", ttl: "TTL",
-  df: "disk usage", n: "N", mcp: "MCP", promql: "PromQL",
+  df: "disk usage", n: "N", mcp: "MCP",
 };
 
 export function humanize(key: string): string {
   const words = key.split("_").map((w) => ACRONYMS[w] ?? w);
   const text = words.join(" ");
-  // A word with its own capitalisation (PromQL) keeps it at the start too.
+  // A word with its own capitalisation keeps it at the start too.
   const first = words[0];
   const mixedCase = first !== first.toLowerCase() && first[0] === first[0].toLowerCase();
   return mixedCase ? text : text.charAt(0).toUpperCase() + text.slice(1);
@@ -98,7 +98,7 @@ export function Field(props: FieldProps) {
   const s = resolve(schema, ctx.defs);
   const label = humanize(name);
 
-  // Nested settings group (e.g. one collector) → titled group.
+  // Nested settings group → titled group.
   if (isNestedObject(s)) {
     return (
       <Tested spec={s} value={value}>

@@ -93,7 +93,7 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     `session` {session_id}, `tool_call` {id, name, args, kind}, `tool_progress` {id, name,
     elapsed_s} (every few seconds while a tool is still running), `tool_result` {id, name, ok,
     truncated, size, preview}, `token` {text} (the answer, in pieces), then `done`
-    {session_id, message_id, tool_mode, steps, usage, stopped} — or `error` {message}.
+    {session_id, message_id, steps, usage, stopped} — or `error` {message}.
     For the first answer of a new conversation one more event may follow `done`:
     `title` {session_id, title}, the LLM-written session title (the stream closes right after;
     without it the session keeps the title cut from the first message)."""

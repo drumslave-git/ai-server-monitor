@@ -1,5 +1,5 @@
-"""The recording layer, exercised through the real LLMClient (which this change does not edit):
-whatever the client sends and receives must show up in the trace."""
+"""The recording layer, exercised through the OpenAI SDK client the agents use: whatever it
+sends and receives must show up in the trace."""
 
 from __future__ import annotations
 
@@ -9,11 +9,10 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 import httpx
+import openai
 import pytest
 
-from ai_server_monitor.config import LLMSettings
 from ai_server_monitor.db import Database
-from ai_server_monitor.llm import LLMClient, LLMEmptyAnswerError, LLMError
 from ai_server_monitor.tracing import Tracing, trace_call, trace_scope
 
 from .conftest import LLM_URL, chat_response, sse
@@ -22,8 +21,67 @@ from .tracing_helpers import API_KEY, make_tracing
 Handler = Callable[[httpx.Request], httpx.Response]
 
 
+class OnceStream(httpx.AsyncByteStream):
+    """A body that can be read once, like a real connection (MockTransport's can be replayed)."""
+
+    def __init__(self, body: bytes):
+        self.body: bytes | None = body
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        body, self.body = self.body, None
+        if body:
+            yield body
+
+
+def once(response: httpx.Response) -> httpx.Response:
+    try:
+        body = response.content
+    except httpx.ResponseNotRead:
+        return response
+    return httpx.Response(
+        response.status_code,
+        headers={k: v for k, v in response.headers.items() if k.lower() != "content-length"},
+        stream=OnceStream(body),
+    )
+
+
+class Client:
+    """The OpenAI SDK over the tracing transport (what the agent models are built on)."""
+
+    def __init__(self, tracing: Tracing, transport: httpx.AsyncBaseTransport, base_url: str):
+        self.http = httpx.AsyncClient(transport=tracing.wrap_transport(transport))
+        self.sdk = openai.AsyncOpenAI(
+            base_url=base_url, api_key=API_KEY, http_client=self.http, max_retries=0
+        )
+
+    async def complete(self, messages: list[dict[str, Any]], **kw: Any) -> Any:
+        reply = await self.sdk.chat.completions.create(
+            model="test-model",
+            messages=messages,
+            **kw,  # type: ignore[arg-type]
+        )
+        return reply.choices[0].message
+
+    async def stream(self, messages: list[dict[str, Any]], **kw: Any) -> AsyncIterator[Any]:
+        stream = await self.sdk.chat.completions.create(
+            model="test-model",
+            messages=messages,  # type: ignore[arg-type]
+            stream=True,
+            stream_options={"include_usage": True},
+            **kw,
+        )
+        try:
+            async for chunk in stream:
+                yield chunk
+        finally:
+            await stream.close()
+
+    async def list_models(self) -> list[str]:
+        return [m.id async for m in self.sdk.models.list()]
+
+
 class Rig:
-    def __init__(self, tracing: Tracing, client: LLMClient, calls: list[httpx.Request]):
+    def __init__(self, tracing: Tracing, client: Client, calls: list[httpx.Request]):
         self.tracing = tracing
         self.client = client
         self.requests = calls
@@ -36,43 +94,31 @@ class Rig:
 
 
 @pytest.fixture
-async def make_rig(
-    db: Database, monkeypatch: pytest.MonkeyPatch
-) -> AsyncIterator[Callable[..., Any]]:
-    clients: list[LLMClient] = []
+async def make_rig(db: Database) -> AsyncIterator[Callable[..., Any]]:
+    clients: list[Client] = []
 
-    async def build(handler: Handler, **cfg: Any) -> Rig:
+    async def build(handler: Handler, base_url: str = LLM_URL) -> Rig:
         tracing = await make_tracing(db)
         seen: list[httpx.Request] = []
 
         def recording(request: httpx.Request) -> httpx.Response:
             seen.append(request)
-            return handler(request)
+            return once(handler(request))
 
-        settings = LLMSettings(
-            base_url=LLM_URL, model="test-model", api_key=API_KEY, max_retries=2, **cfg
-        )
-        client = LLMClient(
-            settings, transport=tracing.wrap_transport(httpx.MockTransport(recording))
-        )
-
-        async def no_sleep(attempt: int) -> None:
-            return None
-
-        monkeypatch.setattr(client, "_backoff", no_sleep)
+        client = Client(tracing, httpx.MockTransport(recording), base_url)
         clients.append(client)
         return Rig(tracing, client, seen)
 
     yield build
     for client in clients:
-        await client.aclose()
+        await client.http.aclose()
 
 
 MESSAGES = [
     {"role": "system", "content": "You write server reports."},
-    {"role": "user", "content": "Digest: disk / 88% full"},
+    {"role": "user", "content": "Disk: disk / 88% full"},
 ]
-TOOLS = [{"type": "function", "function": {"name": "promql", "parameters": {"type": "object"}}}]
+TOOLS = [{"type": "function", "function": {"name": "disk_usage", "parameters": {"type": "object"}}}]
 
 
 async def test_non_streaming_completion_is_recorded_as_sent_and_received(make_rig: Any) -> None:
@@ -96,7 +142,7 @@ async def test_non_streaming_completion_is_recorded_as_sent_and_received(make_ri
         False,
     )
     assert row["params"]["temperature"] == 0.3 and row["params"]["max_tokens"] == 500
-    assert row["params"]["tool_choice"] == "auto" and row["params"]["stream"] is False
+    assert row["params"]["tool_choice"] == "auto" and not row["params"].get("stream")
     assert row["model"] == "test-model" and row["base_url"] == LLM_URL and row["stream"] is False
     assert row["total_ms"] is not None and row["ttft_ms"] is None  # nothing streams
     assert row["request_bytes"] == len(rig.requests[0].content)
@@ -115,8 +161,7 @@ async def test_api_key_and_headers_are_never_stored(make_rig: Any, db: Database)
 
 
 async def test_url_credentials_are_dropped_from_the_stored_base_url(make_rig: Any) -> None:
-    rig: Rig = await make_rig(lambda r: chat_response("ok"))
-    rig.client._http.base_url = httpx.URL("http://user:pw@llm.test/v1/")
+    rig: Rig = await make_rig(lambda r: chat_response("ok"), "http://user:pw@llm.test/v1/")
     await rig.client.complete(MESSAGES)
     (row,) = await rig.rows()
     assert row["base_url"] == "http://llm.test/v1"
@@ -124,7 +169,11 @@ async def test_url_credentials_are_dropped_from_the_stored_base_url(make_rig: An
 
 async def test_non_streaming_tool_calls_and_think_text(make_rig: Any) -> None:
     calls = [
-        {"id": "c1", "type": "function", "function": {"name": "promql", "arguments": '{"q":"up"}'}}
+        {
+            "id": "c1",
+            "type": "function",
+            "function": {"name": "disk_usage", "arguments": '{"q":"up"}'},
+        }
     ]
     rig: Rig = await make_rig(
         lambda r: chat_response("<think>should I query?</think>Querying.", tool_calls=calls)
@@ -132,7 +181,7 @@ async def test_non_streaming_tool_calls_and_think_text(make_rig: Any) -> None:
     await rig.client.complete(MESSAGES, tools=TOOLS)
     (row,) = await rig.rows()
     assert row["content"] == "Querying." and row["reasoning"] == "should I query?"
-    assert row["tool_calls"] == [{"id": "c1", "name": "promql", "arguments": '{"q":"up"}'}]
+    assert row["tool_calls"] == [{"id": "c1", "name": "disk_usage", "arguments": '{"q":"up"}'}]
     assert row["tool_calls_count"] == 1 and row["usage_estimated"] is True
     assert row["prompt_tokens"] > 0 and row["completion_tokens"] > 0
 
@@ -151,7 +200,7 @@ async def test_streaming_assembles_text_reasoning_tools_usage_and_ttft(make_rig:
                             {
                                 "index": 0,
                                 "id": "c9",
-                                "function": {"name": "promql", "arguments": '{"q":'},
+                                "function": {"name": "disk_usage", "arguments": '{"q":'},
                             }
                         ]
                     }
@@ -170,12 +219,12 @@ async def test_streaming_assembles_text_reasoning_tools_usage_and_ttft(make_rig:
     rig: Rig = await make_rig(lambda r: httpx.Response(200, content=body))
     with trace_scope("chat", link_kind="chat", link_id="s1", step=2, turn="t1"):
         chunks = [c async for c in rig.client.stream(MESSAGES, tools=TOOLS)]
-    assert chunks[-1].done
+    assert chunks
     (row,) = await rig.rows()
     assert row["stream"] is True and row["status"] == "ok"
     assert row["content"] == "Hello"
     assert row["reasoning"] == "Let me think. More thought."
-    assert row["tool_calls"] == [{"id": "c9", "name": "promql", "arguments": '{"q":"up"}'}]
+    assert row["tool_calls"] == [{"id": "c9", "name": "disk_usage", "arguments": '{"q":"up"}'}]
     assert row["finish_reason"] == "tool_calls"
     assert (row["prompt_tokens"], row["completion_tokens"]) == (120, 33)
     assert row["ttft_ms"] is not None and 0 <= row["ttft_ms"] <= row["total_ms"]
@@ -202,7 +251,9 @@ async def test_streaming_without_usage_is_estimated_and_flagged(make_rig: Any) -
     assert row["purpose"] == "other"  # no scope set: still recorded
 
 
-async def test_http_error_is_recorded_with_body_and_each_retry_is_a_row(make_rig: Any) -> None:
+async def test_http_error_is_recorded_with_body_and_each_attempt_is_a_row(
+    make_rig: Any,
+) -> None:
     attempts = iter([503, 503, 200])
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -212,9 +263,12 @@ async def test_http_error_is_recorded_with_body_and_each_retry_is_a_row(make_rig
         return httpx.Response(status, json={"error": {"message": "model is loading"}})
 
     rig: Rig = await make_rig(handler)
-    with trace_scope("report"):
-        completion = await rig.client.complete(MESSAGES)
-    assert completion.content == "finally"
+    with trace_scope("report"), trace_call():
+        for _ in range(2):
+            with pytest.raises(openai.APIStatusError):
+                await rig.client.complete(MESSAGES)
+        message = await rig.client.complete(MESSAGES)
+    assert message.content == "finally"
     rows = await rig.rows()
     assert [(r["attempt"], r["status"], r["http_status"]) for r in rows] == [
         (1, "error", 503),
@@ -228,7 +282,7 @@ async def test_http_error_is_recorded_with_body_and_each_retry_is_a_row(make_rig
 
 async def test_non_retryable_error_status(make_rig: Any) -> None:
     rig: Rig = await make_rig(lambda r: httpx.Response(401, json={"error": "bad key"}))
-    with pytest.raises(LLMError):
+    with pytest.raises(openai.APIStatusError):
         await rig.client.complete(MESSAGES)
     (row,) = await rig.rows()
     assert row["status"] == "error" and row["http_status"] == 401 and "bad key" in row["error"]
@@ -240,10 +294,10 @@ async def test_connection_failure_is_recorded(make_rig: Any) -> None:
         raise httpx.ConnectError("connection refused")
 
     rig: Rig = await make_rig(handler)
-    with pytest.raises(LLMError):
+    with pytest.raises(openai.APIConnectionError):
         await rig.client.complete(MESSAGES)
     rows = await rig.rows()
-    assert len(rows) == 3  # first try and two retries
+    assert len(rows) == 1
     assert all(r["status"] == "error" and r["http_status"] is None for r in rows)
     assert "ConnectError" in rows[0]["error"] and "connection refused" in rows[0]["error"]
 
@@ -254,7 +308,7 @@ async def test_error_inside_a_stream_is_recorded(make_rig: Any) -> None:
         {"error": {"message": "out of memory"}},
     )
     rig: Rig = await make_rig(lambda r: httpx.Response(200, content=body))
-    with pytest.raises(LLMError):
+    with pytest.raises(openai.APIError):
         _ = [c async for c in rig.client.stream(MESSAGES)]
     (row,) = await rig.rows()
     assert row["status"] == "error" and "out of memory" in row["error"]
@@ -272,7 +326,7 @@ async def test_abandoned_stream_is_marked_cancelled(make_rig: Any) -> None:
 
     async def consume() -> None:
         async for chunk in rig.client.stream(MESSAGES):
-            if chunk.text:
+            if chunk.choices and chunk.choices[0].delta.content:
                 await asyncio.sleep(30)
 
     task = asyncio.create_task(consume())
@@ -283,7 +337,7 @@ async def test_abandoned_stream_is_marked_cancelled(make_rig: Any) -> None:
     assert row["status"] == "cancelled" and row["content"] == "first"
 
 
-async def test_attempt_wait_between_retries_shows_as_queue_time(make_rig: Any) -> None:
+async def test_wait_between_attempts_shows_as_queue_time(make_rig: Any) -> None:
     attempts = iter([503, 200])
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -292,16 +346,11 @@ async def test_attempt_wait_between_retries_shows_as_queue_time(make_rig: Any) -
         return httpx.Response(503, text="busy")
 
     rig: Rig = await make_rig(handler)
-    # a real pause between attempts
-    original = rig.client._backoff
-
-    async def pause(attempt: int) -> None:
-        await asyncio.sleep(0.15)
-
-    rig.client._backoff = pause  # type: ignore[method-assign]
     with trace_call():
+        with pytest.raises(openai.APIStatusError):
+            await rig.client.complete(MESSAGES)
+        await asyncio.sleep(0.15)  # a real pause between attempts
         await rig.client.complete(MESSAGES)
-    rig.client._backoff = original  # type: ignore[method-assign]
     first, second = await rig.rows()
     assert first["queued_ms"] < 100
     assert second["queued_ms"] >= 120
@@ -406,7 +455,7 @@ async def test_reply_cut_off_before_any_answer_is_recorded_as_an_error(make_rig:
         "usage": {"prompt_tokens": 40, "completion_tokens": 700},
     }
     rig: Rig = await make_rig(lambda r: httpx.Response(200, json=body))
-    with trace_scope("report"), pytest.raises(LLMEmptyAnswerError):
+    with trace_scope("report"):
         await rig.client.complete(MESSAGES, max_tokens=700)
     (row,) = await rig.rows()
     assert row["status"] == "error" and row["finish_reason"] == "length"
@@ -425,7 +474,7 @@ async def test_cut_off_stream_with_only_reasoning_is_recorded_as_an_error(make_r
             200, content=sse(*events), headers={"content-type": "text/event-stream"}
         )
     )
-    with trace_scope("report"), pytest.raises(LLMEmptyAnswerError):
+    with trace_scope("report"):
         _ = [c async for c in rig.client.stream(MESSAGES, max_tokens=300)]
     (row,) = await rig.rows()
     assert row["status"] == "error" and "300 tokens" in row["error"]
@@ -446,7 +495,7 @@ async def test_cut_off_reply_that_has_an_answer_stays_ok_in_the_trace(make_rig: 
 async def test_stream_dropped_before_any_answer_is_recorded_as_an_error(make_rig: Any) -> None:
     body = sse({"choices": [{"delta": {"reasoning": "hm"}}]}, "[DONE]")
     rig: Rig = await make_rig(lambda r: httpx.Response(200, content=body))
-    with trace_scope("report"), pytest.raises(LLMError):
+    with trace_scope("report"):
         _ = [c async for c in rig.client.stream(MESSAGES)]
     rows = await rig.rows()
     assert rows and all(r["status"] == "error" and "closed the stream" in r["error"] for r in rows)

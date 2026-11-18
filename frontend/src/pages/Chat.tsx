@@ -279,7 +279,7 @@ export function ChatPage() {
           </a>
           {loadError && <p className="error">{loadError}</p>}
           {turns.length === 0 && !busy && (
-            <Empty>Ask about the server: what is using the disk, why a container restarted, what changed since the last report.</Empty>
+            <Empty>Ask about the server: what is using the disk, why a container restarted, what changed since yesterday.</Empty>
           )}
           <div className="messages">
             {turns.map((t, i) => (t.role === "user" ? <UserBubble key={i} text={t.text} /> : <AssistantBubble key={i} turn={t} />))}

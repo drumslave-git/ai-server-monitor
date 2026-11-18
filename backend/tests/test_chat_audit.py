@@ -36,7 +36,7 @@ async def test_record_call_never_raises(db: Database) -> None:
 
 
 def test_audit_endpoint(bootstrap: Bootstrap) -> None:
-    app = make_app(bootstrap, FakeLLM(), mode="none")
+    app = make_app(bootstrap, FakeLLM())
     with TestClient(app) as client:
         ctx = app.state.ctx
 

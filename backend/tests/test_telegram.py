@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import functools
 import json
 import logging
 import time
@@ -92,17 +91,12 @@ def make_app(
 ) -> Any:
     settings = Settings.model_validate(
         {
-            "llm": (
-                {"base_url": LLM_URL, "model": "fake", "tool_mode": "native", "max_retries": 0}
-                if llm
-                else {}
-            ),
+            "llm": ({"base_url": LLM_URL, "model": "fake", "max_retries": 0} if llm else {}),
             "outputs": {
                 "telegram": {
                     "enabled": True,
                     "token": TOKEN,
                     "allowed_chat_ids": [CHAT],
-                    "report_every": 0,
                     **(telegram or {}),
                 }
             },
@@ -111,7 +105,6 @@ def make_app(
     return create_app(
         bootstrap,
         llm_transport=httpx.MockTransport(llm.handler) if llm else None,
-        collector_registry={},
         seed_settings=settings,
         telegram_transport=httpx.MockTransport(tg.handler),
     )
@@ -606,100 +599,21 @@ def test_approvals_decided_while_the_bot_was_down_are_edited_on_start(
     assert TOKEN not in json.dumps(tg.calls[1:])  # the token is only ever in the URL
 
 
-# --------------------------------------------------------------------------- reports
+# --------------------------------------------------------------------------- commands
 
 
-def report_event(i: int, health: str) -> dict[str, Any]:
-    return {
-        "id": i,
-        "health": health,
-        "score": 90,
-        "summary": f"summary {i}",
-        "findings": [{"severity": "warn", "title": "Disk", "detail": "91% full"}],
-    }
-
-
-def test_alerts_only_mode_sends_a_report_only_when_the_health_changes(
-    bootstrap: Bootstrap,
-) -> None:
-    tg = FakeTelegram()
-    app = make_app(bootstrap, tg, telegram={"report_every": 0})
-    with TestClient(app) as client:
-        bot = app.state.ctx.telegram
-        for i, health in enumerate(["ok", "ok", "warn", "warn", "ok"], start=1):
-            client.portal.call(bot.on_event, "report.done", report_event(i, health))
-    texts = tg.texts()
-    assert len(texts) == 2  # ok→warn and warn→ok; the first report is only the baseline
-    assert "Health changed: ok → warn" in texts[0] and "summary 3" in texts[0]
-    assert "Disk</b> — 91% full" in texts[0]
-    assert "Health changed: warn → ok" in texts[1]
-
-
-def test_every_nth_report_is_sent_in_full_and_alerts_can_be_switched_off(
-    bootstrap: Bootstrap,
-) -> None:
-    tg = FakeTelegram()
-    app = make_app(bootstrap, tg, telegram={"report_every": 2, "alerts": False})
-    with TestClient(app) as client:
-        ctx = app.state.ctx
-        for i in (1, 2, 3, 4):
-            add = functools.partial(
-                ctx.reports.store.add, ts=float(i), status="ok", markdown=f"## Report {i}\n- fine"
-            )
-            client.portal.call(add)
-        for i, health in enumerate(["ok", "warn", "ok", "ok"], start=1):
-            client.portal.call(ctx.telegram.on_event, "report.done", report_event(i, health))
-    texts = tg.texts()
-    assert len(texts) == 2 and "<b>Report 2</b>" in texts[0] and "<b>Report 4</b>" in texts[1]
-    assert "Health changed" not in texts[0]  # alerts are off: no extra messages for changes
-
-
-def test_the_every_nth_counter_survives_a_restart(bootstrap: Bootstrap) -> None:
-    tg = FakeTelegram()
-    for i in (1, 2, 3, 4):
-        app = make_app(bootstrap, tg, telegram={"report_every": 2, "alerts": False})
-        with TestClient(app) as client:
-            ctx = app.state.ctx
-            client.portal.call(
-                functools.partial(
-                    ctx.reports.store.add, ts=float(i), status="ok", markdown=f"## Report {i}"
-                )
-            )
-            client.portal.call(ctx.telegram.on_event, "report.done", report_event(i, "ok"))
-        # a fresh bot every time: only the database carries the count
-    texts = tg.texts()
-    assert len(texts) == 2 and "<b>Report 2</b>" in texts[0] and "<b>Report 4</b>" in texts[1]
-
-
-def test_commands_status_help_approvals_and_report(bootstrap: Bootstrap) -> None:
+def test_commands_help_approvals_and_unknown(bootstrap: Bootstrap) -> None:
     tg = FakeTelegram()
     app = make_app(bootstrap, tg)
     with TestClient(app) as client:
         ctx = app.state.ctx
-        add = functools.partial(
-            ctx.reports.store.add,
-            ts=time.time(),
-            status="ok",
-            health="warn",
-            score=71,
-            summary="Disk is filling up",
-            markdown="## Overview\nfull report body",
-        )
-        client.portal.call(add)
-        for text in ("/help", "/status", "/approvals", "/nope"):
+        for text in ("/help", "/approvals", "/nope", "/status", "/report"):
             client.portal.call(ctx.telegram.handle_update, message(text))
-        help_text, status, approvals, unknown = tg.texts()
-        assert "/status" in help_text and "/report" in help_text and "/id" in help_text
-        assert "warn (score 71)" in status and "Disk is filling up" in status
-        assert "Nothing is waiting" in approvals and "Unknown command" in unknown
-
-        client.portal.call(ctx.telegram.handle_update, message("/report"))
-        assert "Writing a report" in tg.texts()[-1]
-        # The requester gets the next report in full, although the mode is "alerts only".
-        client.portal.call(
-            ctx.telegram.on_event, "report.done", {**report_event(1, "warn"), "id": 1}
-        )
-        assert "full report body" in tg.texts()[-1]
+        help_text, approvals, *unknown = tg.texts()
+        assert "/approvals" in help_text and "/id" in help_text
+        assert "/status" not in help_text and "/report" not in help_text
+        assert "Nothing is waiting" in approvals
+        assert len(unknown) == 3 and all("Unknown command" in t for t in unknown)
 
 
 # --------------------------------------------------------------------------- chat
@@ -811,7 +725,6 @@ def test_polling_loop_serves_updates_and_survives_errors(bootstrap: Bootstrap) -
 
     app = create_app(
         bootstrap,
-        collector_registry={},
         seed_settings=Settings.model_validate(
             {"outputs": {"telegram": {"enabled": True, "token": TOKEN, "allowed_chat_ids": [CHAT]}}}
         ),
@@ -820,5 +733,5 @@ def test_polling_loop_serves_updates_and_survives_errors(bootstrap: Bootstrap) -
     with TestClient(app):
         tg.updates.append(message("/help"))
         wait_for(lambda: tg.texts(), timeout=8)  # after one failed poll and a backoff
-    assert "/status" in tg.texts()[0]
-    assert tg.of("setMyCommands")[0]["commands"][0]["command"] == "status"
+    assert "/approvals" in tg.texts()[0]
+    assert tg.of("setMyCommands")[0]["commands"][0]["command"] == "approvals"

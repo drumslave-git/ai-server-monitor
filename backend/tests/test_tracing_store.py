@@ -41,12 +41,12 @@ def test_pack_roundtrip_compresses() -> None:
 async def test_insert_and_get_roundtrip(db: Database) -> None:
     tracing = await make_tracing(db)
     store = tracing.store
-    tools = [{"type": "function", "function": {"name": "promql", "description": "x" * 400}}]
+    tools = [{"type": "function", "function": {"name": "disk_usage", "description": "x" * 400}}]
     call_id = await store.insert_call(
         call(
             tools=tools,
             reasoning="thinking about disks",
-            tool_calls=[{"id": "c1", "name": "promql", "arguments": '{"q":"up"}'}],
+            tool_calls=[{"id": "c1", "name": "disk_usage", "arguments": '{"q":"up"}'}],
             params={"temperature": 0.2, "max_tokens": 900},
             link_kind="chat",
             link_id="s1",
@@ -58,7 +58,7 @@ async def test_insert_and_get_roundtrip(db: Database) -> None:
     assert got["messages"][1]["content"] == "Disk is 88% full"
     assert got["tools"] == tools and got["tools_count"] == 1 and got["tools_tokens"] > 50
     assert got["content"] == "Free some space." and got["reasoning"] == "thinking about disks"
-    assert got["tool_calls"][0]["name"] == "promql" and got["tool_calls_count"] == 1
+    assert got["tool_calls"][0]["name"] == "disk_usage" and got["tool_calls_count"] == 1
     assert got["params"] == {"temperature": 0.2, "max_tokens": 900}
     assert got["request_preview"] == "Disk is 88% full"
     assert got["tokens_per_s"] == 5.0  # 5 tokens over (1500 - 500) ms
@@ -68,12 +68,12 @@ async def test_insert_and_get_roundtrip(db: Database) -> None:
 
 async def test_bodies_are_stored_compressed(db: Database) -> None:
     tracing = await make_tracing(db)
-    digest = "node_load1 0.49\n" * 4000  # ~64 KB, very repetitive
-    call_id = await tracing.store.insert_call(call(messages=[{"role": "user", "content": digest}]))
+    payload = "node_load1 0.49\n" * 4000  # ~64 KB, very repetitive
+    call_id = await tracing.store.insert_call(call(messages=[{"role": "user", "content": payload}]))
     row = await db.fetchone("SELECT messages, size_bytes FROM llm_calls WHERE id = ?", (call_id,))
     assert row is not None
-    assert isinstance(row["messages"], bytes) and len(row["messages"]) < len(digest) // 8
-    assert row["size_bytes"] < len(digest) // 8
+    assert isinstance(row["messages"], bytes) and len(row["messages"]) < len(payload) // 8
+    assert row["size_bytes"] < len(payload) // 8
 
 
 async def test_field_cap_marks_truncation(db: Database) -> None:
@@ -185,7 +185,7 @@ async def test_timeline_interleaves_llm_and_tool_calls_of_one_turn(db: Database)
     link = {"link_kind": "chat", "link_id": "s1", "turn": "turn-1"}
     first = await store.insert_call(call(ts=t0, link_step=1, **link))
     await store.insert_tool(
-        ToolRecord(ts=t0 + 1, tool="promql", ok=True, duration_ms=120, result_size=900, **link)
+        ToolRecord(ts=t0 + 1, tool="disk_usage", ok=True, duration_ms=120, result_size=900, **link)
     )
     await store.insert_tool(
         ToolRecord(ts=t0 + 1.5, tool="logs", ok=False, error="timeout", duration_ms=5000, **link)
@@ -198,7 +198,7 @@ async def test_timeline_interleaves_llm_and_tool_calls_of_one_turn(db: Database)
     assert timeline is not None and timeline["selected"] == last
     assert [(e["type"], e.get("tool") or e["id"]) for e in timeline["entries"]] == [
         ("llm", first),
-        ("tool", "promql"),
+        ("tool", "disk_usage"),
         ("tool", "logs"),
         ("llm", last),
     ]
@@ -219,7 +219,11 @@ async def test_tool_call_detail(db: Database) -> None:
     store = (await make_tracing(db)).store
     tool_id = await store.insert_tool(
         ToolRecord(
-            ts=time.time(), tool="promql", ok=True, args={"query": "up"}, result={"series": [1, 2]}
+            ts=time.time(),
+            tool="disk_usage",
+            ok=True,
+            args={"query": "up"},
+            result={"series": [1, 2]},
         )
     )
     got = await store.get_tool(tool_id)

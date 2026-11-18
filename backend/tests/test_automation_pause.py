@@ -8,10 +8,8 @@ import time
 from datetime import timedelta
 from typing import Any
 
-import httpx
 from fastapi.testclient import TestClient
 
-from ai_server_monitor.collectors.base import Collector
 from ai_server_monitor.config import Bootstrap, Settings
 from ai_server_monitor.main import create_app
 from ai_server_monitor.scheduler import Scheduler
@@ -158,13 +156,6 @@ async def test_pause_then_quick_resume_and_pause_does_not_leak_a_run() -> None:
 # --------------------------------------------------------------------------- app
 
 
-class StubSystem(Collector):
-    name = "system"
-
-    async def collect(self) -> dict[str, Any]:
-        return {"hostname": "box", "memory": {"total": 1000, "used": 600, "percent": 60.0}}
-
-
 def _settings(**extra: Any) -> Settings:
     return Settings.model_validate(
         {
@@ -175,9 +166,7 @@ def _settings(**extra: Any) -> Settings:
 
 
 def test_api_pause_resume_and_info(bootstrap: Bootstrap) -> None:
-    app = create_app(
-        bootstrap, collector_registry={"system": StubSystem}, seed_settings=_settings()
-    )
+    app = create_app(bootstrap, seed_settings=_settings())
     with TestClient(app) as client:
         state = client.get("/api/automation").json()
         assert state["paused"] is False and state["since"] is None
@@ -194,75 +183,20 @@ def test_api_pause_resume_and_info(bootstrap: Bootstrap) -> None:
 
 
 def test_pause_survives_a_restart_and_nothing_runs(bootstrap: Bootstrap) -> None:
-    app = create_app(
-        bootstrap, collector_registry={"system": StubSystem}, seed_settings=_settings()
-    )
+    app = create_app(bootstrap, seed_settings=_settings())
     with TestClient(app) as client:
         assert client.post("/api/automation/pause").status_code == 200
         since = client.get("/api/automation").json()["since"]
     # a fresh process on the same data directory
-    app = create_app(bootstrap, collector_registry={"system": StubSystem})
+    app = create_app(bootstrap)
     with TestClient(app) as client:
         state = client.get("/api/automation").json()
         assert state["paused"] is True and state["since"] == since
-        time.sleep(0.5)  # collect:system and llm_probe are due right away when not paused
+        time.sleep(0.5)  # the approval jobs are due right away when not paused
         jobs = client.get("/api/info").json()["jobs"]
-        assert {j["name"] for j in jobs} >= {"collect:system", "llm_probe", "report"}
+        assert {j["name"] for j in jobs} >= {"approvals:sweep", "approvals:drain"}
         assert all(j["paused"] and j["runs"] == 0 and not j["running"] for j in jobs), jobs
         client.post("/api/automation/resume")
-    app = create_app(bootstrap, collector_registry={"system": StubSystem})
+    app = create_app(bootstrap)
     with TestClient(app) as client:
         assert client.get("/api/automation").json()["paused"] is False
-
-
-def test_pause_cancels_a_report_being_written(bootstrap: Bootstrap) -> None:
-    async def never(request: httpx.Request) -> httpx.Response:
-        await asyncio.sleep(60)
-        raise AssertionError("unreachable")
-
-    app = create_app(
-        bootstrap,
-        llm_transport=httpx.MockTransport(never),
-        collector_registry={"system": StubSystem},
-        seed_settings=_settings(),
-    )
-    with TestClient(app) as client:
-        events = app.state.ctx.events.subscribe("report")
-        assert client.post("/api/reports/run").status_code == 202
-        types: list[str] = []
-
-        def drain() -> None:
-            while True:
-                try:
-                    types.append(events._queue.get_nowait().type)
-                except asyncio.QueueEmpty:
-                    return
-
-        def in_flight() -> bool:
-            drain()
-            return "report.started" in types  # the digest is built, the LLM call is next
-
-        _wait(in_flight)
-        done = client.post("/api/automation/pause").json()
-        assert "report" in done["cancelled"]
-        job = _job(client, "report")
-        assert not job["running"] and job["last_status"] == "cancelled"
-        assert job["cancelled"] == 1 and job["failures"] == 0 and job["last_error"] is None
-        # Nothing stored as a failed report, and watchers were told it was cancelled.
-        assert client.get("/api/reports").json()["total"] == 0
-        drain()
-        assert "report.started" in types and types[-1] == "report.cancelled"
-        assert "report.failed" not in types
-
-
-def _job(client: TestClient, name: str) -> dict[str, Any]:
-    return next(j for j in client.get("/api/info").json()["jobs"] if j["name"] == name)
-
-
-def _wait(predicate, timeout: float = 5.0) -> None:  # type: ignore[no-untyped-def]
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if predicate():
-            return
-        time.sleep(0.02)
-    raise AssertionError("condition not met")

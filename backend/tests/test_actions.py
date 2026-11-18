@@ -242,7 +242,7 @@ async def test_every_registered_action_is_a_write_with_a_json_schema() -> None:
 
 
 def test_http_api_audit_and_approvals(bootstrap: Bootstrap, fake_action: FakeAction) -> None:
-    app = create_app(bootstrap, collector_registry={}, seed_settings=settings_with("1h"))
+    app = create_app(bootstrap, seed_settings=settings_with("1h"))
     with TestClient(app) as client:
         ctx = app.state.ctx
         events: list[str] = []

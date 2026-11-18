@@ -5,9 +5,9 @@ services:
     image: ghcr.io/drumslave-git/ai-server-monitor:latest
     container_name: ai-server-monitor
     restart: unless-stopped
-    pid: host                            # see the host's processes
+    pid: host                            # see the host's processes (ps, top)
     security_opt:
-      - apparmor=unconfined              # else Ubuntu's AppArmor blocks D-Bus + /proc reads
+      - apparmor=unconfined              # else Ubuntu's AppArmor blocks reading other processes under /proc
     cap_add:
       - DAC_READ_SEARCH                  # the chat's read-only shell may read root-only files
     ports:
@@ -17,7 +17,7 @@ services:
     volumes:
       - ./data:/data                     # settings + history
       - /:/host:ro,rslave                # host filesystem, read-only
-    # gpus: all                          # NVIDIA GPU monitoring
+    # gpus: all                          # NVIDIA GPU visible to the shell (needs the NVIDIA container runtime)
     depends_on:
       - docker-proxy
 

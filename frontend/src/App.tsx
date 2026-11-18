@@ -1,4 +1,4 @@
-import { Activity, FileText, MessageSquare, ScrollText, Settings, ShieldCheck, type LucideIcon } from "lucide-react";
+import { Activity, MessageSquare, ScrollText, Settings, ShieldCheck, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, type StatusResponse } from "./api";
 import { AutomationBar, AutomationProvider } from "./automation";
@@ -7,12 +7,10 @@ import { ApprovalsPage } from "./pages/Approvals";
 import { ChatPage } from "./pages/Chat";
 import { DashboardPage } from "./pages/Dashboard";
 import { LogsPage } from "./pages/Logs";
-import { ReportsPage } from "./pages/Reports";
 import { SettingsPage } from "./pages/Settings";
 
 const PAGES: { key: string; title: string; icon: LucideIcon }[] = [
   { key: "dashboard", title: "Dashboard", icon: Activity },
-  { key: "reports", title: "Reports", icon: FileText },
   { key: "approvals", title: "Approvals", icon: ShieldCheck },
   { key: "chat", title: "Chat", icon: MessageSquare },
   { key: "logs", title: "Logs", icon: ScrollText },
@@ -96,9 +94,7 @@ export function App() {
       </aside>
       <main className="content">
         <AutomationBar />
-        {page === "reports" ? (
-          <ReportsPage params={params} />
-        ) : page === "approvals" ? (
+        {page === "approvals" ? (
           <ApprovalsPage params={params} />
         ) : page === "chat" ? (
           <ChatPage />

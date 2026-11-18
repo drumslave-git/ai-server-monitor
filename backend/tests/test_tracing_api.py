@@ -73,18 +73,18 @@ async def test_list_and_filters(http: httpx.AsyncClient, tracing: Tracing) -> No
 
 
 async def test_detail_roundtrip_and_404(http: httpx.AsyncClient, tracing: Tracing) -> None:
-    tools = [{"type": "function", "function": {"name": "promql"}}]
+    tools = [{"type": "function", "function": {"name": "disk_usage"}}]
     call_id = await tracing.store.insert_call(
         call(
             tools=tools,
             reasoning="hm",
-            tool_calls=[{"id": "1", "name": "promql", "arguments": "{}"}],
+            tool_calls=[{"id": "1", "name": "disk_usage", "arguments": "{}"}],
         )
     )
     body = (await http.get(f"/api/logs/llm/{call_id}")).json()
     assert body["id"] == call_id and body["messages"][0]["role"] == "system"
     assert body["tools"] == tools and body["reasoning"] == "hm" and body["content"]
-    assert body["tool_calls"][0]["name"] == "promql" and body["tokens_per_s"] == 5.0
+    assert body["tool_calls"][0]["name"] == "disk_usage" and body["tokens_per_s"] == 5.0
     assert (await http.get("/api/logs/llm/9999")).status_code == 404
     assert (await http.get("/api/logs/llm/abc")).status_code == 422
 
@@ -104,7 +104,7 @@ async def test_timeline_and_tool_detail(http: httpx.AsyncClient, tracing: Tracin
     link = {"link_kind": "chat", "link_id": "s1", "turn": "t1"}
     a = await tracing.store.insert_call(call(ts=t0, link_step=1, **link))
     tool = await tracing.store.insert_tool(
-        ToolRecord(ts=t0 + 1, tool="promql", ok=True, args={"query": "up"}, result="42", **link)
+        ToolRecord(ts=t0 + 1, tool="disk_usage", ok=True, args={"query": "up"}, result="42", **link)
     )
     b = await tracing.store.insert_call(call(ts=t0 + 2, link_step=2, **link))
     body = (await http.get(f"/api/logs/llm/{b}/timeline")).json()

@@ -71,8 +71,9 @@ def test_defaults_and_json_shape() -> None:
     s = Settings()
     assert s.llm.configured is False  # nothing configured until the user does it in the UI
     data = s.public_dict()
-    assert data["report"]["interval"] == "5m"  # human durations, not ISO 8601
-    assert data["collectors"]["gpu"]["enabled"] == "auto"
+    assert data["storage"]["retention"] == "30d"  # human durations, not ISO 8601
+    assert data["general"]["language"] == "en" and data["general"]["docker_url"] == ""
+    assert not {"report", "collectors"} & data.keys()
 
 
 def test_secrets_masked_publicly_but_stored_in_clear() -> None:
@@ -108,10 +109,10 @@ def test_merge_secrets_matches_list_items_by_name() -> None:
 def test_lenient_validate_keeps_valid_parts() -> None:
     raw = Settings(llm={"model": "m1", "base_url": "http://x/v1"}).storage_dict()
     raw["llm"]["removed_in_new_version"] = 1
-    raw["report"]["interval"] = "garbage"
+    raw["storage"]["retention"] = "garbage"
     settings, problems = lenient_validate(raw)
     assert settings.llm.model == "m1"  # untouched
-    assert settings.report.interval == timedelta(minutes=5)  # reset to default
+    assert settings.storage.retention == timedelta(days=30)  # reset to default
     assert len(problems) == 2
 
 
@@ -152,7 +153,7 @@ async def test_store_roundtrip_and_repair(db: Database) -> None:
     assert loaded.llm.model == "m2" and loaded.llm.api_key.get_secret_value() == "k"
 
     raw = await db.kv_get(KV_KEY)
-    raw["report"]["interval"] = "nope"  # e.g. written by an older/newer version
+    raw["storage"]["retention"] = "nope"  # e.g. written by an older/newer version
     await db.kv_set(KV_KEY, raw)
     repaired = await store.load()
     assert repaired.llm.model == "m2"

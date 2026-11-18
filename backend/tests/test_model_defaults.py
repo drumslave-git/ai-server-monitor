@@ -11,13 +11,14 @@ import respx
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from ai_server_monitor.agent.models import model_settings
 from ai_server_monitor.config import Bootstrap, LLMSettings, settings_json_schema
-from ai_server_monitor.llm import LLMClient
 from ai_server_monitor.llm.modelinfo import clear_cache, ollama_root, parse_show, read_model_info
 from ai_server_monitor.main import create_app
 from ai_server_monitor.settings_store import upgrade_stored
 
-from .conftest import LLM_URL, chat_response
+from .conftest import LLM_URL
+from .test_chat import call, completion, say
 
 SHOW = {
     "parameters": 'temperature 1\ntop_k 64\ntop_p 0.95\nstop "<end>"',
@@ -63,22 +64,15 @@ def test_old_default_temperature_becomes_auto_but_a_chosen_one_stays() -> None:
 # --------------------------------------------------------------------------- request payload
 
 
-def _payload(cfg: LLMSettings, **kwargs: object) -> dict[str, object]:
-    return LLMClient(cfg)._payload([{"role": "user", "content": "x"}], **kwargs)
-
-
 def test_auto_sends_no_sampling_values() -> None:
-    payload = _payload(LLMSettings(base_url=LLM_URL, model="m"))
-    assert not {"temperature", "top_p", "top_k"} & payload.keys()
+    out = model_settings(LLMSettings(base_url=LLM_URL, model="m"))
+    assert not {"temperature", "top_p", "top_k"} & out.keys()
 
 
-def test_chosen_values_are_sent_and_a_calls_explicit_temperature_wins() -> None:
+def test_chosen_values_are_sent() -> None:
     cfg = LLMSettings(base_url=LLM_URL, model="m", temperature=0.7, top_p=0.9, top_k=40)
-    payload = _payload(cfg)
-    assert (payload["temperature"], payload["top_p"], payload["top_k"]) == (0.7, 0.9, 40)
-    assert _payload(cfg, temperature=0)["temperature"] == 0
-    auto = LLMSettings(base_url=LLM_URL, model="m")
-    assert _payload(auto, temperature=0)["temperature"] == 0
+    out = model_settings(cfg)
+    assert (out["temperature"], out["top_p"], out["top_k"]) == (0.7, 0.9, 40)  # type: ignore[typeddict-item]
 
 
 # --------------------------------------------------------------------------- reading the model
@@ -123,7 +117,7 @@ async def test_not_ollama_or_unreachable_gives_none_quietly() -> None:
 @respx.mock
 def test_model_info_endpoint(bootstrap: Bootstrap) -> None:
     respx.post("http://llm.test/api/show").mock(return_value=httpx.Response(200, json=SHOW))
-    with TestClient(create_app(bootstrap, collector_registry={})) as client:
+    with TestClient(create_app(bootstrap)) as client:
         got = client.post(
             "/api/settings/llm-model-info", json={"base_url": LLM_URL, "model": "m"}
         ).json()
@@ -140,8 +134,10 @@ def test_model_info_endpoint(bootstrap: Bootstrap) -> None:
 @respx.mock
 def test_settings_test_works_with_auto_sampling(bootstrap: Bootstrap) -> None:
     respx.get(f"{LLM_URL}/models").mock(return_value=httpx.Response(404))
-    route = respx.post(f"{LLM_URL}/chat/completions").mock(return_value=chat_response("OK"))
-    with TestClient(create_app(bootstrap, collector_registry={})) as client:
+    route = respx.post(f"{LLM_URL}/chat/completions").mock(
+        side_effect=[completion(call("get_check_word", {})), completion(say("OK"))]
+    )
+    with TestClient(create_app(bootstrap)) as client:
         result = client.post(
             "/api/settings/test-llm",
             json={"base_url": LLM_URL, "model": "m", "temperature": "auto"},

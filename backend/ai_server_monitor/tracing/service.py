@@ -5,7 +5,7 @@ Phase-2 wiring, in short:
 
     tracing = Tracing(db, config, scrubber=lambda: Scrubber(settings), events=bus)
     tracing.applog.install(); tracing.applog.start()
-    LLMClient(cfg, transport=tracing.wrap_transport(inner))   # every request is recorded
+    httpx.AsyncClient(transport=tracing.wrap_transport(inner))  # every request is recorded
     app.state.tracing = tracing; app.include_router(tracing.api.router)  # tracing/api.py
     scheduler job: tracing.prune()
 """
@@ -140,6 +140,11 @@ class Tracing:
                     "purpose": record.purpose,
                     "status": record.status,
                     "total_ms": record.total_ms,
+                    "prompt_tokens": record.prompt_tokens,
+                    "completion_tokens": record.completion_tokens,
+                    "error_type": None
+                    if record.status == "ok"
+                    else (f"http_{record.http_status}" if record.http_status else record.status),
                 },
             )
 

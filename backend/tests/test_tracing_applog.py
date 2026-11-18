@@ -44,17 +44,17 @@ def test_record_fields_and_exception_text(logger: logging.Logger) -> None:
     try:
         raise ValueError("bad thing")
     except ValueError:
-        logger.exception("collector %s failed", "docker")
+        logger.exception("worker %s failed", "docker")
     (rec,) = handler.query()
     assert rec["level"] == "ERROR" and rec["levelno"] == 40
-    assert rec["logger"] == "asm_test_applog" and rec["message"] == "collector docker failed"
+    assert rec["logger"] == "asm_test_applog" and rec["message"] == "worker docker failed"
     assert "ValueError: bad thing" in rec["exc"] and "Traceback" in rec["exc"]
     assert abs(rec["ts"] - time.time()) < 5
 
 
 def test_filters_by_level_logger_and_text(logger: logging.Logger) -> None:
     handler = ring(logger)
-    other = logging.getLogger("asm_test_applog.collectors.docker")
+    other = logging.getLogger("asm_test_applog.workers.docker")
     other.setLevel(logging.DEBUG)
     logger.debug("quiet detail")
     logger.info("Server started")
@@ -64,13 +64,13 @@ def test_filters_by_level_logger_and_text(logger: logging.Logger) -> None:
         "docker socket missing",
         "Disk almost full",
     ]
-    assert [r["message"] for r in handler.query(logger="asm_test_applog.collectors")] == [
+    assert [r["message"] for r in handler.query(logger="asm_test_applog.workers")] == [
         "docker socket missing"
     ]
     assert [r["message"] for r in handler.query(logger="asm_test_applog.coll")] == []  # whole names
     assert [r["message"] for r in handler.query(q="DISK")] == ["Disk almost full"]
     assert len(handler.query(limit=2)) == 2
-    assert handler.loggers() == ["asm_test_applog", "asm_test_applog.collectors.docker"]
+    assert handler.loggers() == ["asm_test_applog", "asm_test_applog.workers.docker"]
 
 
 def test_paging_back_with_before(logger: logging.Logger) -> None:
@@ -136,11 +136,11 @@ async def test_warnings_and_above_are_stored_info_is_not(
 ) -> None:
     logger.info("chatter")
     logger.warning("slow disk")
-    logger.error("collector failed")
+    logger.error("worker failed")
     assert await applog.flush() == 2
     stored = await applog.store.list_logs()
     assert [(r["level"], r["message"]) for r in stored] == [
-        ("ERROR", "collector failed"),
+        ("ERROR", "worker failed"),
         ("WARNING", "slow disk"),
     ]
     assert len(applog.ring.query()) == 3  # the ring has everything

@@ -11,7 +11,6 @@ import pytest
 from ai_server_monitor.actions import REGISTRY
 from ai_server_monitor.config import Bootstrap, LLMSettings, Settings
 from ai_server_monitor.db import Database
-from ai_server_monitor.llm import LLMClient
 
 from .actionfakes import NAME, FakeAction
 
@@ -42,18 +41,6 @@ def llm_cfg() -> LLMSettings:
 
 
 @pytest.fixture
-async def llm(llm_cfg: LLMSettings, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[LLMClient]:
-    client = LLMClient(llm_cfg)
-
-    async def no_sleep(attempt: int) -> None:
-        return None
-
-    monkeypatch.setattr(client, "_backoff", no_sleep)
-    yield client
-    await client.aclose()
-
-
-@pytest.fixture
 async def db(tmp_path: Path) -> AsyncIterator[Database]:
     database = Database(tmp_path / "test.db")
     await database.connect()
@@ -63,7 +50,7 @@ async def db(tmp_path: Path) -> AsyncIterator[Database]:
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(llm={"base_url": LLM_URL, "model": "test-model", "tool_mode": "none"})
+    return Settings(llm={"base_url": LLM_URL, "model": "test-model"})
 
 
 @pytest.fixture

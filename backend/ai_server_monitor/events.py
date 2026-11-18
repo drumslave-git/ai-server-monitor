@@ -2,11 +2,8 @@
 
 Event types published today (exposed to browsers by GET /api/stream):
 
-    report.started | report.token | report.done | report.failed   (report engine)
-    report.cancelled                                                (a run stopped from outside)
-    automation.changed                                              (the pause switch was flipped)
-    metrics.tick                                                    (system/gpu collectors)
-    collector.status                                                (collector state changes)
+    automation.changed   the pause switch was flipped
+    llm.call             an LLM request was recorded by the trace
 
 Published by the action layer through `outputs/action_events.ActionEventBridge`:
 
@@ -103,7 +100,7 @@ class EventBus:
 
     def subscribe(self, *types: str, maxsize: int = 256) -> Subscription:
         """Subscribe to everything, or to the given event types (a prefix such as
-        'report' also matches 'report.token')."""
+        'approval' also matches 'approval.pending')."""
         sub = Subscription(self, maxsize, frozenset(types) or None)
         self._subs.append(sub)
         return sub

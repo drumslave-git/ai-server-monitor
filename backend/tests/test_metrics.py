@@ -4,25 +4,21 @@ import re
 import time
 from typing import Any
 
-import respx
 from fastapi.testclient import TestClient
 
-from ai_server_monitor.collectors.base import CollectorResult
-from ai_server_monitor.config import SECRET_MASK, Bootstrap, Settings
-from ai_server_monitor.llm.client import LLMStats, Usage
+from ai_server_monitor import __version__
+from ai_server_monitor.config import SECRET_MASK, Bootstrap
 from ai_server_monitor.main import create_app
 from ai_server_monitor.outputs.metrics import (
     CONTENT_TYPE,
     Family,
     MetricsHub,
     Sample,
+    build_info_families,
     render_families,
-    report_families,
 )
 
-from .conftest import LLM_URL
-from .fake_llm import stream_response
-from .test_app import StubSystem, _wait_for
+from .test_chat import FakeLLM, ask, make_app, say
 
 
 def parse(text: str) -> dict[str, float]:
@@ -64,24 +60,23 @@ def test_text_format_escaping_and_numbers() -> None:
 
 async def test_fresh_hub_exposes_zeroed_counters_and_an_empty_histogram() -> None:
     series = parse(await MetricsHub().render())
-    assert series['asm_reports_total{result="ok"}'] == 0
+    assert series['asm_llm_requests_total{result="ok"}'] == 0
+    assert not [k for k in series if "collector" in k or "report" in k]
     assert series['asm_llm_tokens_total{direction="prompt"}'] == 0
     assert series['asm_llm_request_duration_seconds_bucket{le="+Inf"}'] == 0
     assert series["asm_llm_request_duration_seconds_count"] == 0
 
 
-async def test_hooks_update_instruments() -> None:
+async def test_llm_call_events_update_instruments() -> None:
     hub = MetricsHub()
-    stats = LLMStats(on_success=hub.on_llm_success, on_error=hub.on_llm_error)
-    stats.record_success(Usage(100, 40), 1.5)
-    stats.record_success(Usage(10, 5), 70.0)
-    stats.record_error(ValueError("x"))
-    hub.on_collector_result(CollectorResult("docker", 1000.0, ok=True, duration_s=0.25))
-    hub.on_collector_result(CollectorResult("gpu", 1000.0, ok=False, error="boom"))
-    hub.on_collector_result(CollectorResult("gpu", 1001.0, ok=False, error="boom"))
-    hub.on_report_event("report.done", {})
-    hub.on_report_event("report.failed", {"status": "skipped"})
-    hub.on_report_event("report.token", {"text": "ignored"})
+    hub.on_llm_call(
+        {"status": "ok", "total_ms": 1500, "prompt_tokens": 100, "completion_tokens": 40}
+    )
+    hub.on_llm_call(
+        {"status": "ok", "total_ms": 70000, "prompt_tokens": 10, "completion_tokens": 5}
+    )
+    hub.on_llm_call({"status": "error", "total_ms": 20, "error_type": "ValueError"})
+    hub.on_llm_call({"status": "error", "error_type": None})
     s = parse(await hub.render())
 
     assert s["asm_llm_request_duration_seconds_count"] == 2
@@ -91,22 +86,9 @@ async def test_hooks_update_instruments() -> None:
     assert s['asm_llm_tokens_total{direction="prompt"}'] == 110
     assert s['asm_llm_tokens_total{direction="completion"}'] == 45
     assert s['asm_llm_errors_total{type="ValueError"}'] == 1
+    assert s['asm_llm_errors_total{type="error"}'] == 1
     assert s['asm_llm_requests_total{result="ok"}'] == 2
-    assert s['asm_llm_requests_total{result="error"}'] == 1
-    assert s['asm_collector_up{collector="docker"}'] == 1
-    assert s['asm_collector_up{collector="gpu"}'] == 0
-    assert s['asm_collector_duration_seconds{collector="docker"}'] == 0.25
-    assert s['asm_collector_errors_total{collector="gpu"}'] == 2
-    assert s['asm_collector_errors_total{collector="docker"}'] == 0
-    assert s['asm_collector_last_success_timestamp_seconds{collector="docker"}'] == 1000
-    assert 'asm_collector_last_success_timestamp_seconds{collector="gpu"}' not in s
-    assert s['asm_reports_total{result="ok"}'] == 1
-    assert s['asm_reports_total{result="skipped"}'] == 1
-
-    hub.reset_collectors()  # collectors rebuilt: up/duration series dropped, counters kept
-    again = parse(await hub.render())
-    assert not [k for k in again if k.startswith("asm_collector_up")]
-    assert again['asm_collector_errors_total{collector="gpu"}'] == 2
+    assert s['asm_llm_requests_total{result="error"}'] == 2
 
 
 async def test_providers_sync_async_and_broken() -> None:
@@ -123,61 +105,35 @@ async def test_providers_sync_async_and_broken() -> None:
     hub.add_provider(broken)
     s = parse(await hub.render())
     assert s["asm_pending_approvals"] == 2 and s['asm_extra_gauge{app="x"}'] == 5
-    assert "asm_reports_total{" in "".join(s)  # one bad provider does not hide the rest
+    assert "asm_llm_requests_total{" in "".join(s)  # one bad provider does not hide the rest
 
 
-def test_report_families() -> None:
-    latest = {
-        "ts": 1234.5,
-        "health": "warn",
-        "score": 74,
-        "latency_ms": 2500,
-        "findings": [{"severity": "warn"}, {"severity": "warn"}, {"severity": "info"}],
-    }
-    s = parse(render_families(report_families(latest, "1.2.3")))
-    assert s['asm_build_info{version="1.2.3"}'] == 1
-    assert s["asm_health_score"] == 74
-    assert [s[f'asm_health_status{{status="{x}"}}'] for x in ("ok", "warn", "crit")] == [0, 1, 0]
-    assert s['asm_findings{severity="warn"}'] == 2 and s['asm_findings{severity="crit"}'] == 0
-    assert s["asm_report_last_success_timestamp_seconds"] == 1234.5
-    assert s["asm_report_generation_seconds"] == 2.5
-    only_info = parse(render_families(report_families(None, "1")))
-    assert list(only_info) == ['asm_build_info{version="1"}']  # nothing invented before a report
+def test_build_info_family() -> None:
+    s = parse(render_families(build_info_families("1.2.3")))
+    assert s == {'asm_build_info{version="1.2.3"}': 1}
 
 
 # --------------------------------------------------------------------------- endpoint
 
 
-@respx.mock
-def test_scrape_after_a_report(bootstrap: Bootstrap, settings: Settings) -> None:
-    respx.post(f"{LLM_URL}/chat/completions").mock(return_value=stream_response())
-    app = create_app(bootstrap, collector_registry={"system": StubSystem}, seed_settings=settings)
+def test_scrape_after_a_chat_counts_its_llm_calls(bootstrap: Bootstrap) -> None:
+    app = make_app(bootstrap, FakeLLM(say("All good.")))
     with TestClient(app) as client:
-        client.portal.call(app.state.ctx.collectors.run, "system")  # type: ignore[union-attr]
         before = client.get("/metrics")
         assert before.headers["content-type"] == CONTENT_TYPE
-        assert "asm_health_score" not in before.text  # no report yet: nothing made up
-        assert parse(before.text)['asm_collector_up{collector="system"}'] == 1
-
-        assert client.post("/api/reports/run").status_code == 202
-        _wait_for(lambda: client.get("/api/reports").json()["total"])
-        time.sleep(0.2)  # the metrics consumer reads the bus asynchronously
+        assert parse(before.text)['asm_llm_requests_total{result="ok"}'] == 0
+        ask(client, "how is it?")
+        time.sleep(0.3)  # the metrics consumer reads the bus asynchronously
         s = parse(client.get("/metrics").text)
-
-    assert s["asm_health_score"] == 74
-    assert s['asm_health_status{status="warn"}'] == 1 and s['asm_health_status{status="ok"}'] == 0
-    assert s['asm_findings{severity="warn"}'] == 2 and s['asm_findings{severity="info"}'] == 1
-    assert s["asm_report_last_success_timestamp_seconds"] > 1e9
-    assert s['asm_reports_total{result="ok"}'] == 1
-    # The report was one streamed LLM call: tokens and duration are counted.
-    assert s['asm_llm_tokens_total{direction="prompt"}'] == 900
-    assert s['asm_llm_tokens_total{direction="completion"}'] == 250
-    assert s["asm_llm_request_duration_seconds_count"] == 1
-    assert s['asm_collector_last_success_timestamp_seconds{collector="system"}'] > 1e9
+    assert s['asm_llm_requests_total{result="ok"}'] >= 1
+    assert s['asm_llm_tokens_total{direction="prompt"}'] >= 10
+    assert s["asm_llm_request_duration_seconds_count"] >= 1
+    assert s['asm_build_info{version="' + __version__ + '"}'] == 1
+    assert not [k for k in s if "collector" in k or "report" in k or "health" in k]
 
 
 def test_metrics_can_be_disabled_and_protected_by_a_token(bootstrap: Bootstrap) -> None:
-    app = create_app(bootstrap, collector_registry={})
+    app = create_app(bootstrap)
     with TestClient(app) as client:
         assert client.get("/metrics").status_code == 200  # on by default, no token
 

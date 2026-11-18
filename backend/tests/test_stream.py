@@ -8,18 +8,13 @@ from typing import Any
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
-from ai_server_monitor.collectors.base import CollectorResult
-from ai_server_monitor.config import Bootstrap, Settings
+from ai_server_monitor.config import Bootstrap
 from ai_server_monitor.events import EventBus
-from ai_server_monitor.main import create_app
-from ai_server_monitor.outputs.live import LiveFeed, tick_payload
 from ai_server_monitor.outputs.sse import event_stream, format_event, parse_types
 
-from .fake_llm import CANNED_REPORT, stream_response
 from .live_server import live_server
-from .test_app import StubSystem
+from .test_chat import FakeLLM, make_app, say
 
 # --------------------------------------------------------------------------- framing
 
@@ -73,72 +68,6 @@ async def test_slow_client_drops_oldest_and_never_blocks_publishers() -> None:
     await stream.aclose()
 
 
-# --------------------------------------------------------------------------- live feed
-
-
-def system_result(ok: bool = True, error: str | None = None) -> CollectorResult:
-    data = {
-        "cpu": {"percent": 12.34, "load": [0.5, 0.4, 0.3]},
-        "memory": {"percent": 40.0, "swap_percent": 1.0},
-        "network": [{"rx_bps": 100.4, "tx_bps": 50}, {"rx_bps": 10, "tx_bps": 5}],
-    }
-    return CollectorResult("system", 100.0, ok=ok, data=data if ok else {}, error=error)
-
-
-def test_tick_payloads_are_compact() -> None:
-    tick = tick_payload(system_result())
-    assert tick == {
-        "source": "system",
-        "ts": 100.0,
-        "cpu": 12.3,
-        "mem": 40.0,
-        "swap": 1.0,
-        "load": 0.5,
-        "net_rx_bps": 110,
-        "net_tx_bps": 55,
-    }
-    gpu_data = {
-        "gpus": [
-            {
-                "index": 0,
-                "util_percent": 5,
-                "mem_percent": 3.3,
-                "temperature_c": 25,
-                "power_w": 22.7,
-                "name": "x",
-                "processes": [1],
-            }
-        ]
-    }
-    gpu = tick_payload(CollectorResult("gpu", 1.0, ok=True, data=gpu_data))
-    assert gpu is not None and gpu["gpus"] == [
-        {"index": 0, "util": 5.0, "vram": 3.3, "temp": 25.0, "power_w": 22.7}
-    ]
-    assert tick_payload(CollectorResult("docker", 1.0, ok=True, data={})) is None
-    assert tick_payload(system_result(ok=False, error="x")) is None
-
-
-def test_collector_status_events_only_on_change() -> None:
-    bus = EventBus()
-    sub = bus.subscribe("collector")
-    feed = LiveFeed(bus)
-    results = [
-        system_result(),
-        system_result(),
-        system_result(False, "boom"),
-        system_result(False, "boom"),
-        system_result(),
-    ]
-    for result in results:
-        feed.on_result(result)
-    states = []
-    while not sub._queue.empty():
-        event = sub._queue.get_nowait()
-        assert event is not None
-        states.append((event.data["ok"], event.data["error"]))
-    assert states == [(True, None), (False, "boom"), (True, None)]
-
-
 # --------------------------------------------------------------------------- end to end
 
 
@@ -161,87 +90,31 @@ def read_sse(response: httpx.Response, until: str, limit: int = 400) -> list[dic
     return frames
 
 
-def fake_llm_transport() -> httpx.MockTransport:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return stream_response(CANNED_REPORT, pieces=12)
-
-    return httpx.MockTransport(handler)
-
-
-def test_report_tokens_arrive_end_to_end_over_a_real_connection(
-    bootstrap: Bootstrap, settings: Settings
-) -> None:
-    app = create_app(
-        bootstrap,
-        collector_registry={"system": StubSystem},
-        seed_settings=settings,
-        llm_transport=fake_llm_transport(),
-    )
+def test_llm_calls_arrive_end_to_end_over_a_real_connection(bootstrap: Bootstrap) -> None:
+    app = make_app(bootstrap, FakeLLM(say("All good.")))
     with live_server(app) as base, httpx.Client(base_url=base, timeout=15) as client:
-        with client.stream("GET", "/api/stream", params={"types": "report"}) as response:
+        with client.stream("GET", "/api/stream", params={"types": "llm"}) as response:
             assert response.status_code == 200
             assert response.headers["content-type"].startswith("text/event-stream")
             assert response.headers["cache-control"].startswith("no-cache")
 
             def trigger() -> None:
                 time.sleep(0.5)  # the server subscribes once the stream is open
-                assert httpx.post(f"{base}/api/reports/run").status_code == 202
+                assert httpx.post(f"{base}/api/chat", json={"message": "hi"}, timeout=15).is_success
 
             threading.Thread(target=trigger).start()
-            frames = read_sse(response, until="report.done")
+            frames = read_sse(response, until="llm.call")
         events = [f["event"] for f in frames if "event" in f]
-        assert events[0] == "report.started" and events[-1] == "report.done"
-        tokens = [f["data"]["text"] for f in frames if f.get("event") == "report.token"]
-        assert len(tokens) >= 10 and "".join(tokens) == CANNED_REPORT  # every token, in order
+        assert events == ["llm.call"] and frames[0].get("retry") == "3000"
+        call = frames[-1]["data"]
+        assert call["status"] == "ok" and call["prompt_tokens"] == 10
         ids = [int(f["id"]) for f in frames if "id" in f]
         assert ids == sorted(ids) and len(set(ids)) == len(ids)
-        done = frames[-1]["data"]
-        assert done["health"] == "warn" and done["score"] == 74 and done["id"] == 1
-        assert not any(e.startswith("metrics") for e in events)  # type filter respected
 
-        # The report is stored and /api/status reflects it.
         status = client.get("/api/status").json()
-        assert status["report"]["id"] == 1 and status["report"]["score"] == 74
-        assert status["last_attempt"] is None and status["llm_configured"] is True
+        assert status["llm_configured"] is True and status["main_model"] == "fake"
 
         deadline = time.time() + 5  # the disconnect is noticed by the server
         while app.state.ctx.events.subscriber_count > 1 and time.time() < deadline:
             time.sleep(0.05)
         assert app.state.ctx.events.subscriber_count == 1  # only the metrics consumer is left
-
-
-def test_unfiltered_stream_carries_ticks_and_status_changes(
-    bootstrap: Bootstrap, settings: Settings
-) -> None:
-    app = create_app(bootstrap, collector_registry={"system": StubSystem}, seed_settings=settings)
-    with (
-        live_server(app) as base,
-        httpx.Client(base_url=base, timeout=15) as client,
-        client.stream("GET", "/api/stream") as response,
-    ):
-        ctx = app.state.ctx
-
-        def feed() -> None:
-            time.sleep(0.5)
-            ctx.live.on_result(system_result(False, "boom"))  # a state change
-            ctx.live.on_result(system_result())
-
-        threading.Thread(target=feed).start()
-        frames = read_sse(response, until="metrics.tick")
-    names = [f["event"] for f in frames if "event" in f]
-    assert "collector.status" in names and names[-1] == "metrics.tick"
-    tick = frames[-1]["data"]
-    assert tick["source"] == "system" and tick["cpu"] == 12.3
-    assert frames[0].get("retry") == "3000"
-
-
-def test_recent_ticks_are_served_for_a_page_that_just_opened(
-    bootstrap: Bootstrap, settings: Settings
-) -> None:
-    app = create_app(bootstrap, collector_registry={}, seed_settings=settings)
-    with TestClient(app) as client:
-        assert client.get("/api/metrics/recent").json() == {"system": [], "gpu": []}
-        for _ in range(130):
-            app.state.ctx.live.on_result(system_result())
-        ticks = client.get("/api/metrics/recent").json()["system"]
-    assert len(ticks) == 120 and ticks[-1]["cpu"] == 12.3  # bounded, newest last

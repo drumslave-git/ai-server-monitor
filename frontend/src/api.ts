@@ -63,35 +63,13 @@ export type JsonSchema = {
   test_modes?: Record<string, string>;
 };
 
-export type CollectorStatus = {
-  state: "active" | "disabled" | "unavailable";
-  reason: string | null;
-  last_ts: number | null;
-  ok: boolean | null;
-  error: string | null;
-  duration_s: number | null;
-};
-
-export type Info = {
-  version: string;
-  uptime_s: number;
-  host_root: string;
-  llm: {
-    configured: boolean;
-    base_url: string;
-    model: string;
-    tool_mode: { effective: string | null; source: string | null; last_error: string | null };
-    stats: { requests: number; errors: number; last_error: string | null; last_latency_s: number | null };
-  };
-  collectors: Record<string, CollectorStatus>;
-};
-
 export type LlmTestResult = {
   ok: boolean;
   reply?: string;
   latency_s?: number;
   models?: string[] | null;
   model_listed?: boolean | null;
+  tool_call?: boolean | null;
   error?: string;
 };
 
@@ -106,23 +84,7 @@ export type ModelInfo = {
 import type { components } from "./api-types";
 export type Schemas = components["schemas"];
 export type StatusResponse = Schemas["StatusResponse"];
-export type Report = Schemas["Report"];
 export type ConnectionTestResult = Schemas["ConnectionTestResult"];
-export type ReportSummary = Schemas["ReportSummary"];
-export type ReportList = Schemas["ReportList"];
-export type Finding = Schemas["Finding"];
-
-/** One entry of GET /api/collectors: status plus the latest result (shape of `data` varies). */
-export type CollectorEntry = {
-  state: "active" | "disabled" | "unavailable";
-  reason: string | null;
-  ok: boolean | null;
-  error: string | null;
-  last_ts: number | null;
-  duration_s: number | null;
-  result: { ts: number; ok: boolean; data: Record<string, any>; error: string | null } | null;
-};
-export type Collectors = Record<string, CollectorEntry>;
 
 export type ActionRecord = {
   id: number;

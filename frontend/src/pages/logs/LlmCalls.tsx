@@ -110,7 +110,7 @@ export function LlmCallsList({ link }: { link: { kind: string; id: string; turn?
 
       {error && <p className="error">{error}</p>}
       {data && items.length === 0 && (
-        <Empty>{filtered ? "No calls match these filters." : "No LLM calls recorded yet. They appear here as soon as a report runs or you ask the chat something."}</Empty>
+        <Empty>{filtered ? "No calls match these filters." : "No LLM calls recorded yet. They appear here as soon as you ask the chat something or the agent runs."}</Empty>
       )}
       {items.length > 0 && (
         <section className="panel call-list-panel">

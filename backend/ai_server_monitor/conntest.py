@@ -13,7 +13,6 @@ test is scrubbed from the final text as a second line of defence.
 from __future__ import annotations
 
 import errno
-import os
 import re
 import socket
 import ssl
@@ -26,14 +25,12 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from .collectors.base import HostEnv
-from .collectors.docker import DEFAULT_SOCKET
 from .config import McpServerSettings, OptionalHttpUrl, Secret, Settings
 from .mcp_client.discovery import check_mcp_server
 from .settings_store import merge_secrets
 
 TEST_TIMEOUT = 10.0
-KINDS = ("prometheus", "docker", "telegram", "mcp")
+KINDS = ("telegram", "mcp")
 TELEGRAM_API = "https://api.telegram.org"
 TELEGRAM_TEST_TEXT = (
     "✅ AI Server Monitor: test message. This chat is set up to receive reports and alerts."
@@ -182,138 +179,6 @@ def _json(response: httpx.Response) -> Any:
         return None
 
 
-def _redirect_failure(response: httpx.Response) -> ConnFailure | None:
-    if response.status_code in (301, 302, 303, 307, 308):
-        target = response.headers.get("location", "")
-        # Show only where it goes, not what it carries.
-        shown = target.split("?", 1)[0][:200]
-        return ConnFailure(
-            f"The server redirected to {shown or 'another address'}. "
-            "Use that address as the URL (e.g. https:// instead of http://)."
-        )
-    return None
-
-
-def _not_the_app(response: httpx.Response, what: str) -> ConnFailure:
-    if response.status_code == 404:
-        return ConnFailure(
-            f"HTTP 404: this is not {what}. Check the URL (a URL base path may be needed)."
-        )
-    return ConnFailure(
-        f"HTTP {response.status_code}: this does not look like {what}. Check the URL and port."
-    )
-
-
-def _latency(ms: float) -> int:
-    return round(ms)
-
-
-# --------------------------------------------------------------------------- Prometheus
-
-
-class PrometheusConn(BaseModel):
-    url: OptionalHttpUrl = ""
-    token: Secret
-    username: str = ""
-    password: Secret
-
-
-async def check_prometheus(cfg: PrometheusConn) -> ConnResult:
-    base = cfg.url.strip().rstrip("/")
-    if not base:
-        raise ConnFailure("Enter the Prometheus URL first.")
-    token = cfg.token.get_secret_value()
-    headers = {"Accept": "application/json"}
-    auth: httpx.Auth | None = None
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    elif cfg.username:
-        auth = httpx.BasicAuth(cfg.username, cfg.password.get_secret_value())
-    async with _client(headers=headers, auth=auth) as client:
-        info, ms_info = await _request(client, "GET", f"{base}/api/v1/status/buildinfo")
-        if failure := _redirect_failure(info):
-            raise failure
-        if info.status_code in (401, 403):
-            raise ConnFailure(
-                f"Prometheus rejected the credentials (HTTP {info.status_code}). "
-                "Check the bearer token, or the user name and password."
-            )
-        version = ""
-        details: dict[str, Any] = {}
-        body = _json(info)
-        if info.status_code == 200 and isinstance(body, dict) and body.get("status") == "success":
-            version = str((body.get("data") or {}).get("version") or "")
-            details["version"] = version
-        elif info.status_code != 404:  # 404: Prometheus-compatible servers without buildinfo
-            raise _not_the_app(info, "Prometheus")
-        probe, ms = await _request(client, "GET", f"{base}/api/v1/query", params={"query": "1+1"})
-    reply = _json(probe)
-    if probe.status_code in (401, 403):
-        raise ConnFailure(
-            f"Prometheus rejected the credentials (HTTP {probe.status_code}). "
-            "Check the bearer token, or the user name and password."
-        )
-    if probe.status_code != 200 or not isinstance(reply, dict) or reply.get("status") != "success":
-        if isinstance(reply, dict) and reply.get("error"):
-            raise ConnFailure(
-                f"Prometheus answered but the test query failed: {reply['error']}"[:300]
-            )
-        raise _not_the_app(probe, "Prometheus")
-    details.update({"query": "ok", "latency_ms": _latency(ms if ms else ms_info)})
-    name = f"Prometheus {version}" if version else "Prometheus"
-    return ConnResult(True, f"Connected: {name}, a test query worked.", details)
-
-
-# --------------------------------------------------------------------------- Docker
-
-
-class DockerConn(BaseModel):
-    url: str = ""
-
-
-def _docker_target(cfg: DockerConn, env: HostEnv) -> tuple[str, dict[str, Any]]:
-    url = cfg.url.strip() or os.environ.get("DOCKER_HOST") or DEFAULT_SOCKET
-    if url.startswith("unix://"):
-        path = url.removeprefix("unix://")
-        if not os.path.exists(path) and env.in_container and env.path(path).exists():
-            path = str(env.path(path))
-        if not os.path.exists(path):
-            raise ConnFailure(
-                f"The Docker socket {path} does not exist here. Mount it into the container, "
-                "or set the URL of a socket proxy (tcp://docker-proxy:2375)."
-            )
-        return "http://docker", {"transport": httpx.AsyncHTTPTransport(uds=path)}
-    if url.startswith("tcp://"):
-        return "http://" + url.removeprefix("tcp://"), {}
-    if url.startswith(("http://", "https://")):
-        return url, {}
-    raise ConnFailure("Unsupported URL. Use tcp://host:port, http://host:port or unix:///path.")
-
-
-async def check_docker(cfg: DockerConn, env: HostEnv) -> ConnResult:
-    base, kwargs = _docker_target(cfg, env)
-    base = base.rstrip("/")
-    async with _client(**kwargs) as client:
-        response, ms = await _request(client, "GET", f"{base}/version")
-    if response.status_code == 403:
-        raise ConnFailure(
-            "The Docker API denied GET /version (HTTP 403). The socket proxy does not allow "
-            "this request."
-        )
-    body = _json(response)
-    if response.status_code != 200 or not isinstance(body, dict) or "ApiVersion" not in body:
-        raise ConnFailure(
-            f"This is not a Docker API (HTTP {response.status_code}). Check the URL and port."
-        )
-    version = str(body.get("Version") or "")
-    api = str(body.get("ApiVersion") or "")
-    return ConnResult(
-        True,
-        f"Connected: Docker {version} (API {api}).",
-        {"version": version, "api_version": api, "os": body.get("Os"), "latency_ms": _latency(ms)},
-    )
-
-
 # --------------------------------------------------------------------------- Telegram
 
 
@@ -433,8 +298,6 @@ def _current_node(
             if item.get("name") == body.get("name"):
                 return item
         return items[index] if index is not None and 0 <= index < len(items) else {}
-    if kind == "prometheus":
-        return stored["collectors"]["prometheus"]
     if kind == "telegram":
         return stored["outputs"]["telegram"]
     return {}
@@ -461,7 +324,6 @@ async def run_test(
     kind: str,
     body: dict[str, Any],
     settings: Settings,
-    env: HostEnv,
     *,
     mode: str | None = None,
     index: int | None = None,
@@ -476,15 +338,7 @@ async def run_test(
     ]
     run: Awaitable[ConnResult]
     try:
-        if kind == "prometheus":
-            prom_cfg = PrometheusConn.model_validate(
-                _pick(merged, ("url", "token", "username", "password"))
-            )
-            run = check_prometheus(prom_cfg)
-        elif kind == "docker":
-            docker_cfg = DockerConn.model_validate(_pick(merged, ("url",)))
-            run = check_docker(docker_cfg, env)
-        elif kind == "mcp":
+        if kind == "mcp":
             mcp_cfg = McpServerSettings.model_validate(merged)
             mcp_result = await check_mcp_server(mcp_cfg)
             run = _done(ConnResult(mcp_result.ok, mcp_result.message, mcp_result.details))

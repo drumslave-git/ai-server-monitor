@@ -3,8 +3,8 @@
 Two ways to get numbers in:
 
 * **Instruments** held by `MetricsHub`: counters, gauges and histograms updated from hooks
-  (collector manager, LLM client, the event bus). Updating one is a dict write; a scrape
-  never touches collectors, the LLM or (apart from one "latest report" row) the database.
+  (the event bus: LLM calls recorded by the trace, actions). Updating one is a dict write; a
+  scrape never touches the LLM.
 * **Providers**: `hub.add_provider(fn)` where `fn()` returns `Family` objects (sync or
   async), evaluated at scrape time. Other modules plug in this way.
 
@@ -24,9 +24,6 @@ import math
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
-
-from ..collectors.base import CollectorResult
-from ..llm.client import Usage
 
 log = logging.getLogger(__name__)
 
@@ -128,19 +125,6 @@ class MetricsHub:
 
     def _define_builtin(self) -> None:
         d = self.define
-        d("asm_reports_total", "counter", "Report attempts by result (ok, failed, skipped).")
-        d("asm_collector_up", "gauge", "1 if the collector's latest run succeeded.")
-        d("asm_collector_duration_seconds", "gauge", "Duration of the collector's latest run.")
-        d(
-            "asm_collector_errors_total",
-            "counter",
-            "Collector runs that failed since the service started.",
-        )
-        d(
-            "asm_collector_last_success_timestamp_seconds",
-            "gauge",
-            "Unix time of the collector's last successful run.",
-        )
         d(
             "asm_llm_request_duration_seconds",
             "histogram",
@@ -148,8 +132,8 @@ class MetricsHub:
             LLM_BUCKETS,
         )
         d("asm_llm_requests_total", "counter", "LLM requests by result (ok, error).")
-        d("asm_llm_tokens_total", "counter", "LLM tokens (prompt, completion); estimated if the "
-          "endpoint does not report usage.")  # fmt: skip
+        d("asm_llm_tokens_total", "counter", "LLM tokens (prompt, completion) as the endpoint "
+          "reported them.")  # fmt: skip
         d("asm_llm_errors_total", "counter", "Failed LLM requests by error type.")
         d(
             "asm_actions_total",
@@ -157,8 +141,6 @@ class MetricsHub:
             "Actions by type and status (suggested, pending, executed, failed, dry_run, "
             "rejected, deferred, expired).",
         )
-        for result in ("ok", "failed", "skipped"):
-            self.inc("asm_reports_total", {"result": result}, 0)
         for result in ("ok", "error"):
             self.inc("asm_llm_requests_total", {"result": result}, 0)
         for direction in ("prompt", "completion"):
@@ -193,42 +175,21 @@ class MetricsHub:
     def add_provider(self, provider: Provider) -> None:
         self._providers.append(provider)
 
-    # -- hooks (called by the manager / LLM client / event consumers) ------------
+    # -- hooks (called by event consumers) ----------------------------------------
 
-    def on_collector_result(self, result: CollectorResult) -> None:
-        labels = {"collector": result.name}
-        self.set("asm_collector_up", 1 if result.ok else 0, labels)
-        self.set("asm_collector_duration_seconds", round(result.duration_s, 3), labels)
-        if result.ok:
-            self.set("asm_collector_last_success_timestamp_seconds", result.ts, labels)
-            self.inc("asm_collector_errors_total", labels, 0)  # series exists from the start
+    def on_llm_call(self, call: Mapping[str, Any]) -> None:
+        """One recorded LLM request (the trace's `llm.call` event)."""
+        if call.get("status") == "ok":
+            if call.get("total_ms") is not None:
+                self.observe("asm_llm_request_duration_seconds", call["total_ms"] / 1000)
+            self.inc("asm_llm_requests_total", {"result": "ok"})
+            for direction in ("prompt", "completion"):
+                tokens = call.get(f"{direction}_tokens")
+                if tokens:
+                    self.inc("asm_llm_tokens_total", {"direction": direction}, tokens)
         else:
-            self.inc("asm_collector_errors_total", labels)
-
-    def reset_collectors(self) -> None:
-        """Collectors were rebuilt (settings changed): drop series of ones that are gone."""
-        for name in (
-            "asm_collector_up",
-            "asm_collector_duration_seconds",
-            "asm_collector_last_success_timestamp_seconds",
-        ):
-            self.clear(name)
-
-    def on_llm_success(self, usage: Usage, latency_s: float) -> None:
-        self.observe("asm_llm_request_duration_seconds", latency_s)
-        self.inc("asm_llm_requests_total", {"result": "ok"})
-        self.inc("asm_llm_tokens_total", {"direction": "prompt"}, usage.prompt_tokens)
-        self.inc("asm_llm_tokens_total", {"direction": "completion"}, usage.completion_tokens)
-
-    def on_llm_error(self, exc: Exception) -> None:
-        self.inc("asm_llm_requests_total", {"result": "error"})
-        self.inc("asm_llm_errors_total", {"type": type(exc).__name__})
-
-    def on_report_event(self, event_type: str, data: Mapping[str, Any]) -> None:
-        if event_type == "report.done":
-            self.inc("asm_reports_total", {"result": "ok"})
-        elif event_type == "report.failed":
-            self.inc("asm_reports_total", {"result": str(data.get("status") or "failed")})
+            self.inc("asm_llm_requests_total", {"result": "error"})
+            self.inc("asm_llm_errors_total", {"type": str(call.get("error_type") or "error")})
 
     # -- rendering --------------------------------------------------------------
 
@@ -264,53 +225,10 @@ class MetricsHub:
         return render_families(families)
 
 
-# --------------------------------------------------------------------------- report gauges
+# --------------------------------------------------------------------------- build info
 
 
-def report_families(latest: Mapping[str, Any] | None, version: str) -> list[Family]:
-    """Gauges describing the latest successful report (a row the endpoint just read)."""
-    out = [
+def build_info_families(version: str) -> list[Family]:
+    return [
         Family("asm_build_info", "gauge", "Build information.", [Sample(1, {"version": version})])
     ]
-    if latest is None:
-        return out
-    health = latest.get("health")
-    findings = latest.get("findings") or []
-    out += [
-        Family(
-            "asm_health_score",
-            "gauge",
-            "Health score of the latest report (0-100).",
-            [Sample(latest["score"])] if latest.get("score") is not None else [],
-        ),
-        Family(
-            "asm_health_status",
-            "gauge",
-            "Health of the latest report, one-hot over ok/warn/crit.",
-            [Sample(1 if health == s else 0, {"status": s}) for s in ("ok", "warn", "crit")]
-            if health in ("ok", "warn", "crit")
-            else [],
-        ),
-        Family(
-            "asm_findings",
-            "gauge",
-            "Findings in the latest report by severity.",
-            [
-                Sample(sum(1 for f in findings if f.get("severity") == sev), {"severity": sev})
-                for sev in ("info", "warn", "crit")
-            ],
-        ),
-        Family(
-            "asm_report_last_success_timestamp_seconds",
-            "gauge",
-            "Unix time of the latest successful report.",
-            [Sample(latest["ts"])],
-        ),
-        Family(
-            "asm_report_generation_seconds",
-            "gauge",
-            "How long the latest successful report took to generate.",
-            [Sample(latest["latency_ms"] / 1000)] if latest.get("latency_ms") is not None else [],
-        ),
-    ]
-    return out

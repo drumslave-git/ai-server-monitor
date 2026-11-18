@@ -1,4 +1,4 @@
-"""Cross-lane wiring: migrations, action layer -> event bus/metrics, approvals -> digest."""
+"""Cross-lane wiring: migrations, action layer -> event bus/metrics."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from ai_server_monitor.main import create_app
 
 from .actionfakes import NAME, FakeAction, settings_with
 from .live_server import live_server
-from .test_digest import digest_of, snapshot, titles
 from .test_stream import read_sse
 
 # --------------------------------------------------------------------------- migrations
@@ -39,6 +38,7 @@ def test_migrations_are_contiguous_and_complete() -> None:
         (11, "0011_bench_hardware.sql"),
         (12, "0012_bench_thinking.sql"),
         (13, "0013_remove_arr_bench_api.sql"),
+        (14, "0014_remove_collection.sql"),
     ]
     names = {e.name for e in resources.files("ai_server_monitor.migrations").iterdir()}
     assert not any("placeholder" in n for n in names)
@@ -48,9 +48,13 @@ async def test_fresh_database_migrates_to_latest(tmp_path: Path) -> None:
     db = Database(tmp_path / "fresh.db")
     await db.connect()
     try:
-        assert await db.schema_version() == 13
-        report_cols = {r["name"] for r in await db.fetchall("PRAGMA table_info(reports)")}
-        assert {"status", "summary", "digest_hash", "parsed"} <= report_cols
+        assert await db.schema_version() == 14
+        tables = {
+            r["name"]
+            for r in await db.fetchall("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        assert {"actions", "chat_sessions", "llm_calls"} <= tables
+        assert not {"collector_samples", "reports", "prom_queries"} & tables
         action_cols = {r["name"] for r in await db.fetchall("PRAGMA table_info(actions)")}
         assert {"status", "policy_key"} <= action_cols or "status" in action_cols
     finally:
@@ -63,7 +67,7 @@ async def test_database_at_the_old_main_schema_upgrades(tmp_path: Path) -> None:
     conn = sqlite3.connect(path)  # what v0.3.2 (user_version 1) left behind
     conn.executescript(first)
     conn.execute("PRAGMA user_version = 1")
-    conn.execute("INSERT INTO reports (ts, markdown) VALUES (1, 'old report')")
+    conn.execute("INSERT INTO reports (ts, markdown) VALUES (1, 'old report')")  # dropped later
     conn.execute("INSERT INTO kv (key, value, updated) VALUES ('keep', '1', 1)")
     conn.commit()
     conn.close()
@@ -71,9 +75,7 @@ async def test_database_at_the_old_main_schema_upgrades(tmp_path: Path) -> None:
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 13
-        old = await db.fetchone("SELECT status, markdown, parsed FROM reports")
-        assert old is not None and old["status"] == "ok" and old["markdown"] == "old report"
+        assert await db.schema_version() == 14
         assert await db.kv_get("keep") == 1  # data survives
         await db.execute(
             "INSERT INTO actions (ts, updated, action, policy, status, source) "
@@ -83,25 +85,13 @@ async def test_database_at_the_old_main_schema_upgrades(tmp_path: Path) -> None:
         await db.close()
 
 
-# --------------------------------------------------------------------------- digest
-
-
-async def test_pending_approvals_flag(db: Database) -> None:
-    await db.execute(
-        "INSERT INTO actions (ts, updated, action, policy, status, source) "
-        "VALUES (1, 1, 'fake_write', 'approve', 'pending', 'scheduler')"
-    )
-    d = await digest_of(db, snapshot())
-    assert ("info", "1 action(s) waiting for your approval") in titles(d)
-
-
 # --------------------------------------------------------------------------- end to end
 
 
 def test_approval_request_reaches_the_stream_and_the_metrics(
     bootstrap: Bootstrap, fake_action: FakeAction
 ) -> None:
-    app = create_app(bootstrap, collector_registry={}, seed_settings=settings_with("1h"))
+    app = create_app(bootstrap, seed_settings=settings_with("1h"))
     holder: dict[str, Any] = {}
 
     @app.get("/_loop", include_in_schema=False)

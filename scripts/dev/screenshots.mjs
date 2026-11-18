@@ -12,15 +12,10 @@ const chrome = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Applic
 mkdirSync(out, { recursive: true });
 
 const shots = [
-  { name: "dashboard-desktop", route: "dashboard", width: 1440, height: 1180 },
-  { name: "reports-desktop", route: "reports", width: 1440, height: 1000 },
   { name: "approvals-desktop", route: "approvals", width: 1440, height: 900 },
   { name: "settings-desktop", route: "settings/llm", width: 1440, height: 900 },
-  { name: "dashboard-light-desktop", route: "dashboard", width: 1440, height: 1180, scheme: "light" },
   { name: "chat-desktop", route: "chat/new", width: 1440, height: 1000, chat: true },
   { name: "chat-375", route: "chat/new", width: 375, height: 1500, mobile: true, chat: true },
-  { name: "dashboard-375", route: "dashboard", width: 375, height: 1900, mobile: true },
-  { name: "reports-375", route: "reports", width: 375, height: 900, mobile: true },
 ];
 
 const only = process.argv[4]?.split(",");

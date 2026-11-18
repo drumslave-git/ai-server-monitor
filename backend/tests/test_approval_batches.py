@@ -304,7 +304,7 @@ async def test_batches_hold_only_what_needs_approval(db: Database, fake: FakeAct
 def test_http_api_decides_batches_and_subsets(
     bootstrap: Bootstrap, fake_action: FakeAction
 ) -> None:
-    app = create_app(bootstrap, collector_registry={}, seed_settings=settings_with("1h"))
+    app = create_app(bootstrap, seed_settings=settings_with("1h"))
     with TestClient(app) as client:
         ctx = app.state.ctx
         client.portal.call(file_run, ctx.actions, 5)  # type: ignore[union-attr]

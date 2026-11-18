@@ -70,7 +70,7 @@ def sessions(client: TestClient) -> list[dict[str, Any]]:
 def test_title_is_generated_after_the_answer_and_stored(bootstrap: Bootstrap) -> None:
     llm = FakeLLM(say("Ollama uses the most memory."))
     llm.title_reply = '"Memory usage by process."'
-    with TestClient(make_app(bootstrap, llm, mode="none")) as client:
+    with TestClient(make_app(bootstrap, llm)) as client:
         events = ask(client, QUESTION)
         kinds = [e["type"] for e in events]
         assert kinds[-2:] == ["done", "title"], kinds  # the answer is complete before the title
@@ -90,7 +90,7 @@ def test_title_is_generated_after_the_answer_and_stored(bootstrap: Bootstrap) ->
 def test_junk_titles_fall_back_to_the_first_message(bootstrap: Bootstrap, reply: str) -> None:
     llm = FakeLLM(say("ok"))
     llm.title_reply = reply
-    with TestClient(make_app(bootstrap, llm, mode="none")) as client:
+    with TestClient(make_app(bootstrap, llm)) as client:
         events = ask(client, QUESTION)
         assert [e["type"] for e in events][-1] == "done"
         assert sessions(client)[0]["title"] == make_title(QUESTION)
@@ -99,7 +99,7 @@ def test_junk_titles_fall_back_to_the_first_message(bootstrap: Bootstrap, reply:
 def test_llm_failure_keeps_the_fallback_and_the_answer(bootstrap: Bootstrap) -> None:
     llm = FakeLLM(say("fine"))
     llm.title_reply = lambda body: httpx.Response(500, text="model crashed")
-    with TestClient(make_app(bootstrap, llm, mode="none")) as client:
+    with TestClient(make_app(bootstrap, llm)) as client:
         events = ask(client, QUESTION)
         assert [e["type"] for e in events][-1] == "done"
         assert "error" not in [e["type"] for e in events]
@@ -111,14 +111,19 @@ def test_slow_title_is_abandoned_after_the_timeout(
     bootstrap: Bootstrap, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     llm = FakeLLM(say("fine"))
-    app = make_app(bootstrap, llm, mode="none")
+
+    class Stalling:
+        async def handler(self, request: httpx.Request) -> httpx.Response:
+            if (
+                request.method == "POST"
+                and "You name chat conversations" in request.content.decode()
+            ):
+                await asyncio.sleep(30)
+            return llm.handler(request)
+
+    app = make_app(bootstrap, Stalling())  # type: ignore[arg-type]
     monkeypatch.setattr("ai_server_monitor.chat.engine.TITLE_TIMEOUT_S", 0.3)
     with TestClient(app) as client:
-
-        async def never(*args: Any, **kwargs: Any) -> Any:
-            await asyncio.sleep(30)
-
-        monkeypatch.setattr(app.state.ctx.llm, "complete", never)
         started = time.monotonic()
         events = ask(client, QUESTION)
         assert time.monotonic() - started < 5
@@ -129,7 +134,7 @@ def test_slow_title_is_abandoned_after_the_timeout(
 def test_only_the_first_answer_of_a_conversation_gets_a_title(bootstrap: Bootstrap) -> None:
     llm = FakeLLM(say("one"), say("two"))
     llm.title_reply = "First topic"
-    with TestClient(make_app(bootstrap, llm, mode="none")) as client:
+    with TestClient(make_app(bootstrap, llm)) as client:
         first = ask(client, QUESTION)
         session_id = first[0]["session_id"]
         second = ask(client, "and now the disks?", session_id)
@@ -142,7 +147,7 @@ def test_only_the_first_answer_of_a_conversation_gets_a_title(bootstrap: Bootstr
 def test_title_does_not_touch_the_activity_time(bootstrap: Bootstrap) -> None:
     llm = FakeLLM(say("ok"))
     llm.title_reply = "A title"
-    with TestClient(make_app(bootstrap, llm, mode="none")) as client:
+    with TestClient(make_app(bootstrap, llm)) as client:
         ask(client, QUESTION)
         detail = client.get(f"/api/chat/sessions/{sessions(client)[0]['id']}").json()
         assert detail["title"] == "A title"
@@ -153,7 +158,7 @@ def test_title_does_not_touch_the_activity_time(bootstrap: Bootstrap) -> None:
 def test_telegram_sessions_get_titles_too(bootstrap: Bootstrap) -> None:
     llm = FakeLLM(say("The server is fine."))
     llm.title_reply = "Server health check"
-    app = make_app(bootstrap, llm, mode="none")
+    app = make_app(bootstrap, llm)
     with TestClient(app) as client:
 
         async def run() -> list[dict[str, Any]]:

@@ -13,12 +13,6 @@ export function bytes(n: number | null | undefined): string {
   return `${n < 0 ? "-" : ""}${text} ${units[i]}`;
 }
 
-export const rate = (n: number | null | undefined) => (n === null || n === undefined ? "—" : `${bytes(n)}/s`);
-
-export function pct(n: number | null | undefined, digits = 0): string {
-  return n === null || n === undefined ? "—" : `${n.toFixed(n < 10 ? Math.max(digits, 1) : digits)}%`;
-}
-
 export function ago(ts: number | null | undefined, now = Date.now() / 1000): string {
   if (!ts) return "—";
   const s = Math.max(0, Math.round(now - ts));

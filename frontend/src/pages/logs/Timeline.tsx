@@ -5,7 +5,7 @@ import { Panel } from "../../ui";
 import { ms, num, prettyJson } from "./format";
 import type { Timeline, TimelineEntry, ToolCallDetail } from "./types";
 
-/** The LLM calls and tool calls that belong together (a chat turn, a report with retries),
+/** The LLM calls and tool calls that belong together (a chat turn, an agent run),
  *  in time order on one scale. Renders nothing for a call that stands alone. */
 export function TimelinePanel({ callId }: { callId: number }) {
   const [timeline, setTimeline] = useState<Timeline | null>(null);

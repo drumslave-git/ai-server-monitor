@@ -6,7 +6,6 @@ Nothing here touches a real service: respx answers every request.
 from __future__ import annotations
 
 import socket
-import ssl
 from collections.abc import Iterator
 from typing import Any
 
@@ -20,8 +19,6 @@ from ai_server_monitor.conntest import describe_error, scrub
 from ai_server_monitor.main import create_app
 
 KEY = "SECRET-api-key-0123456789"
-PROM = "http://prom.test:9090"
-DOCKER = "http://docker-proxy.test:2375"
 TG_TOKEN = "123456:TG-secret-token-abcdefghijklmnop"
 TG = f"https://api.telegram.org/bot{TG_TOKEN}"
 
@@ -30,11 +27,10 @@ TG = f"https://api.telegram.org/bot{TG_TOKEN}"
 def client(bootstrap: Bootstrap) -> Iterator[TestClient]:
     settings = Settings.model_validate(
         {
-            "collectors": {"prometheus": {"url": PROM, "token": "stored-bearer-token"}},
             "outputs": {"telegram": {"token": TG_TOKEN, "allowed_chat_ids": [111, 222]}},
         }
     )
-    with TestClient(create_app(bootstrap, collector_registry={}, seed_settings=settings)) as c:
+    with TestClient(create_app(bootstrap, seed_settings=settings)) as c:
         yield c
 
 
@@ -48,87 +44,6 @@ def dns_failure() -> httpx.ConnectError:
     exc = httpx.ConnectError("[Errno -2] Name or service not known")
     exc.__cause__ = socket.gaierror(-2, "Name or service not known")
     return exc
-
-
-def refused() -> httpx.ConnectError:
-    exc = httpx.ConnectError("[Errno 111] Connection refused")
-    exc.__cause__ = ConnectionRefusedError(111, "Connection refused")
-    return exc
-
-
-def tls_failure() -> httpx.ConnectError:
-    inner = ssl.SSLCertVerificationError(1, "certificate verify failed: self-signed certificate")
-    inner.verify_message = "self-signed certificate"
-    exc = httpx.ConnectError(
-        "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate "
-        "(_ssl.c:1006)"
-    )
-    exc.__cause__ = inner
-    return exc
-
-
-# --------------------------------------------------------------------------- Prometheus
-
-
-@respx.mock
-def test_prometheus_connected_with_version_and_query(client: TestClient) -> None:
-    info = respx.get(f"{PROM}/api/v1/status/buildinfo").respond(
-        json={"status": "success", "data": {"version": "2.53.0"}}
-    )
-    respx.get(f"{PROM}/api/v1/query").respond(
-        json={"status": "success", "data": {"resultType": "vector", "result": []}}
-    )
-    body = {"url": PROM, "token": SECRET_MASK, "username": "", "password": ""}
-    r = post(client, "prometheus", body)
-    assert r["ok"] is True and r["message"] == "Connected: Prometheus 2.53.0, a test query worked."
-    assert info.calls.last.request.headers["authorization"] == "Bearer stored-bearer-token"
-
-
-@respx.mock
-def test_prometheus_without_buildinfo_still_works_and_basic_auth(client: TestClient) -> None:
-    respx.get(f"{PROM}/api/v1/status/buildinfo").respond(404)
-    q = respx.get(f"{PROM}/api/v1/query").respond(
-        json={"status": "success", "data": {"resultType": "vector", "result": []}}
-    )
-    body = {"url": PROM, "token": "", "username": "u", "password": "p"}
-    r = post(client, "prometheus", body)
-    assert r["ok"] is True and r["message"] == "Connected: Prometheus, a test query worked."
-    assert q.calls.last.request.headers["authorization"].startswith("Basic ")
-
-
-@respx.mock
-def test_prometheus_failures(client: TestClient) -> None:
-    body = {"url": PROM, "token": "t", "username": "", "password": ""}
-    info = respx.get(f"{PROM}/api/v1/status/buildinfo")
-    info.respond(401)
-    assert "rejected the credentials (HTTP 401)" in post(client, "prometheus", body)["message"]
-    info.mock(side_effect=refused())
-    assert "Connection refused by prom.test:9090" in post(client, "prometheus", body)["message"]
-    info.respond(200, text="<html>not prometheus</html>")
-    assert "does not look like Prometheus" in post(client, "prometheus", body)["message"]
-    r = post(client, "prometheus", {**body, "url": ""})
-    assert r["ok"] is False and "Enter the Prometheus URL" in r["message"]
-
-
-# --------------------------------------------------------------------------- Docker
-
-
-@respx.mock
-def test_docker_connected_and_failures(client: TestClient) -> None:
-    route = respx.get(f"{DOCKER}/version")
-    route.respond(json={"Version": "27.3.1", "ApiVersion": "1.47", "Os": "linux"})
-    r = post(client, "docker", {"url": "tcp://docker-proxy.test:2375"})
-    assert r["ok"] is True and r["message"] == "Connected: Docker 27.3.1 (API 1.47)."
-    route.respond(403, text="Forbidden")
-    assert "socket proxy does not allow" in post(client, "docker", {"url": DOCKER})["message"]
-    route.respond(200, json={"hello": "world"})
-    assert "not a Docker API" in post(client, "docker", {"url": DOCKER})["message"]
-    route.mock(side_effect=dns_failure())
-    assert (
-        "DNS name not found: docker-proxy.test"
-        in post(client, "docker", {"url": DOCKER})["message"]
-    )
-    assert "Unsupported URL" in post(client, "docker", {"url": "ftp://x"})["message"]
 
 
 # --------------------------------------------------------------------------- Telegram
@@ -208,6 +123,8 @@ def test_telegram_send_without_chats_is_not_ok(client: TestClient) -> None:
 
 def test_unknown_kind_is_404(client: TestClient) -> None:
     assert client.post("/api/settings/test/nope", json={}).status_code == 404
+    assert client.post("/api/settings/test/docker", json={}).status_code == 404
+    assert client.post("/api/settings/test/prometheus", json={}).status_code == 404
 
 
 def test_secrets_are_scrubbed_from_text() -> None:

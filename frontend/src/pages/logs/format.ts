@@ -56,19 +56,16 @@ export function linkLabel(call: Pick<LlmCallSummary, "link_kind" | "link_id" | "
 }
 
 export function linkHref(call: Pick<LlmCallSummary, "link_kind" | "link_id">): string | null {
-  if (call.link_kind === "report" && call.link_id) return `#/reports/${call.link_id}`;
   if (call.link_kind === "chat") return "#/chat";
   return null;
 }
 
 export const PURPOSE_LABEL: Record<string, string> = {
-  report: "Report",
   chat: "Chat",
   chat_title: "Chat title",
   subagent: "Worker sub-task",
-  probe: "Tool-mode probe",
+  probe: "Model probe",
   test: "Connection test",
-  prom_plan: "Prometheus plan",
   other: "Other",
 };
 

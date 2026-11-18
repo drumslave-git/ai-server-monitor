@@ -1,4 +1,4 @@
-"""Telegram bot: reports and alerts, chat, approval buttons, a few commands.
+"""Telegram bot: chat, approval buttons, a few commands.
 
 Plain long polling against the Bot API with httpx (no webhook: the server sits behind a
 reverse proxy, and nothing needs to be reachable from outside). Only chats on the allowlist
@@ -28,7 +28,6 @@ import httpx
 from ..actions import ActionError, Conflict, NotFound
 from ..actions.service import outcome_text
 from ..config import TelegramSettings
-from ..digest import collectors_snapshot
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -39,9 +38,6 @@ API_URL = "https://api.telegram.org"
 MESSAGE_LIMIT = 4096
 POLL_TIMEOUT = 25
 BACKOFF_MAX = 60.0
-KV_REPORT_COUNT = "telegram.report_count"
-KV_LAST_HEALTH = "telegram.last_health"
-KV_REPORT_REQUESTS = "telegram.report_requests"
 TYPING_EVERY = 4.0
 APPROVAL_DEBOUNCE = 30.0
 """Seconds an approval waits before it is announced: requests of the same run that arrive in
@@ -51,8 +47,6 @@ MESSAGE_ITEMS = 10
 HELP = (
     "<b>AI Server Monitor</b>\n"
     "Just write a question to chat about the server.\n\n"
-    "/status — health and open flags\n"
-    "/report — write a report now\n"
     "/approvals — actions waiting for your decision\n"
     "/new — start a fresh chat (the old one stays in the web Chat list)\n"
     "/id — this chat's id (works in any chat)\n"
@@ -60,7 +54,6 @@ HELP = (
 )
 ID_COOLDOWN = 10.0
 """Seconds between two /id answers in the same chat: it works for everybody, so it is limited."""
-_HEALTH_ICON = {"ok": "🟢", "warn": "🟡", "crit": "🔴"}
 
 
 class TelegramError(Exception):
@@ -74,7 +67,7 @@ class TelegramError(Exception):
 
 
 def md_to_html(text: str) -> str:
-    """The small Markdown subset reports and answers use → Telegram HTML."""
+    """The small Markdown subset answers use → Telegram HTML."""
     out: list[str] = []
     for line in text.splitlines():
         stripped = line.strip()
@@ -247,8 +240,6 @@ class TelegramBot:
             await self.api.call(
                 "setMyCommands",
                 commands=[
-                    {"command": "status", "description": "Health and open flags"},
-                    {"command": "report", "description": "Write a report now"},
                     {"command": "approvals", "description": "Actions waiting for approval"},
                     {"command": "new", "description": "Start a fresh chat"},
                     {"command": "id", "description": "Show this chat's id"},
@@ -348,14 +339,6 @@ class TelegramBot:
     async def _command(self, chat_id: int, command: str) -> None:
         if command in ("start", "help"):
             await self.send(chat_id, HELP, markdown=False)
-        elif command == "status":
-            await self.send(chat_id, await self._status_text(), markdown=False)
-        elif command == "report":
-            if self.app.run_report_now():
-                await self._add_report_request(chat_id)
-                await self.send(chat_id, "Writing a report, it will arrive here.", markdown=False)
-            else:
-                await self.send(chat_id, "A report is already being written.", markdown=False)
         elif command == "new":
             await self.app.db.execute(
                 "DELETE FROM kv WHERE key = ?", (f"telegram.session.{chat_id}",)
@@ -373,32 +356,6 @@ class TelegramBot:
                 await self._send_approval(chat_id, batch)
         else:
             await self.send(chat_id, "Unknown command. /help lists them.", markdown=False)
-
-    async def _status_text(self) -> str:
-        app = self.app
-        latest = await app.reports.store.latest(status="ok")
-        digest = await app.reports.digest()
-        raw = collectors_snapshot(app.collectors)
-        broken = [n for n, c in raw.items() if c["state"] == "active" and c["ok"] is False]
-        lines = []
-        if latest:
-            icon = _HEALTH_ICON.get(latest["health"], "⚪")
-            age = max(int(time.time() - latest["ts"]) // 60, 0)
-            lines.append(
-                f"{icon} {latest['health']} (score {latest['score']}), report {age} min ago"
-            )
-            if latest.get("summary"):
-                lines.append(html.escape(latest["summary"]))
-        else:
-            lines.append("No report yet.")
-        flags = [f for f in digest.flags if f.severity in ("crit", "warn")]
-        lines += [f"[{f.severity.upper()}] {html.escape(f.title)}" for f in flags[:6]]
-        if broken:
-            lines.append("Collectors with errors: " + ", ".join(broken))
-        pending = await app.pending_approvals_count()
-        if pending:
-            lines.append(f"{pending} action(s) waiting for approval (/approvals)")
-        return "\n".join(lines)
 
     # ------------------------------------------------------------------ chat
 
@@ -469,7 +426,6 @@ class TelegramBot:
 
     async def _event_loop(self) -> None:
         sub = self.app.events.subscribe(
-            "report.done",
             "approval.pending",
             "approval.updated",
             "approval.decided",
@@ -480,9 +436,7 @@ class TelegramBot:
             self._spawn(self.on_event(event.type, event.data))
 
     async def on_event(self, kind: str, data: dict[str, Any]) -> None:
-        if kind == "report.done":
-            await self._on_report(data)
-        elif kind == "approval.pending":
+        if kind == "approval.pending":
             await self._announce(int(data["id"]))
         elif kind == "approval.updated":
             if int(data["id"]) not in self._announcing:  # else the message is still to be sent
@@ -490,59 +444,6 @@ class TelegramBot:
         elif kind in ("approval.decided", "approval.expired", "approval.progress"):
             self._cancel_announcement(int(data["id"]))
             await self._reflect_decision(data)
-
-    async def _last_health(self) -> str | None:
-        stored = await self.app.db.kv_get(KV_LAST_HEALTH)
-        if stored is not None:
-            return str(stored)
-        latest = await self.app.reports.store.latest(status="ok")
-        return latest["health"] if latest else None
-
-    async def _take_report_requests(self) -> set[int]:
-        """The chats that asked for /report and are still waiting (older asks are dropped)."""
-        stored = await self.app.db.kv_get(KV_REPORT_REQUESTS)
-        if stored is None:
-            return set()
-        await self.app.db.kv_set(KV_REPORT_REQUESTS, None)
-        max_age = self.app.settings.report.interval.total_seconds()
-        if time.time() - float(stored.get("ts", 0)) > max_age:
-            return set()
-        return {int(c) for c in stored.get("chats", [])}
-
-    async def _add_report_request(self, chat_id: int) -> None:
-        stored = await self.app.db.kv_get(KV_REPORT_REQUESTS) or {}
-        chats = {int(c) for c in stored.get("chats", [])} | {chat_id}
-        await self.app.db.kv_set(KV_REPORT_REQUESTS, {"ts": time.time(), "chats": sorted(chats)})
-
-    async def _on_report(self, data: dict[str, Any]) -> None:
-        count = int(await self.app.db.kv_get(KV_REPORT_COUNT, 0)) + 1
-        await self.app.db.kv_set(KV_REPORT_COUNT, count)
-        health = data.get("health")
-        previous = await self._last_health()
-        await self.app.db.kv_set(KV_LAST_HEALTH, health)
-        changed = previous is not None and health != previous and self.cfg.alerts
-        every = self.cfg.report_every
-        full_for_all = every > 0 and count % every == 0
-        requesters = await self._take_report_requests()
-        report = await self.app.reports.store.get(int(data["id"])) if data.get("id") else None
-        markdown = (report or {}).get("markdown") or data.get("summary") or ""
-        header = ""
-        if changed:
-            header = (
-                f"{_HEALTH_ICON.get(previous or '', '⚪')} → {_HEALTH_ICON.get(health, '⚪')} "
-                f"Health changed: {previous} → {health}\n\n"
-            )
-        for chat_id in sorted(self.allowed):
-            if full_for_all or chat_id in requesters:
-                await self._guarded_send(chat_id, header + markdown)
-            elif changed:
-                await self._guarded_send(chat_id, header + _alert_body(data))
-
-    async def _guarded_send(self, chat_id: int, text: str) -> None:
-        try:
-            await self.send(chat_id, text)
-        except TelegramError as exc:
-            log.warning("telegram: could not send to chat %s: %s", chat_id, exc)
 
     # ------------------------------------------------------------------ approvals
     #
@@ -824,11 +725,3 @@ def _outcome_line(view: dict[str, Any]) -> str:
     tail = f": {outcome_text(counts)}{view.get('queue_note') or ''}" if counts else ""
     who = f" by {by}" if by and decision != "expired" else ""
     return f"{verb}{who}{tail}"
-
-
-def _alert_body(data: dict[str, Any]) -> str:
-    lines = [str(data.get("summary") or "")]
-    for finding in (data.get("findings") or [])[:6]:
-        detail = f" — {finding.get('detail')}" if finding.get("detail") else ""
-        lines.append(f"- [{finding.get('severity')}] **{finding.get('title')}**{detail}")
-    return "\n".join(line for line in lines if line)

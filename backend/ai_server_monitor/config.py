@@ -34,8 +34,6 @@ from pydantic import (
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .thresholds import normalize_threshold
-
 SECRET_MASK = "********"
 """What the API returns for a secret that is set. Sending it back means "unchanged"."""
 
@@ -154,6 +152,12 @@ class _Model(BaseModel):
 class GeneralSettings(_Model):
     log_level: Literal["debug", "info", "warning", "error"] = "info"
     """Log verbosity of the service."""
+    language: str = "en"
+    """Language of chat answers and Telegram messages."""
+    docker_url: str = ""
+    """Docker API the shell's `docker` commands use, e.g. tcp://docker-proxy:2375 or
+    unix:///var/run/docker.sock. Empty = $DOCKER_HOST (set by the compose file), else the local
+    socket."""
 
 
 class ApprovalsSettings(_Model):
@@ -163,13 +167,12 @@ class ApprovalsSettings(_Model):
     """Pending approvals expire after this."""
 
 
-ToolMode = Literal["auto", "native", "json", "none"]
 ReasoningEffort = Literal["auto", "none", "low", "medium", "high"]
 
 
 class LLMSettings(_Model):
-    """The big model: it answers chat questions, writes reports and decides when to hand a
-    sub-task to the worker model."""
+    """The big model: it answers chat questions and decides when to hand a sub-task to the
+    worker model. It must support native tool calling (OpenAI `tools`)."""
 
     base_url: OptionalHttpUrl = ""
     """OpenAI-compatible API base URL, e.g. http://ollama:11434/v1, http://llama:8080/v1,
@@ -178,19 +181,14 @@ class LLMSettings(_Model):
     """API key, if the endpoint needs one."""
     model: str = ""
     """Model name as the endpoint knows it, e.g. qwen2.5:14b or gpt-4o-mini."""
-    tool_mode: ToolMode = "auto"
-    """How the model calls tools in chat. auto = detect; native = OpenAI tool calls;
-    json = JSON-in-text fallback for models without tool calling; none = no tools."""
-    max_context_tokens: int = Field(default=8192, ge=1024)
-    """Context window to plan prompts for. For Ollama, also raise OLLAMA_CONTEXT_LENGTH."""
     max_output_tokens: int = Field(default=16384, ge=64)
-    """Maximum tokens per answer/report, counting a thinking model's reasoning too. Too low and
+    """Maximum tokens per answer, counting a thinking model's reasoning too. Too low and
     a model that thinks long runs out before it writes the answer (shown as an error)."""
     reasoning_effort: ReasoningEffort = "auto"
-    """How much a thinking model reasons before answering chat questions and reports, sent as
-    the API's reasoning_effort. auto = not sent, the model decides; none = no thinking (fast,
-    shallower); low / medium / high = as the model supports. Short helper calls (chat titles,
-    tool routing, tests) always ask for none."""
+    """How much a thinking model reasons before answering chat questions, sent as the API's
+    reasoning_effort (left out from then on if the endpoint rejects it). auto = not sent, the
+    model decides; none = no thinking (fast, shallower); low / medium / high = as the model
+    supports. Short helper calls (chat titles, tests) always ask for none."""
     temperature: Annotated[float, Field(ge=0, le=2)] | Literal["auto"] = "auto"
     """Randomness of answers: 0 is the most predictable, higher is more varied. auto = not sent,
     so the model's own default applies (for Ollama models it is shown above)."""
@@ -204,9 +202,6 @@ class LLMSettings(_Model):
     """Per-request timeout. Local models on CPU can be slow."""
     max_retries: int = Field(default=2, ge=0, le=10)
     """How many times a failed model request is retried before giving up."""
-    stream_usage: bool = True
-    """Ask the endpoint for token usage while streaming (turned off automatically if
-    the endpoint rejects it)."""
     extra_body: dict[str, Any] = Field(default_factory=dict)
     """Extra provider-specific request fields (JSON), passed through verbatim."""
 
@@ -219,56 +214,6 @@ class WorkerLLMSettings(LLMSettings):
     """A smaller, faster model for sub-tasks the main model hands off (looking through the
     host with the shell). Empty model = the main model does them too. Empty base URL = the
     main model's endpoint and API key with this model name (e.g. a second Ollama model)."""
-
-
-class ReportSettings(_Model):
-    interval: Duration = timedelta(minutes=5)
-    """How often the LLM writes a status report."""
-    skip_if_unchanged: bool = False
-    """Skip the LLM call when nothing relevant changed since the last report."""
-    language: str = "en"
-    """Language of reports and chat answers."""
-    reasoning_effort: ReasoningEffort = "none"
-    """Thinking level for reports (the API's reasoning_effort). A report is a summary of an
-    already analysed digest, so none (no thinking) is fastest and most reliable: thinking models
-    can loop in their reasoning for minutes and never write the report. auto = not sent, the
-    model decides; low / medium / high = as the model supports. Chat uses LLM → reasoning effort."""
-    digest_token_budget: int = Field(default=3000, ge=500, le=100_000)
-    """Size limit (in tokens, ~4 characters each) of the pre-analyzed data digest the model
-    reads. Over the limit, the least important sections are shortened or dropped first.
-    Raise it for models with a big context, lower it for small ones."""
-    digest_top_n: int = Field(default=5, ge=1, le=20)
-    """How many top processes, containers and disk writers the digest lists."""
-    trend_window: Duration = timedelta(days=7)
-    """How much stored history the digest uses for trends (disk growth, restarts)."""
-    disk_warn_percent: float = Field(default=85, ge=1, le=100)
-    """A filesystem fuller than this is flagged as a warning."""
-    disk_crit_percent: float = Field(default=95, ge=1, le=100)
-    """A filesystem fuller than this is flagged as critical."""
-    disk_full_warn_days: float = Field(default=14, gt=0)
-    """Warn when a disk's growth trend predicts it will be full within this many days."""
-    disk_full_crit_days: float = Field(default=3, gt=0)
-    """Critical when a disk is predicted to be full within this many days."""
-    memory_warn_percent: float = Field(default=90, ge=1, le=100)
-    """Memory use (excluding cache) above this is a warning."""
-    memory_crit_percent: float = Field(default=97, ge=1, le=100)
-    """Memory use (excluding cache) above this is critical."""
-    swap_warn_percent: float = Field(default=50, ge=1, le=100)
-    """Swap use above this is a warning."""
-    load_warn_per_core: float = Field(default=1.5, gt=0)
-    """5-minute load average per CPU core above this is a warning."""
-    load_crit_per_core: float = Field(default=3.0, gt=0)
-    """5-minute load average per CPU core above this is critical."""
-    restart_loop_count: int = Field(default=3, ge=1)
-    """A container or service restarted this many times within a day counts as a restart loop."""
-    log_error_burst: int = Field(default=20, ge=1)
-    """This many error lines (journal in one report interval, or one container's log in one
-    check) count as an error burst."""
-    gpu_temp_warn_c: float = Field(default=85, ge=30)
-    """A GPU hotter than this is a warning."""
-    unused_images_note_gb: float = Field(default=20, ge=0)
-    """Suggest pruning when this many GB of Docker images are unused while the disk holding
-    Docker data is above the disk warning level."""
 
 
 class ChatSettings(_Model):
@@ -293,9 +238,7 @@ class ChatSettings(_Model):
 
 class StorageSettings(_Model):
     retention: Duration = timedelta(days=30)
-    """How long metrics history, reports and chat messages are kept. The action log is permanent."""
-    sample_interval: Duration = timedelta(minutes=5)
-    """Resolution of stored history. Live data is always fresh."""
+    """How long chat messages are kept. The action log is permanent."""
     prune_interval: Duration = timedelta(hours=1)
     """How often old data is deleted."""
 
@@ -320,169 +263,6 @@ class LogsSettings(_Model):
     The Logs page always shows the newest few thousand lines since the last start."""
 
 
-class CollectorSettings(_Model):
-    enabled: bool | Literal["auto"] = True
-    """auto = use it if available on this host, silently skip otherwise."""
-    interval: Duration = timedelta(seconds=30)
-    """How often this collector gathers fresh data."""
-
-
-class SystemCollectorSettings(CollectorSettings):
-    interval: Duration = timedelta(seconds=15)
-    """How often this collector gathers fresh data."""
-    top_n: int = Field(default=10, ge=1, le=50)
-    """How many top processes (by CPU and by memory) to report."""
-
-
-class DockerCollectorSettings(CollectorSettings):
-    url: str = ""
-    """Docker API, e.g. tcp://docker-proxy:2375 or unix:///var/run/docker.sock.
-    Empty = $DOCKER_HOST (set by the compose file), else the local socket."""
-    log_scan: bool = True
-    """Count error lines in container logs since the last run."""
-    log_tail: int = Field(default=300, ge=10, le=5000)
-    """Max log lines read per container per run."""
-    df_interval: Duration = timedelta(minutes=30)
-    """How often to check Docker disk usage (images, volumes, build cache)."""
-
-
-class SystemdCollectorSettings(CollectorSettings):
-    interval: Duration = timedelta(minutes=1)
-    """How often this collector gathers fresh data."""
-    bus_address: str = ""
-    """D-Bus address. Empty = the host's system bus under the host mount."""
-
-
-class JournalCollectorSettings(CollectorSettings):
-    interval: Duration = timedelta(minutes=1)
-    """How often this collector gathers fresh data."""
-    priority: Literal["emerg", "alert", "crit", "err", "warning", "notice", "info"] = "warning"
-    """Lowest severity to read."""
-    directory: str = ""
-    """Journal directory. Empty = the host's /var/log/journal (or /run/log/journal)."""
-    max_entries: int = Field(default=2000, ge=100, le=50000)
-    """Max entries read per run."""
-    initial_lookback: Duration = timedelta(hours=1)
-    """How far back to read after a (re)start."""
-
-
-class PromQuery(_Model):
-    name: Name
-    """Short identifier shown in reports, e.g. targets_down."""
-    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    """PromQL expression, evaluated as an instant query."""
-    description: str = ""
-    """What the result means, e.g. "Scrape targets that are down". Helps the report writer."""
-    unit: str = Field(default="", max_length=12)
-    """Unit of the value, e.g. %, bytes, seconds. Optional."""
-    warn_if: str | None = None
-    """Warning when a value crosses this: an operator and a number, e.g. > 80 or == 0."""
-    crit_if: str | None = None
-    """Critical when a value crosses this, same form as the warning."""
-
-    @field_validator("warn_if", "crit_if")
-    @classmethod
-    def _threshold(cls, value: str | None) -> str | None:
-        return normalize_threshold(value)
-
-
-class PrometheusCollectorSettings(CollectorSettings):
-    enabled: bool | Literal["auto"] = "auto"
-    """auto = on as soon as a URL is set."""
-    interval: Duration = timedelta(minutes=1)
-    """How often this collector gathers fresh data."""
-    url: OptionalHttpUrl = ""
-    """Prometheus base URL, e.g. http://prometheus:9090. Empty = not used."""
-    token: Secret = SecretStr("")
-    """Bearer token, if Prometheus sits behind an authenticating proxy."""
-    username: str = ""
-    """Basic-auth user (used when no bearer token is set)."""
-    password: Secret = SecretStr("")
-    """Basic-auth password."""
-    timeout: Duration = timedelta(seconds=10)
-    """Per-query timeout."""
-    max_series: int = Field(default=50, ge=1, le=1000)
-    """Max series kept per query result; the rest is only counted."""
-    queries: list[PromQuery] = Field(
-        default_factory=lambda: [
-            PromQuery(
-                name="targets_down",
-                query="up == 0",
-                description="Scrape targets that are down",
-            ),
-            PromQuery(
-                name="firing_alerts",
-                query='ALERTS{alertstate="firing"}',
-                description="Alerts currently firing in Prometheus",
-            ),
-        ]
-    )
-    """PromQL queries you wrote, run on every collection and included in reports."""
-    auto_queries: bool = True
-    """Let the LLM choose more queries from what this Prometheus scrapes (other exporters,
-    errors, saturation, other hosts). Also reports firing alerts and down targets. The
-    chosen queries are listed below and can be disabled, pinned, edited or deleted."""
-    max_auto_queries: int = Field(default=12, ge=1, le=40)
-    """Most automatically chosen queries."""
-    replan_interval: Duration = timedelta(days=7)
-    """Choose queries again at least this often (also when the set of metrics changes)."""
-
-    @field_validator("queries", mode="before")
-    @classmethod
-    def _legacy_queries(cls, value: Any) -> Any:
-        # Before the query list existed this was a {name: expression} map.
-        if isinstance(value, dict):
-            return [{"name": k, "query": v} for k, v in value.items()]
-        return value
-
-    @field_validator("queries")
-    @classmethod
-    def _unique_names(cls, value: list[PromQuery]) -> list[PromQuery]:
-        names = [q.name for q in value]
-        dupes = sorted({n for n in names if names.count(n) > 1})
-        if dupes:
-            raise ValueError(f"duplicate query names: {', '.join(dupes)}")
-        return value
-
-
-class ImageUpdatesCollectorSettings(CollectorSettings):
-    enabled: bool | Literal["auto"] = "auto"
-    """auto = on when the Docker API is reachable."""
-    interval: Duration = timedelta(hours=12)
-    """How often this collector gathers fresh data."""
-    url: str = ""
-    """Docker API, e.g. tcp://docker-proxy:2375. Empty = $DOCKER_HOST (set by the compose
-    file), else the local socket."""
-    cache_ttl: Duration = timedelta(hours=6)
-    """How long a registry answer is reused. Registries rate-limit, so don't set this low."""
-
-
-class CollectorsSettings(_Model):
-    system: SystemCollectorSettings = SystemCollectorSettings()
-    """CPU, memory, disks, network, temperatures, top processes."""
-    docker: DockerCollectorSettings = Field(
-        default=DockerCollectorSettings(), json_schema_extra={"test": "docker"}
-    )
-    """Containers: state, health, restarts, resource use, log errors, disk usage."""
-    gpu: CollectorSettings = CollectorSettings(enabled="auto", interval=timedelta(seconds=30))
-    """NVIDIA GPUs (needs the NVIDIA container runtime)."""
-    systemd: SystemdCollectorSettings = SystemdCollectorSettings()
-    """Failed units and restart loops."""
-    journal: JournalCollectorSettings = JournalCollectorSettings()
-    """Warnings and errors from the system journal."""
-    apt: CollectorSettings = CollectorSettings(interval=timedelta(hours=6))
-    """Pending package updates, security updates, reboot required."""
-    image_updates: ImageUpdatesCollectorSettings = Field(
-        default=ImageUpdatesCollectorSettings(), json_schema_extra={"test": "docker"}
-    )
-    """Running containers whose image tag has a newer build in its registry (same tag, new
-    digest; does not look for newer version numbers)."""
-    prometheus: PrometheusCollectorSettings = Field(
-        default=PrometheusCollectorSettings(), json_schema_extra={"test": "prometheus"}
-    )
-    """Run PromQL queries against an existing Prometheus."""
-
-
 class TelegramSettings(_Model):
     enabled: bool = False
     """Turn the Telegram bot on (needs a bot token and at least one allowed chat id)."""
@@ -491,14 +271,9 @@ class TelegramSettings(_Model):
     allowed_chat_ids: list[int] = Field(default_factory=list)
     """Only these chats may talk to the bot. Don't know a chat id? Send /id to the bot: it
     answers in any chat."""
-    report_every: int = Field(default=1, ge=0)
-    """Send every Nth report (0 = alerts only)."""
     new_session_after: Duration = timedelta(hours=6)
     """Start a fresh chat after this long without a message in a Telegram chat (the old one
     stays in the Chat list on the web page). 0 = never: one chat until you send /new."""
-    alerts: bool = True
-    """Send a short alert whenever the health status changes (also when reports are not
-    sent every time)."""
     api_url: OptionalHttpUrl = ""
     """Bot API server. Empty = https://api.telegram.org."""
     web_url: OptionalHttpUrl = ""
@@ -649,11 +424,9 @@ class Settings(_Model):
     general: GeneralSettings = GeneralSettings()
     llm: LLMSettings = LLMSettings()
     worker: WorkerLLMSettings = WorkerLLMSettings()
-    report: ReportSettings = ReportSettings()
     chat: ChatSettings = ChatSettings()
     storage: StorageSettings = StorageSettings()
     logs: LogsSettings = LogsSettings()
-    collectors: CollectorsSettings = CollectorsSettings()
     outputs: OutputsSettings = OutputsSettings()
     mcp: McpSettings = McpSettings()
     approvals: ApprovalsSettings = ApprovalsSettings()

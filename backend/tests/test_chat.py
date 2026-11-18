@@ -10,24 +10,12 @@ from fastapi.testclient import TestClient
 
 from ai_server_monitor.agent.safety import REDACTED, Scrubber, shrink, wrap_untrusted
 from ai_server_monitor.chat.store import make_title
-from ai_server_monitor.collectors.base import Collector
 from ai_server_monitor.config import Bootstrap, Settings
 from ai_server_monitor.main import create_app
 
 from .conftest import LLM_URL
 
 SECRET = "sk-live-0123456789abcdef"
-
-
-class StubSystem(Collector):
-    name = "system"
-
-    async def collect(self) -> dict[str, Any]:
-        return {
-            "hostname": "box",
-            "memory": {"total": 1000, "used": 600, "percent": 60.0},
-            "filesystems": [{"mount": "/", "used_percent": 40.0, "size": 100}],
-        }
 
 
 class FakeLLM:
@@ -145,7 +133,6 @@ def make_app(
     bootstrap: Bootstrap,
     llm: FakeLLM,
     *,
-    mode: str = "native",
     chat: dict[str, Any] | None = None,
     worker: dict[str, Any] | None = None,
 ) -> Any:
@@ -154,7 +141,6 @@ def make_app(
             "llm": {
                 "base_url": LLM_URL,
                 "model": "fake",
-                "tool_mode": mode,
                 "api_key": SECRET,
                 "max_retries": 0,
             },
@@ -165,7 +151,6 @@ def make_app(
     return create_app(
         bootstrap,
         llm_transport=httpx.MockTransport(llm.handler),
-        collector_registry={"system": StubSystem},
         seed_settings=settings,
     )
 
@@ -224,7 +209,7 @@ def test_bash_answers_the_question_and_everything_is_persisted(
         result = next(e for e in events if e["type"] == "tool_result")
         assert result["ok"] and "/dev/sda1" in result["preview"] and SECRET not in result["preview"]
         done = events[-1]
-        assert done["tool_mode"] == "native" and done["steps"] == 2 and done["stopped"] is None
+        assert done["steps"] == 2 and done["stopped"] is None
         assert done["usage"] == {"prompt_tokens": 20, "completion_tokens": 10}
         assert answer(events) == "The root disk is 40% full."
 
@@ -382,30 +367,11 @@ def test_worker_falls_back_to_the_main_model() -> None:
     assert worker_config(settings).api_key.get_secret_value() == ""
 
 
-# --------------------------------------------------------------------------- without tools
-
-
-@pytest.mark.parametrize("mode", ["none", "json"])
-def test_without_native_tools_the_digest_goes_into_the_prompt(
-    bootstrap: Bootstrap, mode: str
-) -> None:
-    llm = FakeLLM(say("The server looks fine."))
-    app = make_app(bootstrap, llm, mode=mode)
-    with TestClient(app) as client:
-        client.portal.call(app.state.ctx.collectors.run, "system")  # type: ignore[union-attr]
-        events = ask(client, "how is the server?")
-    request = llm.requests[0]
-    assert not request.get("tools")
-    system = request["messages"][0]["content"]
-    assert "<digest>" in system and "no tools" in system
-    assert events[-1]["tool_mode"] == mode and answer(events) == "The server looks fine."
-
-
 # --------------------------------------------------------------------------- API edges
 
 
 def test_api_errors(bootstrap: Bootstrap) -> None:
-    app = create_app(bootstrap, collector_registry={})
+    app = create_app(bootstrap)
     with TestClient(app) as client:
         unconfigured = client.post("/api/chat", json={"message": "hi"})
         assert unconfigured.status_code == 409
@@ -423,12 +389,11 @@ def test_llm_failure_is_reported_as_an_error_event(bootstrap: Bootstrap) -> None
         return httpx.Response(500, text="boom")
 
     settings = Settings.model_validate(
-        {"llm": {"base_url": LLM_URL, "model": "m", "tool_mode": "native", "max_retries": 0}}
+        {"llm": {"base_url": LLM_URL, "model": "m", "max_retries": 0}}
     )
     app = create_app(
         bootstrap,
         llm_transport=httpx.MockTransport(broken),
-        collector_registry={},
         seed_settings=settings,
     )
     with TestClient(app) as client:
@@ -440,9 +405,7 @@ def test_llm_failure_is_reported_as_an_error_event(bootstrap: Bootstrap) -> None
 
 
 def test_scrubber_removes_configured_secrets_secret_keys_and_credential_shapes() -> None:
-    settings = Settings.model_validate(
-        {"llm": {"api_key": SECRET}, "collectors": {"prometheus": {"password": "hunter2hunter2"}}}
-    )
+    settings = Settings.model_validate({"llm": {"api_key": SECRET}})
     scrub = Scrubber(settings)
     cleaned = scrub.clean(
         {
@@ -491,7 +454,7 @@ def test_session_titles_are_cut_at_a_word_boundary() -> None:
 def test_the_worker_model_test_uses_the_main_endpoint_when_its_own_is_empty(
     bootstrap: Bootstrap,
 ) -> None:
-    llm = FakeLLM()
+    llm = FakeLLM(call("get_check_word", {}), say("check-1"))
     app = make_app(bootstrap, llm)
     with TestClient(app) as client:
         none = client.post("/api/settings/test-llm?profile=worker", json={"model": ""}).json()

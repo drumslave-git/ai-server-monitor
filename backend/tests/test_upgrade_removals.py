@@ -1,6 +1,7 @@
-"""Upgrading an installation that still has data of the removed features (the *arr/qBittorrent
-integration, the model benchmarks, the api_call action): migration 0013 clears it and the app
-comes up clean, with no settings reset."""
+"""Upgrading an installation that still has data of removed features: migration 0013 (the
+*arr/qBittorrent integration, the model benchmarks, the api_call action) and migration 0014
+(collectors, digest, reports, the Prometheus planner, the hand-written LLM client) clear it and
+the app comes up clean, with no settings reset."""
 
 from __future__ import annotations
 
@@ -16,11 +17,23 @@ from ai_server_monitor.main import create_app
 
 OLD_SETTINGS = {
     "general": {"log_level": "info"},
-    "llm": {"base_url": "http://llm.test/v1", "model": "test-model", "tool_mode": "none"},
+    "llm": {
+        "base_url": "http://llm.test/v1",
+        "model": "test-model",
+        "tool_mode": "none",
+        "max_context_tokens": 8192,
+        "stream_usage": True,
+    },
+    "worker": {"model": "", "tool_mode": "auto", "stream_usage": False},
+    "report": {"interval": "5m", "language": "de", "digest_top_n": 5},
+    "storage": {"retention": "30d", "sample_interval": "5m"},
     "collectors": {
         "system": {"enabled": True},
+        "docker": {"url": "tcp://docker-proxy:2375", "log_scan": True},
+        "prometheus": {"url": "http://prom:9090", "token": "prom-secret"},
         "arr": {"enabled": "auto", "interval": "2m", "max_queue_items": 50},
     },
+    "outputs": {"telegram": {"enabled": False, "report_every": 3, "alerts": True}},
     "arr": {
         "dry_run": False,
         "timeout": "15s",
@@ -33,34 +46,39 @@ OLD_SETTINGS = {
     },
     "bench": {"repeats": 3, "judge": {"enabled": True, "api_key": "judge-secret"}},
 }
+REMOVED_KV = (
+    "llm.tool_mode",
+    "prom_plan",
+    "prom_dismissed",
+    "telegram.report_count",
+    "telegram.last_health",
+    "telegram.report_requests",
+)
 
 
 def _old_database(path: str) -> None:
-    """A database at schema v12 (the last one with the integration) holding its data."""
+    """A database at schema v12 (before both removals) holding data of every removed part."""
     conn = sqlite3.connect(path)
     for version, _name, sql in load_migrations()[:12]:
         conn.executescript(f"BEGIN;\n{sql}\n;PRAGMA user_version = {version};\nCOMMIT;")
     now = time.time()
-    conn.execute(
-        "INSERT INTO kv (key, value, updated) VALUES ('settings', ?, ?)",
-        (json.dumps(OLD_SETTINGS), now),
-    )
-    conn.execute(
-        "INSERT INTO kv (key, value, updated) VALUES ('settings.backup.1', ?, ?)",
-        (json.dumps(OLD_SETTINGS), now),
-    )
-    conn.execute(
-        "INSERT INTO collector_samples (ts, collector, ok, data) VALUES (?, 'arr', 1, '{}')",
-        (now,),
-    )
-    conn.execute(
-        "INSERT INTO collector_samples (ts, collector, ok, data) VALUES (?, 'system', 1, '{}')",
-        (now,),
-    )
+    for key in ("settings", "settings.backup.1"):
+        conn.execute(
+            "INSERT INTO kv (key, value, updated) VALUES (?, ?, ?)",
+            (key, json.dumps(OLD_SETTINGS), now),
+        )
+    for key in REMOVED_KV:
+        conn.execute("INSERT INTO kv (key, value, updated) VALUES (?, '1', ?)", (key, now))
     conn.execute(
         "INSERT INTO kv (key, value, updated) VALUES ('automation.pause', ?, ?)",
         (json.dumps({"paused": True, "since": now, "by": "bench #4"}), now),
     )
+    for collector in ("arr", "system"):
+        conn.execute(
+            "INSERT INTO collector_samples (ts, collector, ok, data) VALUES (?, ?, 1, '{}')",
+            (now, collector),
+        )
+    conn.execute("INSERT INTO reports (ts, markdown) VALUES (?, 'old report')", (now,))
     conn.execute(
         "INSERT INTO bench_runs (id, started, status, scope, repeats) VALUES (1, ?, 'done', "
         "'all', 3)",
@@ -77,30 +95,33 @@ def _old_database(path: str) -> None:
     conn.close()
 
 
-def test_upgrade_drops_arr_data_and_starts_clean(bootstrap: Bootstrap) -> None:
+def test_upgrade_drops_removed_features_and_starts_clean(bootstrap: Bootstrap) -> None:
     bootstrap.data_dir.mkdir(parents=True, exist_ok=True)
     _old_database(str(bootstrap.db_path))
 
-    with TestClient(create_app(bootstrap, collector_registry={})) as client:
+    with TestClient(create_app(bootstrap)) as client:
         values = client.get("/api/settings").json()["values"]
         actions = client.get("/api/actions").json()
+        status = client.get("/api/status")
 
-    assert "arr" not in values
-    assert "arr" not in values["collectors"]
-    assert "bench" not in values
+    for section in ("arr", "bench", "report", "collectors"):
+        assert section not in values
     assert values["approvals"]["approval_ttl"] == "2h"
+    assert values["general"]["language"] == "de"
+    assert values["general"]["docker_url"] == "tcp://docker-proxy:2375"
     assert values["llm"]["model"] == "test-model"
+    assert "tool_mode" not in values["llm"] and "tool_mode" not in values["worker"]
+    assert status.status_code == 200 and status.json()["pending_approvals"] == 0
     # the old actions stay readable in the audit log
     assert "arr_search" in json.dumps(actions)
 
     conn = sqlite3.connect(str(bootstrap.db_path))
     try:
-        keys = [row[0] for row in conn.execute("SELECT key FROM kv WHERE key LIKE 'settings%'")]
+        keys = [row[0] for row in conn.execute("SELECT key FROM kv")]
         stored = {
             key: json.loads(value)
             for key, value in conn.execute("SELECT key, value FROM kv WHERE key LIKE 'settings%'")
         }
-        samples = [row[0] for row in conn.execute("SELECT collector FROM collector_samples")]
         tables = {
             row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
@@ -115,15 +136,19 @@ def test_upgrade_drops_arr_data_and_starts_clean(bootstrap: Bootstrap) -> None:
     assert sorted(k for k in keys if k.startswith("settings.backup.")) == ["settings.backup.1"]
     for key, value in stored.items():
         if isinstance(value, dict):
-            assert "arr" not in value, key
-            assert "arr" not in value.get("collectors", {}), key
-            assert "bench" not in value, key
-            assert "radarr-secret" not in json.dumps(value), key
-            assert "judge-secret" not in json.dumps(value), key
-    assert samples == ["system"]
+            for section in ("arr", "bench", "report", "collectors"):
+                assert section not in value, (key, section)
+            text = json.dumps(value)
+            for secret in ("radarr-secret", "judge-secret", "prom-secret"):
+                assert secret not in text, (key, secret)
+            for gone in ("tool_mode", "max_context_tokens", "stream_usage", "sample_interval"):
+                assert gone not in text, (key, gone)
+            assert "report_every" not in text and '"alerts"' not in text, key
     assert not {t for t in tables if t.startswith("bench_")}
+    assert not tables & {"collector_samples", "reports", "prom_queries"}
     assert "actions" in tables and "approval_batches" in tables
     assert "automation.pause" not in keys
+    assert not set(REMOVED_KV) & set(keys)
     # the waiting one can never run now: closed; the executed one is history and stays
     assert statuses == {"expired": "arr_search", "executed": "arr_search"}
     assert expired[1] == "upgrade"

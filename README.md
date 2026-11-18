@@ -1,15 +1,19 @@
 # AI Server Monitor
 
-An AI-powered, **read-only** monitor for one self-hosted Linux server. It collects host data
-(CPU, memory, disks, network, processes, Docker, image updates, apt updates, NVIDIA GPU,
-systemd, journal, Prometheus), turns it into a compact digest, and has an LLM
-behind any OpenAI-compatible API write a status report every few minutes. You read the reports
-in the web dashboard or in Telegram, ask questions in chat (the web Chat page, Telegram, or the
-`/api/chat` endpoint), and scrape `/metrics` into Grafana. Tools of MCP servers you add can be used from chat; every write goes
-through a per-action policy (`off`, `suggest`, `approve`, `auto`),
-rate limits and a permanent audit log; the host itself is only ever read.
+An AI-powered, **read-only** monitor for one self-hosted Linux server. You ask questions in chat
+(the web Chat page, Telegram, or the `/api/chat` endpoint) and one LLM agent, behind any
+OpenAI-compatible API, finds the answer itself: it runs read-only shell commands on the host (a
+`bash` tool in a sandbox), can hand sub-tasks to a smaller worker model, and uses the tools of the
+MCP servers you add. The monitor collects nothing by code on its own; everything it knows comes
+from what the model looks at. Every write goes through a per-action policy (`off`, `suggest`,
+`approve`, `auto`), rate limits and a permanent audit log; the host itself is only ever read. `/metrics`
+exposes the monitor's own counters for Grafana.
 
-![Dashboard](docs/samples/ui/dashboard-desktop.png)
+**The model must support native tool calling** (OpenAI-style `tools`). A model that cannot call tools
+cannot run the product; Settings → LLM → **Test** checks the endpoint, the model and one tool-call
+round trip.
+
+![Chat](docs/samples/ui/chat-desktop.png)
 
 - [Install](#install) · [First run](#first-run-walkthrough) · [Using it](#using-it)
 - [LLM recommendations](#llm-recommendations) · [Security and the approval model](#security-and-the-approval-model)
@@ -34,13 +38,13 @@ What the compose file sets, and why:
 | Part | Why |
 |---|---|
 | `./data:/data` | Settings and history (one SQLite file). **Back it up: it contains your API keys and tokens in clear text.** |
-| `pid: host` | Lets the container see the host's processes (top CPU/memory consumers, which container a process belongs to). |
-| `/:/host:ro,rslave` | A read-only view of the host's filesystem: disk usage of the real mounts, the apt state, the journal, the systemd D-Bus socket. Nothing is ever written there. |
-| `security_opt: apparmor=unconfined` | On hosts with AppArmor (Ubuntu) Docker's default profile blocks the systemd D-Bus queries and reading other processes. The mounts stay read-only. Hosts without AppArmor do not need it. |
+| `pid: host` | Lets the container see the host's processes (`ps`, `top`). |
+| `/:/host:ro,rslave` | A read-only view of the host's filesystem: what the chat's shell reads: disk usage of the real mounts, package state, logs. Nothing is ever written there. |
+| `security_opt: apparmor=unconfined` | On hosts with AppArmor (Ubuntu) Docker's default profile blocks reading other processes. The mounts stay read-only. Hosts without AppArmor do not need it. |
 | `cap_add: [DAC_READ_SEARCH]` | The chat's `bash` tool runs real bash on the host's files and programs (`chroot /host`, then the host's `setpriv`/`prlimit`/`ionice`) as a dedicated unprivileged uid that owns no host process, with no_new_privs and only this capability: it can read every file, write none, signal nothing, and cannot open the real Docker socket (`docker` goes through the read-only proxy). Without this line the shell still works as a plain unprivileged user and says when root-only paths were unreadable. Needs Docker's default `CHROOT`/`SETUID`/`SETGID` (no `cap_drop: ALL`). Every command is logged (`GET /api/chat/audit`). |
 | `DOCKER_HOST: tcp://docker-proxy:2375` | The Docker API goes through a socket proxy that only allows GET requests. The monitor can look at containers and images, not start, stop or delete anything. |
-| `docker-proxy` env `CONTAINERS`, `IMAGES`, `INFO`, `SYSTEM` | The API sections the proxy lets through: containers (state, stats, logs), images (needed by the image-update check), engine info, and disk usage (`/system/df`). |
-| `# gpus: all` | Uncomment for NVIDIA GPU monitoring (needs the NVIDIA container runtime on the host). |
+| `docker-proxy` env `CONTAINERS`, `IMAGES`, `INFO`, `SYSTEM` | The API sections the proxy lets through: containers (state, stats, logs), images, engine info, and disk usage (`/system/df`). |
+| `# gpus: all` | Uncomment to make an NVIDIA GPU visible to the shell (needs the NVIDIA container runtime on the host). |
 
 Startup parameters that are not settings (the image defaults are right for the compose file):
 `ASM_DATA_DIR` (`/data`), `ASM_PORT` (`8080`), `ASM_HOST` (`0.0.0.0`), `ASM_HOST_ROOT` (`/host`),
@@ -62,39 +66,22 @@ GHCR package is private, `docker login ghcr.io` with a token that has `read:pack
 
 Open **Settings**. The sections are tabs; **Save** applies the change without a restart. A bad
 value is shown next to the field and nothing is saved until it is fixed.
-Every connection (LLM, Prometheus, Docker, Telegram) has a **Test**
+Every connection (LLM, Telegram) has a **Test**
 button that checks what you typed, before you save, and says what answered or what is wrong.
 
-1. **LLM** (`llm`) — the one thing the monitor cannot work without.
+1. **LLM** (`llm`) — the one thing the monitor cannot work without. The model must support native
+   tool calling.
    - *Base URL*: any OpenAI-compatible endpoint ending in `/v1`: `http://ollama:11434/v1`,
      `http://llama:8080/v1`, `https://openrouter.ai/api/v1`, `https://api.openai.com/v1`.
    - *Model*: the name the endpoint knows (`gemma4:e4b`, `qwen2.5:14b`, `gpt-4o-mini`...).
      *API key* only if the endpoint wants one.
    - *Max output tokens*: keep it at **4096 or more**. Thinking models spend part of the budget on
-     reasoning before the answer; a small limit gives empty or cut-off reports.
-   - *Max context tokens*: the context window you actually run with. With Ollama also raise
-     `OLLAMA_CONTEXT_LENGTH`, or the server silently truncates long prompts.
-   - Press **Test connection**: it lists the endpoint's models and sends a tiny request.
-2. **Reports** (`report`) — *Interval* (default 5 minutes), *Language* of reports and chat
-   answers, and the thresholds the digest uses to flag problems (disk, memory, load...). The first
-   report is written about 45 seconds after startup, once the collectors have run.
-3. **Collectors** (`collectors`) — everything is on by default and a collector that cannot work on
-   your host reports "unavailable" instead of failing. Check the **Dashboard** for the state of each.
-   - *Prometheus*: set the URL (e.g. `http://prometheus:9090`); it turns on by itself
-     (`enabled: auto`). Add queries with name, PromQL and a description of what the result means; two
-     generic ones ship (`up == 0`, firing alerts). Optional bearer token or basic auth.
-     **Automatic queries** (on by default): the LLM reads what your Prometheus scrapes (one small request
-     per job) and picks queries that add to what the monitor already sees — other exporters, error and
-     saturation counters, other machines. Every query is run against Prometheus first; failures are sent
-     back to the model once, then dropped, and a model that fails leaves a few built-in checks. Chosen
-     queries are stored and run with yours; the list under *Collectors → Prometheus* shows the last value
-     or error and lets you switch off, pin or delete each one, or **Re-plan now** (it also re-plans when
-     the set of metrics changes and weekly). A query that fails 5 runs in a row is switched off. Down
-     targets and firing alerts are read straight from Prometheus and flagged without the model; results
-     from another machine (e.g. a Windows exporter) are labelled "other host" in the digest.
-   - *Image updates*: needs `IMAGES: 1` on the docker proxy. It compares each running container's image digest
-     with what the registry serves for the same tag (anonymously; private images show as "unknown").
-4. **Outputs** (`outputs`):
+     reasoning before the answer; a small limit gives empty or cut-off answers.
+   - Press **Test**: it checks the endpoint, the model and one tool-call round trip.
+   - A second, smaller *worker* model can be set; the main model hands it sub-tasks.
+2. **General** (`general`) — *Language* of chat answers, the log level, and the Docker API address
+   (`docker_url`; empty = `$DOCKER_HOST` from the compose file).
+3. **Outputs** (`outputs`):
    - *Telegram*: create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`), paste the token.
      Press **Test** to check the token (it shows the bot's name). To find your chat id, open the
      bot in Telegram and send `/id`: it answers in any chat with the chat id, your user id and the
@@ -102,31 +89,27 @@ button that checks what you typed, before you save, and says what answered or wh
      message** then sends a short message to every allowed chat and reports each one (a chat that
      never pressed *Start* fails with "chat not found"). Apart from `/id`, chats that are not on
      the list are ignored without a reply.
-     *Report every* N reports (0 = only health-change alerts); *Alerts* sends a short message
-     whenever the health status changes.
    - *Metrics*: `/metrics` is on by default. Set a *Bearer token* if anything outside your trusted
      network can reach the port.
-5. **Data retention** (`storage`): history, reports and chats are kept 30 days by default; the
+4. **Data retention** (`storage`): history and chats are kept 30 days by default; the
    action audit log is never pruned.
 
 ## Using it
 
-- **Dashboard** — live health, key numbers, top consumers, collector states. **Reports** — history
-  and the full text of each report. **Approvals** — what is waiting for your decision, with the
+- **Approvals** — what is waiting for your decision, with the
   audit log. **Chat** — ask questions about the server, with
   conversation history, streamed answers and approval cards for changes
   (screenshot: `docs/samples/ui/chat-desktop.png`). **Logs** — every request to the language
   model exactly as sent and received (the full messages, tool definitions, answer, reasoning, tool
   calls, token counts and timings: queue, time to first token, generation), a timeline per chat
   question (LLM call → tool → LLM call → answer) and the app's own log with a live tail
-  (screenshots: `docs/samples/ui/logs-*.png`). Each report and each chat answer links to its
+  (screenshots: `docs/samples/ui/logs-*.png`). Each chat answer links to its
   calls. Passwords, keys and tokens are removed from what is stored; retention and size limits
   are in Settings → Logs.
-- **Pause automation** — the button at the top of every page stops every scheduled job and automation (collectors, reports, the Prometheus planner, the LLM probe, approval sweeps, pruning) and cancels the runs in flight. Chat, approving/rejecting, the Settings test buttons, "Run report now" and the Telegram bot keep working. It survives a restart; Resume lets the jobs come due again (the overdue ones start a couple of seconds apart). `GET /api/automation`, `POST /api/automation/pause|resume`; `/api/info` shows it per job. (screenshots: `docs/samples/ui/automation-*.png`).
-- **Telegram** — reports and alerts arrive by themselves. Write a plain question to chat
-  ("what is using the most disk and memory?"); the model looks at live data with read-only tools
-  and answers. Commands: `/status` (health and open flags), `/report` (write one now),
-  `/approvals` (open requests, with buttons), `/id` (this chat's id: works in any chat, also for
+- **Pause automation** — the button at the top of every page stops every scheduled job and automation (approval sweeps, pruning) and cancels the runs in flight. Chat, approving/rejecting, the Settings test buttons and the Telegram bot keep working. It survives a restart; Resume lets the jobs come due again (the overdue ones start a couple of seconds apart). `GET /api/automation`, `POST /api/automation/pause|resume`; `/api/info` shows it per job.
+- **Telegram** — write a plain question to chat
+  ("what is using the most disk and memory?"); the model looks at the host with its read-only
+  shell and answers. Commands: `/approvals` (open requests, with buttons), `/id` (this chat's id: works in any chat, also for
   chats that are not allowed yet, once per 10 s), `/new` (start a fresh chat), `/help`. When an
   action needs approval, the bot sends
   ONE message per approval (all the items one chat turn asked for: the
@@ -145,9 +128,8 @@ button that checks what you typed, before you save, and says what answered or wh
   `GET /api/chat/sessions[/{id}]` and `DELETE /api/chat/sessions/{id}` manage the history.
   Chat can ask for changes through MCP tools but only through the
   same policy and approval path as everything else.
-- **Metrics** — `/metrics` exposes health score and status, findings, collector up/duration/errors,
-  report and LLM counters, pending approvals, action counts
-  (`asm_*`). A Grafana dashboard to import is in [docs/grafana-dashboard.json](docs/grafana-dashboard.json).
+- **Metrics** — `/metrics` exposes LLM request and token counters, pending approvals, action counts
+  and build info (`asm_*`). A Grafana dashboard to import is in [docs/grafana-dashboard.json](docs/grafana-dashboard.json).
   Scrape config:
 
   ```yaml
@@ -159,22 +141,17 @@ button that checks what you typed, before you save, and says what answered or wh
 
 ## LLM recommendations
 
-- **Local, small**: tested with `gemma4:e4b` through Ollama at `https://…/v1`. It uses native tool
-  calling, writes good reports, and chat questions that need one or two tool calls were answered in about 5 to 15 seconds in our tests. It needs the
-  4096 output tokens mentioned above. Models in the 7–14B range work; the digest is built to fit
-  them (`report.digest_token_budget`, default 3000 tokens).
-- **How tools work**: with `llm.tool_mode: auto` the monitor probes the endpoint once (at startup,
-  retried every few minutes until the LLM is reachable) and remembers the result for a week per
-  endpoint and model: `native` (OpenAI tool calls), `json` (the model answers
-  `{"tool": ..., "args": {...}}` as text; malformed replies get up to two repair prompts) or `none`
-  (no tools; the current digest is put into the prompt instead). Override it with `llm.tool_mode`
-  if the probe guesses wrong. The answer is streamed token by token in every mode.
+- **Native tool calling is required.** The chat agent works by calling tools (the host shell,
+  `delegate`, MCP tools). There is no fallback for models that cannot call tools natively; the
+  Settings Test button tells you whether yours can.
+- **Local, small**: tested with `gemma4:e4b` through Ollama at `https://.../v1`. It uses native tool
+  calling, and chat questions that need one or two tool calls were answered in about 5 to 15
+  seconds in our tests. It needs the 4096 output tokens mentioned above. With Ollama also raise
+  `OLLAMA_CONTEXT_LENGTH`, or the server silently truncates long prompts.
 - **Cloud models** (OpenAI, OpenRouter, any OpenAI-compatible gateway) work the same way
-  and are the best choice for chat that has to use many tools. Remember that report digests and
-  tool results (process names, container names, log excerpts) leave your network; secrets are
+  and are the best choice for chat that has to use many tools. Remember that tool results
+  (process names, container names, log excerpts, file contents) leave your network; secrets are
   scrubbed from them first, but check that you are comfortable with the rest.
-- Reports are written from a pre-analysed digest, not from raw data, so even a small model does not
-  need to find problems itself: the rules flag them, the model explains them.
 
 ## Security and the approval model
 
@@ -227,6 +204,8 @@ a fresh install starts with.
 | Setting | Type | Default | What it does |
 |---|---|---|---|
 | `general.log_level` | debug / info / warning / error | `info` | Log verbosity of the service. |
+| `general.language` | string | `en` | Language of chat answers and Telegram messages. |
+| `general.docker_url` | string | empty | Docker API the shell's `docker` commands use, e.g. tcp://docker-proxy:2375 or unix:///var/run/docker.sock. Empty = $DOCKER_HOST (set by the compose file), else the local socket. |
 
 ### Main model (`llm`)
 
@@ -235,16 +214,13 @@ a fresh install starts with.
 | `llm.base_url` | string | empty | OpenAI-compatible API base URL, e.g. http://ollama:11434/v1, http://llama:8080/v1, https://openrouter.ai/api/v1. Empty = LLM not configured. |
 | `llm.api_key` | secret | empty | API key, if the endpoint needs one. |
 | `llm.model` | string | empty | Model name as the endpoint knows it, e.g. qwen2.5:14b or gpt-4o-mini. |
-| `llm.tool_mode` | auto / native / json / none | `auto` | How the model calls tools in chat. auto = detect; native = OpenAI tool calls; json = JSON-in-text fallback for models without tool calling; none = no tools. |
-| `llm.max_context_tokens` | integer (min 1024) | `8192` | Context window to plan prompts for. For Ollama, also raise OLLAMA_CONTEXT_LENGTH. |
-| `llm.max_output_tokens` | integer (min 64) | `16384` | Maximum tokens per answer/report, counting a thinking model's reasoning too. Too low and a model that thinks long runs out before it writes the answer (shown as an error). |
-| `llm.reasoning_effort` | auto / none / low / medium / high | `auto` | How much a thinking model reasons before answering chat questions and reports, sent as the API's reasoning_effort. auto = not sent, the model decides; none = no thinking (fast, shallower); low / medium / high = as the model supports. Short helper calls (chat titles, tool routing, tests) always ask for none. |
+| `llm.max_output_tokens` | integer (min 64) | `16384` | Maximum tokens per answer, counting a thinking model's reasoning too. Too low and a model that thinks long runs out before it writes the answer (shown as an error). |
+| `llm.reasoning_effort` | auto / none / low / medium / high | `auto` | How much a thinking model reasons before answering chat questions, sent as the API's reasoning_effort (left out from then on if the endpoint rejects it). auto = not sent, the model decides; none = no thinking (fast, shallower); low / medium / high = as the model supports. Short helper calls (chat titles, tests) always ask for none. |
 | `llm.temperature` | number or auto | `auto` | Randomness of answers: 0 is the most predictable, higher is more varied. auto = not sent, so the model's own default applies (for Ollama models it is shown above). |
 | `llm.top_p` | number or auto | `auto` | Nucleus sampling: only the most likely words that together cover this share of the probability are considered. auto = not sent, the model's own default applies. |
 | `llm.top_k` | integer or auto | `auto` | Only the this-many most likely words are considered at each step (0 = no limit). auto = not sent, the model's own default applies. Not every endpoint honours it. |
 | `llm.timeout` | duration | `3m` | Per-request timeout. Local models on CPU can be slow. |
 | `llm.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up. |
-| `llm.stream_usage` | boolean | on | Ask the endpoint for token usage while streaming (turned off automatically if the endpoint rejects it). |
 | `llm.extra_body` | map | empty | Extra provider-specific request fields (JSON), passed through verbatim. |
 
 ### Worker model (`worker`)
@@ -254,42 +230,14 @@ a fresh install starts with.
 | `worker.base_url` | string | empty | OpenAI-compatible API base URL, e.g. http://ollama:11434/v1, http://llama:8080/v1, https://openrouter.ai/api/v1. Empty = LLM not configured. |
 | `worker.api_key` | secret | empty | API key, if the endpoint needs one. |
 | `worker.model` | string | empty | Model name as the endpoint knows it, e.g. qwen2.5:14b or gpt-4o-mini. |
-| `worker.tool_mode` | auto / native / json / none | `auto` | How the model calls tools in chat. auto = detect; native = OpenAI tool calls; json = JSON-in-text fallback for models without tool calling; none = no tools. |
-| `worker.max_context_tokens` | integer (min 1024) | `8192` | Context window to plan prompts for. For Ollama, also raise OLLAMA_CONTEXT_LENGTH. |
-| `worker.max_output_tokens` | integer (min 64) | `16384` | Maximum tokens per answer/report, counting a thinking model's reasoning too. Too low and a model that thinks long runs out before it writes the answer (shown as an error). |
-| `worker.reasoning_effort` | auto / none / low / medium / high | `auto` | How much a thinking model reasons before answering chat questions and reports, sent as the API's reasoning_effort. auto = not sent, the model decides; none = no thinking (fast, shallower); low / medium / high = as the model supports. Short helper calls (chat titles, tool routing, tests) always ask for none. |
+| `worker.max_output_tokens` | integer (min 64) | `16384` | Maximum tokens per answer, counting a thinking model's reasoning too. Too low and a model that thinks long runs out before it writes the answer (shown as an error). |
+| `worker.reasoning_effort` | auto / none / low / medium / high | `auto` | How much a thinking model reasons before answering chat questions, sent as the API's reasoning_effort (left out from then on if the endpoint rejects it). auto = not sent, the model decides; none = no thinking (fast, shallower); low / medium / high = as the model supports. Short helper calls (chat titles, tests) always ask for none. |
 | `worker.temperature` | number or auto | `auto` | Randomness of answers: 0 is the most predictable, higher is more varied. auto = not sent, so the model's own default applies (for Ollama models it is shown above). |
 | `worker.top_p` | number or auto | `auto` | Nucleus sampling: only the most likely words that together cover this share of the probability are considered. auto = not sent, the model's own default applies. |
 | `worker.top_k` | integer or auto | `auto` | Only the this-many most likely words are considered at each step (0 = no limit). auto = not sent, the model's own default applies. Not every endpoint honours it. |
 | `worker.timeout` | duration | `3m` | Per-request timeout. Local models on CPU can be slow. |
 | `worker.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up. |
-| `worker.stream_usage` | boolean | on | Ask the endpoint for token usage while streaming (turned off automatically if the endpoint rejects it). |
 | `worker.extra_body` | map | empty | Extra provider-specific request fields (JSON), passed through verbatim. |
-
-### Reports (`report`)
-
-| Setting | Type | Default | What it does |
-|---|---|---|---|
-| `report.interval` | duration | `5m` | How often the LLM writes a status report. |
-| `report.skip_if_unchanged` | boolean | off | Skip the LLM call when nothing relevant changed since the last report. |
-| `report.language` | string | `en` | Language of reports and chat answers. |
-| `report.reasoning_effort` | auto / none / low / medium / high | `none` | Thinking level for reports (the API's reasoning_effort). A report is a summary of an already analysed digest, so none (no thinking) is fastest and most reliable: thinking models can loop in their reasoning for minutes and never write the report. auto = not sent, the model decides; low / medium / high = as the model supports. Chat uses LLM → reasoning effort. |
-| `report.digest_token_budget` | integer (min 500, max 100000) | `3000` | Size limit (in tokens, ~4 characters each) of the pre-analyzed data digest the model reads. Over the limit, the least important sections are shortened or dropped first. Raise it for models with a big context, lower it for small ones. |
-| `report.digest_top_n` | integer (min 1, max 20) | `5` | How many top processes, containers and disk writers the digest lists. |
-| `report.trend_window` | duration | `7d` | How much stored history the digest uses for trends (disk growth, restarts). |
-| `report.disk_warn_percent` | number (min 1, max 100) | `85` | A filesystem fuller than this is flagged as a warning. |
-| `report.disk_crit_percent` | number (min 1, max 100) | `95` | A filesystem fuller than this is flagged as critical. |
-| `report.disk_full_warn_days` | number | `14` | Warn when a disk's growth trend predicts it will be full within this many days. |
-| `report.disk_full_crit_days` | number | `3` | Critical when a disk is predicted to be full within this many days. |
-| `report.memory_warn_percent` | number (min 1, max 100) | `90` | Memory use (excluding cache) above this is a warning. |
-| `report.memory_crit_percent` | number (min 1, max 100) | `97` | Memory use (excluding cache) above this is critical. |
-| `report.swap_warn_percent` | number (min 1, max 100) | `50` | Swap use above this is a warning. |
-| `report.load_warn_per_core` | number | `1.5` | 5-minute load average per CPU core above this is a warning. |
-| `report.load_crit_per_core` | number | `3.0` | 5-minute load average per CPU core above this is critical. |
-| `report.restart_loop_count` | integer (min 1) | `3` | A container or service restarted this many times within a day counts as a restart loop. |
-| `report.log_error_burst` | integer (min 1) | `20` | This many error lines (journal in one report interval, or one container's log in one check) count as an error burst. |
-| `report.gpu_temp_warn_c` | number (min 30) | `85` | A GPU hotter than this is a warning. |
-| `report.unused_images_note_gb` | number (min 0) | `20` | Suggest pruning when this many GB of Docker images are unused while the disk holding Docker data is above the disk warning level. |
 
 ### Chat (`chat`)
 
@@ -306,8 +254,7 @@ a fresh install starts with.
 
 | Setting | Type | Default | What it does |
 |---|---|---|---|
-| `storage.retention` | duration | `30d` | How long metrics history, reports and chat messages are kept. The action log is permanent. |
-| `storage.sample_interval` | duration | `5m` | Resolution of stored history. Live data is always fresh. |
+| `storage.retention` | duration | `30d` | How long chat messages are kept. The action log is permanent. |
 | `storage.prune_interval` | duration | `1h` | How often old data is deleted. |
 
 ### Logs (`logs`)
@@ -320,63 +267,6 @@ a fresh install starts with.
 | `logs.max_total_mb` | integer (min 10, max 10000) | `200` | Upper limit for the recorded calls on disk; the oldest go first when it is exceeded. |
 | `logs.keep_app_log` | boolean | on | Save warnings and errors of the app log in the database so they survive a restart. The Logs page always shows the newest few thousand lines since the last start. |
 
-### Collectors (`collectors`)
-
-| Setting | Type | Default | What it does |
-|---|---|---|---|
-| **collectors.system** | group |  | CPU, memory, disks, network, temperatures, top processes. |
-| `collectors.system.enabled` | on / off / auto | on | auto = use it if available on this host, silently skip otherwise. |
-| `collectors.system.interval` | duration | `15s` | How often this collector gathers fresh data. |
-| `collectors.system.top_n` | integer (min 1, max 50) | `10` | How many top processes (by CPU and by memory) to report. |
-| **collectors.docker** | group |  | Containers: state, health, restarts, resource use, log errors, disk usage. |
-| `collectors.docker.enabled` | on / off / auto | on | auto = use it if available on this host, silently skip otherwise. |
-| `collectors.docker.interval` | duration | `30s` | How often this collector gathers fresh data. |
-| `collectors.docker.url` | string | empty | Docker API, e.g. tcp://docker-proxy:2375 or unix:///var/run/docker.sock. Empty = $DOCKER_HOST (set by the compose file), else the local socket. |
-| `collectors.docker.log_scan` | boolean | on | Count error lines in container logs since the last run. |
-| `collectors.docker.log_tail` | integer (min 10, max 5000) | `300` | Max log lines read per container per run. |
-| `collectors.docker.df_interval` | duration | `30m` | How often to check Docker disk usage (images, volumes, build cache). |
-| **collectors.gpu** | group |  | NVIDIA GPUs (needs the NVIDIA container runtime). |
-| `collectors.gpu.enabled` | on / off / auto | `auto` | auto = use it if available on this host, silently skip otherwise. |
-| `collectors.gpu.interval` | duration | `30s` | How often this collector gathers fresh data. |
-| **collectors.systemd** | group |  | Failed units and restart loops. |
-| `collectors.systemd.enabled` | on / off / auto | on | auto = use it if available on this host, silently skip otherwise. |
-| `collectors.systemd.interval` | duration | `1m` | How often this collector gathers fresh data. |
-| `collectors.systemd.bus_address` | string | empty | D-Bus address. Empty = the host's system bus under the host mount. |
-| **collectors.journal** | group |  | Warnings and errors from the system journal. |
-| `collectors.journal.enabled` | on / off / auto | on | auto = use it if available on this host, silently skip otherwise. |
-| `collectors.journal.interval` | duration | `1m` | How often this collector gathers fresh data. |
-| `collectors.journal.priority` | emerg / alert / crit / err / warning / notice / info | `warning` | Lowest severity to read. |
-| `collectors.journal.directory` | string | empty | Journal directory. Empty = the host's /var/log/journal (or /run/log/journal). |
-| `collectors.journal.max_entries` | integer (min 100, max 50000) | `2000` | Max entries read per run. |
-| `collectors.journal.initial_lookback` | duration | `1h` | How far back to read after a (re)start. |
-| **collectors.apt** | group |  | Pending package updates, security updates, reboot required. |
-| `collectors.apt.enabled` | on / off / auto | on | auto = use it if available on this host, silently skip otherwise. |
-| `collectors.apt.interval` | duration | `6h` | How often this collector gathers fresh data. |
-| **collectors.image_updates** | group |  | Running containers whose image tag has a newer build in its registry (same tag, new digest; does not look for newer version numbers). |
-| `collectors.image_updates.enabled` | on / off / auto | `auto` | auto = on when the Docker API is reachable. |
-| `collectors.image_updates.interval` | duration | `12h` | How often this collector gathers fresh data. |
-| `collectors.image_updates.url` | string | empty | Docker API, e.g. tcp://docker-proxy:2375. Empty = $DOCKER_HOST (set by the compose file), else the local socket. |
-| `collectors.image_updates.cache_ttl` | duration | `6h` | How long a registry answer is reused. Registries rate-limit, so don't set this low. |
-| **collectors.prometheus** | group |  | Run PromQL queries against an existing Prometheus. |
-| `collectors.prometheus.enabled` | on / off / auto | `auto` | auto = on as soon as a URL is set. |
-| `collectors.prometheus.interval` | duration | `1m` | How often this collector gathers fresh data. |
-| `collectors.prometheus.url` | string | empty | Prometheus base URL, e.g. http://prometheus:9090. Empty = not used. |
-| `collectors.prometheus.token` | secret | empty | Bearer token, if Prometheus sits behind an authenticating proxy. |
-| `collectors.prometheus.username` | string | empty | Basic-auth user (used when no bearer token is set). |
-| `collectors.prometheus.password` | secret | empty | Basic-auth password. |
-| `collectors.prometheus.timeout` | duration | `10s` | Per-query timeout. |
-| `collectors.prometheus.max_series` | integer (min 1, max 1000) | `50` | Max series kept per query result; the rest is only counted. |
-| **collectors.prometheus.queries** | list of groups | empty | PromQL queries you wrote, run on every collection and included in reports. |
-| `collectors.prometheus.queries[].name` | string | required | Short identifier shown in reports, e.g. targets_down. |
-| `collectors.prometheus.queries[].query` | string | required | PromQL expression, evaluated as an instant query. |
-| `collectors.prometheus.queries[].description` | string | empty | What the result means, e.g. "Scrape targets that are down". Helps the report writer. |
-| `collectors.prometheus.queries[].unit` | string | empty | Unit of the value, e.g. %, bytes, seconds. Optional. |
-| `collectors.prometheus.queries[].warn_if` | string | empty | Warning when a value crosses this: an operator and a number, e.g. > 80 or == 0. |
-| `collectors.prometheus.queries[].crit_if` | string | empty | Critical when a value crosses this, same form as the warning. |
-| `collectors.prometheus.auto_queries` | boolean | on | Let the LLM choose more queries from what this Prometheus scrapes (other exporters, errors, saturation, other hosts). Also reports firing alerts and down targets. The chosen queries are listed below and can be disabled, pinned, edited or deleted. |
-| `collectors.prometheus.max_auto_queries` | integer (min 1, max 40) | `12` | Most automatically chosen queries. |
-| `collectors.prometheus.replan_interval` | duration | `7d` | Choose queries again at least this often (also when the set of metrics changes). |
-
 ### Outputs (`outputs`)
 
 | Setting | Type | Default | What it does |
@@ -384,9 +274,7 @@ a fresh install starts with.
 | `outputs.telegram.enabled` | boolean | off | Turn the Telegram bot on (needs a bot token and at least one allowed chat id). |
 | `outputs.telegram.token` | secret | empty | Bot token from @BotFather. |
 | `outputs.telegram.allowed_chat_ids` | list of integer | empty | Only these chats may talk to the bot. Don't know a chat id? Send /id to the bot: it answers in any chat. |
-| `outputs.telegram.report_every` | integer (min 0) | `1` | Send every Nth report (0 = alerts only). |
 | `outputs.telegram.new_session_after` | duration | `6h` | Start a fresh chat after this long without a message in a Telegram chat (the old one stays in the Chat list on the web page). 0 = never: one chat until you send /new. |
-| `outputs.telegram.alerts` | boolean | on | Send a short alert whenever the health status changes (also when reports are not sent every time). |
 | `outputs.telegram.api_url` | string | empty | Bot API server. Empty = https://api.telegram.org. |
 | `outputs.telegram.web_url` | string | empty | Address of this web UI as you open it, e.g. https://monitor.example.com. Approval messages get a "Review" button that opens the approval there. Empty = no button. |
 | `outputs.metrics.enabled` | boolean | on | Expose Prometheus metrics at /metrics. |
@@ -425,23 +313,15 @@ a fresh install starts with.
 
 ## Troubleshooting
 
-Every collector's status and error is on the **Dashboard**; a collector that can't work on your
-host never stops the service. Disable it under Settings → Collectors if you don't need it.
-
-- **systemd: "D-Bus … closed the connection"**, or `apparmor="DENIED" operation="ptrace"
-  profile="docker-default"` in the host's kernel log — the container is running under Docker's
-  default AppArmor profile. Keep `security_opt: [apparmor=unconfined]` from the compose file.
+- **Chat says the shell cannot run, or an answer is empty** — Settings → LLM → **Test** first; it
+  checks the endpoint, the model and a tool-call round trip. Thinking models need
+  *Max output tokens* of 4096 or more.
 - **Chat: "the host lacks setpriv" / root-only paths unreadable** — the sandbox uses the host's own
   util-linux tools (`setpriv`, `prlimit`, `ionice`); install them on the host. For root-only paths add
   `cap_add: [DAC_READ_SEARCH]` to the ai-server-monitor service (the shell's output says so).
-- **Not sure a connection is right?** Every connection in Settings (LLM, Prometheus, Docker,
-  Telegram) has a **Test** button that checks the values you typed
+- **Not sure a connection is right?** Every connection in Settings (LLM, Telegram) has a **Test** button that checks the values you typed
   *before* you save: it names the app and version that answered, or says what is wrong (wrong
   key, DNS name not found, timeout, TLS error).
-- **Reports fail or are empty** — Settings → LLM → *Test connection*. Thinking models need
-  *Max output tokens* of 4096 or more. For Ollama check `OLLAMA_CONTEXT_LENGTH`.
-- **Image updates say "auth required" or "unknown"** — the check is anonymous; private registries and
-  locally built images cannot be compared. The docker proxy needs `IMAGES: 1`.
 - **Telegram does not answer** — your chat id must be in *Allowed chat ids*: send `/id` to the
   bot to see it, and use *Send test message* under Settings → Outputs → Telegram to check each
   chat. `docker logs` shows polling errors without the token.

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type FieldError, type JsonObject, type LlmTestResult, type ModelInfo, type SettingsDoc } from "../api";
-import { PromAuto } from "../components/PromAuto";
 import { ObjectFields, resolve, type FormContext } from "../components/SchemaForm";
 
 function modelDefaultsLine(info: ModelInfo): string {
@@ -150,7 +149,6 @@ export function SettingsPage() {
         {(section === "llm" || section === "worker") && (
           <LlmTest key={section} profile={section} llm={values[section] as JsonObject} onModels={setModels} />
         )}
-        {section === "collectors" && <PromAuto />}
 
         <div className={`savebar${dirty || status ? " visible" : ""}`}>
           {status && <span className={status.kind === "ok" ? "ok" : "error"}>{status.text}</span>}
@@ -195,6 +193,7 @@ function LlmTest({ profile, llm, onModels }: { profile: string; llm: JsonObject;
             ok: true,
             text:
               `Model replied “${r.reply || "(empty)"}” in ${r.latency_s}s.` +
+              (r.tool_call ? " Tool call OK." : "") +
               (r.model_listed === false ? " Note: the endpoint's model list doesn't include this model name." : "") +
               (r.models?.length ? ` ${r.models.length} models available — suggestions added to the Model field.` : ""),
           }
@@ -211,7 +210,7 @@ function LlmTest({ profile, llm, onModels }: { profile: string; llm: JsonObject;
       <header className="group-head">
         <div>
           <h3>Connection test</h3>
-          <p className="help">Sends a one-line prompt with the values above (saved or not).</p>
+          <p className="help">Checks the endpoint and model, then runs one tool call with the values above (saved or not).</p>
         </div>
         <div className="test-buttons">
           <button type="button" className="btn btn-test" disabled={running} onClick={() => void run()}>

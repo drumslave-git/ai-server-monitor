@@ -69,7 +69,6 @@ def settings_for(args: argparse.Namespace, generic: bool) -> Settings:
             "llm": {
                 "base_url": args.llm_url,
                 "model": args.model,
-                "tool_mode": "auto",
             }
             if args.llm_url
             else {},
@@ -110,7 +109,7 @@ async def ask(ctx: Any, question: str) -> None:
             print(f"  - result [{flag}, {event['size']} chars]: `{event['preview'][:300]}`")
         elif kind == "done":
             print(
-                f"\n**Answer** ({event['steps']} steps, mode {event['tool_mode']}):\n\n> {event['text']}"
+                f"\n**Answer** ({event['steps']} steps):\n\n> {event['text']}"
             )
         elif kind == "error":
             print(f"\n**Error**: {event['message']}")
@@ -137,7 +136,6 @@ async def main() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="asm-mcp-demo-"))
     app = create_app(
         Bootstrap(data_dir=tmp / "data", host_root=tmp / "none", static_dir=Path(args.static)),
-        collector_registry={},
         seed_settings=settings_for(args, generic=False),
     )
     servers = [

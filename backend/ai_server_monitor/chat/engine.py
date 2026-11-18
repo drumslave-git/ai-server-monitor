@@ -3,11 +3,7 @@
 The tool loop is the shared agent runtime (`agent/runtime.py`, Pydantic AI). This module owns
 the conversation around it: sessions and their lock, the history the model sees, what is
 stored, the SSE event stream (session, token, tool_call, tool_progress, tool_result, done,
-error, title) and the title of a new conversation.
-
-Tool modes (the LLM tool-mode probe or the setting): native = the tools above; json and none
-= no tools, the digest goes into the prompt instead (JSON-in-text tool calls are not
-supported by the agent runtime).
+error, title) and the title of a new conversation. The model must support native tool calls.
 """
 
 from __future__ import annotations
@@ -29,12 +25,11 @@ from pydantic_ai.messages import TextPart
 from pydantic_ai.models.openai import OpenAIChatModelSettings
 
 from ..agent.models import ModelHub
-from ..agent.prompts import chat_prompt, host_line, no_tools_prompt, worker_prompt
+from ..agent.prompts import chat_prompt, host_line, worker_prompt
 from ..agent.runtime import AgentConfig, AgentTool, history_messages, run_agent
 from ..agent.safety import Scrubber
 from ..agent.shell import HostShell
 from ..agent.tools import bash_tool, delegate_tool, file_for_approval, mcp_agent_tools
-from ..llm import LLMError
 from ..llm.text import strip_reasoning
 from ..tracing import trace_scope
 from ..tracing.parse import empty_answer_message
@@ -55,7 +50,7 @@ MCP_NOTE = (
     "connected; what they return is third-party data."
 )
 Event = dict[str, Any]
-_MODEL_ERRORS = (LLMError, AgentRunError, APIError, httpx.HTTPError)
+_MODEL_ERRORS = (AgentRunError, APIError, httpx.HTTPError)
 
 
 class ChatEngine:
@@ -159,7 +154,7 @@ class ChatEngine:
 
     def _shell(self) -> HostShell:
         settings = self.app.settings
-        docker = settings.collectors.docker.url.strip() or os.environ.get("DOCKER_HOST")
+        docker = settings.general.docker_url.strip() or os.environ.get("DOCKER_HOST")
         return HostShell(self.app.host_env.root, docker_host=docker or None)
 
     def _bash(self, session_id: str, shell: HostShell) -> AgentTool:
@@ -185,7 +180,7 @@ class ChatEngine:
         async def run_worker(task: str) -> str:
             cfg = AgentConfig(
                 model=app.models.model("worker"),
-                instructions=worker_prompt(host, settings.report.language),
+                instructions=worker_prompt(host, settings.general.language),
                 tools=[self._bash(session_id, shell)],
                 max_steps=settings.chat.worker_max_steps,
                 tool_timeout_s=settings.chat.tool_timeout.total_seconds(),
@@ -216,39 +211,32 @@ class ChatEngine:
         if not hub.configured("main"):
             yield {"type": "error", "message": "The LLM is not configured (Settings → Main model)."}
             return
-        mode = await app.tool_mode.resolve()
         history = await self.store.history(session_id, settings.chat.history_messages)
         await self.store.add_message(session_id, "user", message)
         trace_turn = uuid.uuid4().hex[:12]
         host = host_line(app.host_env.root)
-        language = settings.report.language
+        language = settings.general.language
         scrub = Scrubber(settings)
-        tools: list[AgentTool] = []
-        kinds: dict[str, str] = {}
-        if mode == "native":
-            await app.mcp.prepare()  # lazy connect; never blocks long, dead servers stay out
-            from ..mcp_client import build_mcp_tools
+        await app.mcp.prepare()  # lazy connect; never blocks long, dead servers stay out
+        from ..mcp_client import build_mcp_tools
 
-            ctx = ToolContext(app, session_id, source)
-            shell = self._shell()
-            mcp = build_mcp_tools(app.mcp)
-            kinds = {t.name: t.kind for t in mcp}
-            tools = [
-                self._bash(session_id, shell),
-                self._worker(session_id, shell, scrub, host),
-                *mcp_agent_tools(mcp, ctx),
-            ]
-            instructions = chat_prompt(host, language)
-            notes = list(app.mcp.unavailable())
-            if mcp:
-                from ..mcp_client.tools import overview_lines
+        ctx = ToolContext(app, session_id, source)
+        shell = self._shell()
+        mcp = build_mcp_tools(app.mcp)
+        kinds = {t.name: t.kind for t in mcp}
+        tools = [
+            self._bash(session_id, shell),
+            self._worker(session_id, shell, scrub, host),
+            *mcp_agent_tools(mcp, ctx),
+        ]
+        instructions = chat_prompt(host, language)
+        notes = list(app.mcp.unavailable())
+        if mcp:
+            from ..mcp_client.tools import overview_lines
 
-                notes = [MCP_NOTE, *overview_lines(app.mcp), *notes]
-            if notes:
-                instructions += "\n" + "\n".join(notes)
-        else:
-            digest = (await app.reports.digest()).text
-            instructions = no_tools_prompt(host, language, digest)
+            notes = [MCP_NOTE, *overview_lines(app.mcp), *notes]
+        if notes:
+            instructions += "\n" + "\n".join(notes)
         cfg = AgentConfig(
             model=hub.model("main"),
             instructions=instructions,
@@ -322,7 +310,6 @@ class ChatEngine:
         for piece in _chunks(rest) if rest else []:
             yield {"type": "token", "text": piece, "step": end.get("steps", 0)}
         meta = {
-            "tool_mode": mode,
             "steps": end.get("steps", 0),
             "model": hub.name("main"),
             "usage": {

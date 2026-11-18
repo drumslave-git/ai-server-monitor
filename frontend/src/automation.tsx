@@ -85,7 +85,7 @@ export function AutomationBar() {
       <div className="auto-banner-text">
         <strong>Automation paused{state.since ? ` since ${sinceText(state.since)}` : ""}</strong>
         <span>
-          Scheduled jobs and automations are stopped: no collectors, reports or planning. Chat, approvals and the Telegram bot keep working.
+          Scheduled jobs and automations are stopped: no scheduled agent runs. Chat, approvals and the Telegram bot keep working.
           {state.queued_actions > 0 && ` ${state.queued_actions} approved action${state.queued_actions > 1 ? "s" : ""} wait${state.queued_actions > 1 ? "" : "s"} and will run after the resume.`}
         </span>
         {error && <span className="error small">{error}</span>}

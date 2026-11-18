@@ -13,9 +13,8 @@ async def test_migrations_apply_and_are_idempotent(tmp_path: Path) -> None:
     version = await db.schema_version()
     assert version == len(load_migrations()) >= 1
     tables = {r["name"] for r in await db.fetchall("SELECT name FROM sqlite_master")}
-    assert {"collector_samples", "reports", "chat_sessions", "chat_messages", "actions", "kv"} <= (
-        tables
-    )
+    assert {"chat_sessions", "chat_messages", "actions", "kv"} <= tables
+    assert not {"collector_samples", "reports", "prom_queries"} & tables
     journal = await db.fetchone("PRAGMA journal_mode")
     assert journal[0] == "wal"
     await db.close()
@@ -31,10 +30,6 @@ async def test_prune_respects_retention_and_keeps_actions(db: Database) -> None:
     now = time.time()
     old, recent = now - 40 * 86400, now - 86400
     for ts in (old, recent):
-        await db.execute(
-            "INSERT INTO collector_samples (ts, collector, data) VALUES (?, 'system', '{}')", (ts,)
-        )
-        await db.execute("INSERT INTO reports (ts, markdown) VALUES (?, 'r')", (ts,))
         await db.execute(
             "INSERT INTO actions (ts, updated, action, policy, status, source) "
             "VALUES (?, ?, 'x', 'auto', 'executed', 'scheduler')",
@@ -59,13 +54,10 @@ async def test_prune_respects_retention_and_keeps_actions(db: Database) -> None:
     deleted = await db.prune(timedelta(days=30), now=now)
 
     assert deleted == {
-        "collector_samples": 1,
-        "reports": 1,
         "chat_messages": 1,
         "chat_sessions": 1,
         "telegram_batch_messages": 1,
     }
-    assert (await db.fetchone("SELECT COUNT(*) FROM collector_samples"))[0] == 1
     assert (await db.fetchone("SELECT COUNT(*) FROM chat_messages"))[0] == 0  # cascade
     assert (await db.fetchone("SELECT COUNT(*) FROM actions"))[0] == 2  # audit log kept
 
@@ -121,11 +113,11 @@ async def test_kv_roundtrip(db: Database) -> None:
 async def test_transaction_rollback(db: Database) -> None:
     try:
         async with db.transaction() as conn:
-            await conn.execute("INSERT INTO reports (ts, markdown) VALUES (1, 'x')")
+            await conn.execute("INSERT INTO kv (key, value, updated) VALUES ('k', '1', 1)")
             raise RuntimeError("boom")
     except RuntimeError:
         pass
-    assert (await db.fetchone("SELECT COUNT(*) FROM reports"))[0] == 0
+    assert (await db.fetchone("SELECT COUNT(*) FROM kv WHERE key = 'k'"))[0] == 0
     assert await db.ping()
 
 
@@ -144,7 +136,7 @@ async def test_database_at_schema_4_migrates_to_latest(tmp_path: Path) -> None:
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 13
+        assert await db.schema_version() == 14
         info = await db.fetchall("PRAGMA table_info(telegram_batch_messages)")
         cols = {r["name"] for r in info}
         assert cols == {"batch_id", "chat_id", "message_id", "created_ts"}
@@ -153,7 +145,7 @@ async def test_database_at_schema_4_migrates_to_latest(tmp_path: Path) -> None:
         await db.close()
 
 
-async def test_database_at_schema_5_gets_the_prometheus_query_table(tmp_path: Path) -> None:
+async def test_database_at_schema_5_loses_the_prometheus_query_table(tmp_path: Path) -> None:
     import sqlite3
 
     path = tmp_path / "v5.db"
@@ -167,8 +159,7 @@ async def test_database_at_schema_5_gets_the_prometheus_query_table(tmp_path: Pa
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 13
-        cols = {r["name"] for r in await db.fetchall("PRAGMA table_info(prom_queries)")}
-        assert {"name", "query", "source", "enabled", "pinned", "edited", "fail_count"} <= cols
+        assert await db.schema_version() == 14
+        assert not await db.fetchall("PRAGMA table_info(prom_queries)")
     finally:
         await db.close()

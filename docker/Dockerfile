@@ -26,12 +26,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# journalctl (from `systemd`) reads the host journal; `apt` (already in the base image)
-# reads the host's package state. Neither runs as a service inside the container.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends systemd \
-    && rm -rf /var/lib/apt/lists/*
-
 # Install dependencies first (cached layer), then the package itself.
 COPY backend/pyproject.toml backend/README.md /app/backend/
 RUN mkdir -p /app/backend/ai_server_monitor \
@@ -43,8 +37,8 @@ RUN pip install --no-deps /app/backend
 
 COPY --from=frontend /src/frontend/dist /app/static
 
-# Runs as root: reading other processes' /proc entries (pid: host) and the host journal
-# needs it. All host mounts are expected to be read-only. Settings and history live in
+# Runs as root: the shell tool enters the host filesystem with chroot and drops to an
+# unprivileged user there (see agent/shell.py). All host mounts are expected to be read-only. Settings and history live in
 # /data (SQLite); everything else is configured in the web UI.
 VOLUME ["/data"]
 EXPOSE 8080

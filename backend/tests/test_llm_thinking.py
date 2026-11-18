@@ -16,8 +16,8 @@ from ai_server_monitor.config import Bootstrap, LLMSettings, Settings, settings_
 from ai_server_monitor.main import create_app
 from ai_server_monitor.settings_store import upgrade_stored
 
-from .conftest import LLM_URL, chat_response, sse
-from .test_chat import FakeLLM, ask, make_app, say
+from .conftest import LLM_URL, sse
+from .test_chat import FakeLLM, ask, call, completion, make_app, say
 from .test_chat_title import QUESTION
 
 # --------------------------------------------------------------------------- settings
@@ -56,7 +56,7 @@ def test_settings_schema_shows_the_new_fields_with_help() -> None:
 def test_chat_title_asks_for_no_thinking_and_has_room(bootstrap: Bootstrap) -> None:
     llm = FakeLLM(say("Ollama uses the most memory."))
     llm.title_reply = "Memory usage"
-    with TestClient(make_app(bootstrap, llm, mode="none")) as client:
+    with TestClient(make_app(bootstrap, llm)) as client:
         ask(client, QUESTION)
     (request,) = llm.title_requests
     assert request["reasoning_effort"] == "none" and request["max_tokens"] >= 200
@@ -65,8 +65,10 @@ def test_chat_title_asks_for_no_thinking_and_has_room(bootstrap: Bootstrap) -> N
 @respx.mock
 def test_settings_test_asks_for_no_thinking_and_has_room(bootstrap: Bootstrap) -> None:
     respx.get(f"{LLM_URL}/models").mock(return_value=httpx.Response(404))
-    route = respx.post(f"{LLM_URL}/chat/completions").mock(return_value=chat_response("OK"))
-    with TestClient(create_app(bootstrap, collector_registry={})) as client:
+    route = respx.post(f"{LLM_URL}/chat/completions").mock(
+        side_effect=[completion(call("get_check_word", {})), completion(say("OK"))]
+    )
+    with TestClient(create_app(bootstrap)) as client:
         result = client.post(
             "/api/settings/test-llm", json={"base_url": LLM_URL, "model": "thinker"}
         ).json()
@@ -91,11 +93,11 @@ def test_settings_test_reports_a_model_that_only_thought(bootstrap: Bootstrap) -
             },
         )
     )
-    with TestClient(create_app(bootstrap, collector_registry={})) as client:
+    with TestClient(create_app(bootstrap)) as client:
         result = client.post(
             "/api/settings/test-llm", json={"base_url": LLM_URL, "model": "thinker"}
         ).json()
-    assert result["ok"] is False and "thinking" in result["error"]
+    assert result["ok"] is False and result["error"]
 
 
 # --------------------------------------------------------------------------- chat shows the failure
@@ -121,7 +123,6 @@ def test_chat_says_so_when_the_model_spent_its_whole_limit_thinking(bootstrap: B
             "llm": {
                 "base_url": LLM_URL,
                 "model": "m",
-                "tool_mode": "none",
                 "max_retries": 0,
                 "max_output_tokens": 2000,
             },
@@ -130,7 +131,6 @@ def test_chat_says_so_when_the_model_spent_its_whole_limit_thinking(bootstrap: B
     app = create_app(
         bootstrap,
         llm_transport=httpx.MockTransport(handler),
-        collector_registry={},
         seed_settings=settings,
     )
     with TestClient(app) as client:

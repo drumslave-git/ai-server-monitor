@@ -145,7 +145,7 @@ export interface paths {
          *     `session` {session_id}, `tool_call` {id, name, args, kind}, `tool_progress` {id, name,
          *     elapsed_s} (every few seconds while a tool is still running), `tool_result` {id, name, ok,
          *     truncated, size, preview}, `token` {text} (the answer, in pieces), then `done`
-         *     {session_id, message_id, tool_mode, steps, usage, stopped} — or `error` {message}.
+         *     {session_id, message_id, steps, usage, stopped} — or `error` {message}.
          *     For the first answer of a new conversation one more event may follow `done`:
          *     `title` {session_id, title}, the LLM-written session title (the stream closes right after;
          *     without it the session keeps the title cut from the first message).
@@ -208,40 +208,6 @@ export interface paths {
         post?: never;
         /** Delete Session */
         delete: operations["delete_session_api_chat_sessions__session_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/collectors": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Collectors */
-        get: operations["collectors_api_collectors_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/collectors/{name}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Collector */
-        get: operations["collector_api_collectors__name__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -430,161 +396,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/metrics/recent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Recent Metrics
-         * @description The last ~120 metrics.tick payloads per source (system, gpu), oldest first.
-         */
-        get: operations["recent_metrics_api_metrics_recent_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/prometheus/queries": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Queries
-         * @description The planned queries (with their last result or error) and the state of the planner.
-         */
-        get: operations["list_queries_api_prometheus_queries_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/prometheus/queries/{query_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete Query */
-        delete: operations["delete_query_api_prometheus_queries__query_id__delete"];
-        options?: never;
-        head?: never;
-        /** Patch Query */
-        patch: operations["patch_query_api_prometheus_queries__query_id__patch"];
-        trace?: never;
-    };
-    "/api/prometheus/replan": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Replan
-         * @description Choose the queries again now (runs in the background; poll GET /queries).
-         */
-        post: operations["replan_api_prometheus_replan_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reports": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Reports
-         * @description Newest first, without the Markdown body (fetch one report for that).
-         */
-        get: operations["list_reports_api_reports_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reports/digest": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Current Digest
-         * @description The digest the next report would be written from (for debugging).
-         */
-        get: operations["current_digest_api_reports_digest_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reports/run": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Run Report
-         * @description Write a report now (ignores skip_if_unchanged). 409 if one is running.
-         */
-        post: operations["run_report_api_reports_run_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reports/{report_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Report */
-        get: operations["get_report_api_reports__report_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/settings": {
         parameters: {
             query?: never;
@@ -600,7 +411,7 @@ export interface paths {
         /**
          * Put Settings
          * @description Replace all settings. Secrets sent back as the mask keep their stored value.
-         *     Applied immediately (collectors and LLM client are restarted).
+         *     Applied immediately (models, MCP, approvals and Telegram are restarted).
          */
         put: operations["put_settings_api_settings_put"];
         post?: never;
@@ -643,7 +454,8 @@ export interface paths {
         put?: never;
         /**
          * Test Llm
-         * @description Try the given (possibly unsaved) model settings: list models + a tiny completion.
+         * @description Try the given (possibly unsaved) model settings: endpoint reachable, model listed,
+         *     one native tool-call round trip.
          *     `profile=worker` tests the worker model as the agents would use it (endpoint and key
          *     of the main model when its own base URL is empty).
          */
@@ -665,8 +477,8 @@ export interface paths {
         put?: never;
         /**
          * Test Connection
-         * @description Try one connection with the given (possibly unsaved) form values: Prometheus,
-         *     Docker or Telegram. Masked secrets are replaced by the stored ones. `mode=send`
+         * @description Try one connection with the given (possibly unsaved) form values: Telegram or an
+         *     MCP server. Masked secrets are replaced by the stored ones. `mode=send`
          *     (Telegram) sends a test message to every allowed chat; `index` is the position of a
          *     list item in the form.
          */
@@ -686,7 +498,7 @@ export interface paths {
         };
         /**
          * Status
-         * @description Dashboard header in one call: latest report, collector states, key numbers.
+         * @description Dashboard header in one call: the models, approvals and the automation switch.
          */
         get: operations["status_api_status_get"];
         put?: never;
@@ -706,8 +518,8 @@ export interface paths {
         };
         /**
          * Stream
-         * @description Server-sent events: report.started/token/done/failed, metrics.tick,
-         *     collector.status. `?types=report,metrics` limits what is sent (prefix match).
+         * @description Server-sent events (chat, approvals, automation, LLM calls). `?types=action,chat`
+         *     limits what is sent (prefix match).
          */
         get: operations["stream_api_stream_get"];
         put?: never;
@@ -911,145 +723,6 @@ export interface components {
              */
             worker_max_steps: number;
         };
-        /** CollectorSettings */
-        CollectorSettings: {
-            /**
-             * Enabled
-             * @description auto = use it if available on this host, silently skip otherwise.
-             * @default true
-             */
-            enabled: boolean | "auto";
-            /**
-             * Interval
-             * Format: duration
-             * @description How often this collector gathers fresh data.
-             * @default 30s
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            interval: string;
-        };
-        /** CollectorState */
-        CollectorState: {
-            /** Error */
-            error?: string | null;
-            /** Last Ts */
-            last_ts?: number | null;
-            /** Ok */
-            ok?: boolean | null;
-            /** Reason */
-            reason?: string | null;
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "active" | "disabled" | "unavailable";
-        };
-        /** CollectorsSettings */
-        CollectorsSettings: {
-            /**
-             * @description Pending package updates, security updates, reboot required.
-             * @default {
-             *       "enabled": true,
-             *       "interval": "6h"
-             *     }
-             */
-            apt: components["schemas"]["CollectorSettings"];
-            /**
-             * @description Containers: state, health, restarts, resource use, log errors, disk usage.
-             * @default {
-             *       "df_interval": "30m",
-             *       "enabled": true,
-             *       "interval": "30s",
-             *       "log_scan": true,
-             *       "log_tail": 300,
-             *       "url": ""
-             *     }
-             */
-            docker: components["schemas"]["DockerCollectorSettings"];
-            /**
-             * @description NVIDIA GPUs (needs the NVIDIA container runtime).
-             * @default {
-             *       "enabled": "auto",
-             *       "interval": "30s"
-             *     }
-             */
-            gpu: components["schemas"]["CollectorSettings"];
-            /**
-             * @description Running containers whose image tag has a newer build in its registry (same tag, new
-             *     digest; does not look for newer version numbers).
-             * @default {
-             *       "cache_ttl": "6h",
-             *       "enabled": "auto",
-             *       "interval": "12h",
-             *       "url": ""
-             *     }
-             */
-            image_updates: components["schemas"]["ImageUpdatesCollectorSettings"];
-            /**
-             * @description Warnings and errors from the system journal.
-             * @default {
-             *       "directory": "",
-             *       "enabled": true,
-             *       "initial_lookback": "1h",
-             *       "interval": "1m",
-             *       "max_entries": 2000,
-             *       "priority": "warning"
-             *     }
-             */
-            journal: components["schemas"]["JournalCollectorSettings"];
-            /**
-             * @description Run PromQL queries against an existing Prometheus.
-             * @default {
-             *       "auto_queries": true,
-             *       "enabled": "auto",
-             *       "interval": "1m",
-             *       "max_auto_queries": 12,
-             *       "max_series": 50,
-             *       "password": "",
-             *       "queries": [
-             *         {
-             *           "description": "Scrape targets that are down",
-             *           "name": "targets_down",
-             *           "query": "up == 0",
-             *           "unit": ""
-             *         },
-             *         {
-             *           "description": "Alerts currently firing in Prometheus",
-             *           "name": "firing_alerts",
-             *           "query": "ALERTS{alertstate=\"firing\"}",
-             *           "unit": ""
-             *         }
-             *       ],
-             *       "replan_interval": "7d",
-             *       "timeout": "10s",
-             *       "token": "",
-             *       "url": "",
-             *       "username": ""
-             *     }
-             */
-            prometheus: components["schemas"]["PrometheusCollectorSettings"];
-            /**
-             * @description CPU, memory, disks, network, temperatures, top processes.
-             * @default {
-             *       "enabled": true,
-             *       "interval": "15s",
-             *       "top_n": 10
-             *     }
-             */
-            system: components["schemas"]["SystemCollectorSettings"];
-            /**
-             * @description Failed units and restart loops.
-             * @default {
-             *       "bus_address": "",
-             *       "enabled": true,
-             *       "interval": "1m"
-             *     }
-             */
-            systemd: components["schemas"]["SystemdCollectorSettings"];
-        };
         /**
          * ConnectionTestResult
          * @description Outcome of a Settings → Test button.
@@ -1064,18 +737,6 @@ export interface components {
             /** Ok */
             ok: boolean;
         };
-        /** ContainersSummary */
-        ContainersSummary: {
-            /** Running */
-            running?: number | null;
-            /** Total */
-            total?: number | null;
-            /**
-             * Unhealthy
-             * @default 0
-             */
-            unhealthy: number;
-        };
         /** Decision */
         Decision: {
             /**
@@ -1086,108 +747,22 @@ export interface components {
             /** Items */
             items?: number[] | null;
         };
-        /** Digest */
-        Digest: {
-            /** Flags */
-            flags: components["schemas"]["Finding"][];
-            /** Generated */
-            generated: number;
-            /** Hash */
-            hash: string;
-            /** Sections */
-            sections: components["schemas"]["DigestSection"][];
-            /** Text */
-            text: string;
-            /** Tokens */
-            tokens: number;
-        };
-        /** DigestSection */
-        DigestSection: {
-            /** Kept Lines */
-            kept_lines: number;
-            /** Key */
-            key: string;
-            /** Lines */
-            lines: number;
-            /** Priority */
-            priority: number;
-            /** Title */
-            title: string;
-        };
-        /** DockerCollectorSettings */
-        DockerCollectorSettings: {
-            /**
-             * Df Interval
-             * Format: duration
-             * @description How often to check Docker disk usage (images, volumes, build cache).
-             * @default 30m
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            df_interval: string;
-            /**
-             * Enabled
-             * @description auto = use it if available on this host, silently skip otherwise.
-             * @default true
-             */
-            enabled: boolean | "auto";
-            /**
-             * Interval
-             * Format: duration
-             * @description How often this collector gathers fresh data.
-             * @default 30s
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            interval: string;
-            /**
-             * Log Scan
-             * @description Count error lines in container logs since the last run.
-             * @default true
-             */
-            log_scan: boolean;
-            /**
-             * Log Tail
-             * @description Max log lines read per container per run.
-             * @default 300
-             */
-            log_tail: number;
-            /**
-             * Url
-             * @description Docker API, e.g. tcp://docker-proxy:2375 or unix:///var/run/docker.sock.
-             *     Empty = $DOCKER_HOST (set by the compose file), else the local socket.
-             * @default
-             */
-            url: string;
-        };
-        /** Finding */
-        Finding: {
-            /**
-             * Detail
-             * @default
-             */
-            detail: string;
-            /**
-             * Severity
-             * @enum {string}
-             */
-            severity: "info" | "warn" | "crit";
-            /** Title */
-            title: string;
-        };
-        /** FullestDisk */
-        FullestDisk: {
-            /** Mount */
-            mount?: string | null;
-            /** Percent */
-            percent?: number | null;
-        };
         /** GeneralSettings */
         GeneralSettings: {
+            /**
+             * Docker Url
+             * @description Docker API the shell's `docker` commands use, e.g. tcp://docker-proxy:2375 or
+             *     unix:///var/run/docker.sock. Empty = $DOCKER_HOST (set by the compose file), else the local
+             *     socket.
+             * @default
+             */
+            docker_url: string;
+            /**
+             * Language
+             * @description Language of chat answers and Telegram messages.
+             * @default en
+             */
+            language: string;
             /**
              * Log Level
              * @description Log verbosity of the service.
@@ -1196,112 +771,15 @@ export interface components {
              */
             log_level: "debug" | "info" | "warning" | "error";
         };
-        /** GpuSummary */
-        GpuSummary: {
-            /** Count */
-            count: number;
-            /** Max Util Percent */
-            max_util_percent: number;
-            /** Max Vram Percent */
-            max_vram_percent: number;
-        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
-        /** ImageUpdatesCollectorSettings */
-        ImageUpdatesCollectorSettings: {
-            /**
-             * Cache Ttl
-             * Format: duration
-             * @description How long a registry answer is reused. Registries rate-limit, so don't set this low.
-             * @default 6h
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            cache_ttl: string;
-            /**
-             * Enabled
-             * @description auto = on when the Docker API is reachable.
-             * @default auto
-             */
-            enabled: boolean | "auto";
-            /**
-             * Interval
-             * Format: duration
-             * @description How often this collector gathers fresh data.
-             * @default 12h
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            interval: string;
-            /**
-             * Url
-             * @description Docker API, e.g. tcp://docker-proxy:2375. Empty = $DOCKER_HOST (set by the compose
-             *     file), else the local socket.
-             * @default
-             */
-            url: string;
-        };
-        /** JournalCollectorSettings */
-        JournalCollectorSettings: {
-            /**
-             * Directory
-             * @description Journal directory. Empty = the host's /var/log/journal (or /run/log/journal).
-             * @default
-             */
-            directory: string;
-            /**
-             * Enabled
-             * @description auto = use it if available on this host, silently skip otherwise.
-             * @default true
-             */
-            enabled: boolean | "auto";
-            /**
-             * Initial Lookback
-             * Format: duration
-             * @description How far back to read after a (re)start.
-             * @default 1h
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            initial_lookback: string;
-            /**
-             * Interval
-             * Format: duration
-             * @description How often this collector gathers fresh data.
-             * @default 1m
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            interval: string;
-            /**
-             * Max Entries
-             * @description Max entries read per run.
-             * @default 2000
-             */
-            max_entries: number;
-            /**
-             * Priority
-             * @description Lowest severity to read.
-             * @default warning
-             * @enum {string}
-             */
-            priority: "emerg" | "alert" | "crit" | "err" | "warning" | "notice" | "info";
-        };
         /**
          * LLMSettings
-         * @description The big model: it answers chat questions, writes reports and decides when to hand a
-         *     sub-task to the worker model.
+         * @description The big model: it answers chat questions and decides when to hand a sub-task to the
+         *     worker model. It must support native tool calling (OpenAI `tools`).
          */
         LLMSettings: {
             /**
@@ -1326,14 +804,8 @@ export interface components {
                 [key: string]: unknown;
             };
             /**
-             * Max Context Tokens
-             * @description Context window to plan prompts for. For Ollama, also raise OLLAMA_CONTEXT_LENGTH.
-             * @default 8192
-             */
-            max_context_tokens: number;
-            /**
              * Max Output Tokens
-             * @description Maximum tokens per answer/report, counting a thinking model's reasoning too. Too low and
+             * @description Maximum tokens per answer, counting a thinking model's reasoning too. Too low and
              *     a model that thinks long runs out before it writes the answer (shown as an error).
              * @default 16384
              */
@@ -1352,21 +824,14 @@ export interface components {
             model: string;
             /**
              * Reasoning Effort
-             * @description How much a thinking model reasons before answering chat questions and reports, sent as
-             *     the API's reasoning_effort. auto = not sent, the model decides; none = no thinking (fast,
-             *     shallower); low / medium / high = as the model supports. Short helper calls (chat titles,
-             *     tool routing, tests) always ask for none.
+             * @description How much a thinking model reasons before answering chat questions, sent as the API's
+             *     reasoning_effort (left out from then on if the endpoint rejects it). auto = not sent, the
+             *     model decides; none = no thinking (fast, shallower); low / medium / high = as the model
+             *     supports. Short helper calls (chat titles, tests) always ask for none.
              * @default auto
              * @enum {string}
              */
             reasoning_effort: "auto" | "none" | "low" | "medium" | "high";
-            /**
-             * Stream Usage
-             * @description Ask the endpoint for token usage while streaming (turned off automatically if
-             *     the endpoint rejects it).
-             * @default true
-             */
-            stream_usage: boolean;
             /**
              * Temperature
              * @description Randomness of answers: 0 is the most predictable, higher is more varied. auto = not sent,
@@ -1386,14 +851,6 @@ export interface components {
              */
             timeout: string;
             /**
-             * Tool Mode
-             * @description How the model calls tools in chat. auto = detect; native = OpenAI tool calls;
-             *     json = JSON-in-text fallback for models without tool calling; none = no tools.
-             * @default auto
-             * @enum {string}
-             */
-            tool_mode: "auto" | "native" | "json" | "none";
-            /**
              * Top K
              * @description Only the this-many most likely words are considered at each step (0 = no limit). auto =
              *     not sent, the model's own default applies. Not every endpoint honours it.
@@ -1407,36 +864,6 @@ export interface components {
              * @default auto
              */
             top_p: number | "auto";
-        };
-        /**
-         * LastAttempt
-         * @description The newest report attempt that did not produce a report (failed/skipped).
-         */
-        LastAttempt: {
-            /** Error */
-            error: string | null;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "ok" | "failed" | "skipped";
-            /** Ts */
-            ts: number;
-        };
-        /** LatestReport */
-        LatestReport: {
-            /** Findings */
-            findings: components["schemas"]["Finding"][];
-            /** Health */
-            health: ("ok" | "warn" | "crit") | null;
-            /** Id */
-            id: number;
-            /** Score */
-            score: number | null;
-            /** Summary */
-            summary: string | null;
-            /** Ts */
-            ts: number;
         };
         /** LlmCall */
         LlmCall: {
@@ -1868,15 +1295,6 @@ export interface components {
                 [key: string]: number;
             };
         };
-        /** NextReport */
-        NextReport: {
-            /** Interval S */
-            interval_s: number;
-            /** Next Run */
-            next_run: number | null;
-            /** Running */
-            running: boolean;
-        };
         /** OutputsSettings */
         OutputsSettings: {
             /**
@@ -1888,162 +1306,15 @@ export interface components {
             metrics: components["schemas"]["MetricsSettings"];
             /**
              * @default {
-             *       "alerts": true,
              *       "allowed_chat_ids": [],
              *       "api_url": "",
              *       "enabled": false,
              *       "new_session_after": "6h",
-             *       "report_every": 1,
              *       "token": "",
              *       "web_url": ""
              *     }
              */
             telegram: components["schemas"]["TelegramSettings"];
-        };
-        /** PendingUpdates */
-        PendingUpdates: {
-            /** Apt */
-            apt?: number | null;
-            /**
-             * Images
-             * @default 0
-             */
-            images: number;
-            /**
-             * Reboot Required
-             * @default false
-             */
-            reboot_required: boolean;
-            /** Security */
-            security?: number | null;
-        };
-        /** PromQuery */
-        PromQuery: {
-            /**
-             * Crit If
-             * @description Critical when a value crosses this, same form as the warning.
-             */
-            crit_if?: string | null;
-            /**
-             * Description
-             * @description What the result means, e.g. "Scrape targets that are down". Helps the report writer.
-             * @default
-             */
-            description: string;
-            /**
-             * Name
-             * @description Short identifier shown in reports, e.g. targets_down.
-             */
-            name: string;
-            /**
-             * Query
-             * @description PromQL expression, evaluated as an instant query.
-             */
-            query: string;
-            /**
-             * Unit
-             * @description Unit of the value, e.g. %, bytes, seconds. Optional.
-             * @default
-             */
-            unit: string;
-            /**
-             * Warn If
-             * @description Warning when a value crosses this: an operator and a number, e.g. > 80 or == 0.
-             */
-            warn_if?: string | null;
-        };
-        /** PrometheusCollectorSettings */
-        PrometheusCollectorSettings: {
-            /**
-             * Auto Queries
-             * @description Let the LLM choose more queries from what this Prometheus scrapes (other exporters,
-             *     errors, saturation, other hosts). Also reports firing alerts and down targets. The
-             *     chosen queries are listed below and can be disabled, pinned, edited or deleted.
-             * @default true
-             */
-            auto_queries: boolean;
-            /**
-             * Enabled
-             * @description auto = on as soon as a URL is set.
-             * @default auto
-             */
-            enabled: boolean | "auto";
-            /**
-             * Interval
-             * Format: duration
-             * @description How often this collector gathers fresh data.
-             * @default 1m
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            interval: string;
-            /**
-             * Max Auto Queries
-             * @description Most automatically chosen queries.
-             * @default 12
-             */
-            max_auto_queries: number;
-            /**
-             * Max Series
-             * @description Max series kept per query result; the rest is only counted.
-             * @default 50
-             */
-            max_series: number;
-            /**
-             * Password
-             * Format: password
-             * @description Basic-auth password.
-             * @default
-             */
-            password: string;
-            /**
-             * Queries
-             * @description PromQL queries you wrote, run on every collection and included in reports.
-             */
-            queries?: components["schemas"]["PromQuery"][];
-            /**
-             * Replan Interval
-             * Format: duration
-             * @description Choose queries again at least this often (also when the set of metrics changes).
-             * @default 7d
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            replan_interval: string;
-            /**
-             * Timeout
-             * Format: duration
-             * @description Per-query timeout.
-             * @default 10s
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            timeout: string;
-            /**
-             * Token
-             * Format: password
-             * @description Bearer token, if Prometheus sits behind an authenticating proxy.
-             * @default
-             */
-            token: string;
-            /**
-             * Url
-             * @description Prometheus base URL, e.g. http://prometheus:9090. Empty = not used.
-             * @default
-             */
-            url: string;
-            /**
-             * Username
-             * @description Basic-auth user (used when no bearer token is set).
-             * @default
-             */
-            username: string;
         };
         /** PurposeCount */
         PurposeCount: {
@@ -2051,302 +1322,6 @@ export interface components {
             count: number;
             /** Purpose */
             purpose: string;
-        };
-        /**
-         * QueryPatch
-         * @description Only the sent fields change. Changing the query text, thresholds, unit or name marks
-         *     the query as edited, which keeps it when the planner chooses again.
-         */
-        QueryPatch: {
-            /** Crit If */
-            crit_if?: string | null;
-            /** Description */
-            description?: string | null;
-            /** Enabled */
-            enabled?: boolean | null;
-            /** Name */
-            name?: string | null;
-            /** Pinned */
-            pinned?: boolean | null;
-            /** Query */
-            query?: string | null;
-            /** Unit */
-            unit?: string | null;
-            /** Warn If */
-            warn_if?: string | null;
-        };
-        /** Report */
-        Report: {
-            /** Digest */
-            digest?: string | null;
-            /** Digest Hash */
-            digest_hash?: string | null;
-            /** Error */
-            error?: string | null;
-            /**
-             * Findings
-             * @default []
-             */
-            findings: components["schemas"]["Finding"][];
-            /** Health */
-            health?: ("ok" | "warn" | "crit") | null;
-            /** Id */
-            id: number;
-            /** Latency Ms */
-            latency_ms?: number | null;
-            /**
-             * Markdown
-             * @default
-             */
-            markdown: string;
-            /** Model */
-            model?: string | null;
-            /**
-             * Parsed
-             * @default true
-             */
-            parsed: boolean;
-            /** Score */
-            score?: number | null;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "ok" | "failed" | "skipped";
-            /** Summary */
-            summary?: string | null;
-            /** Tokens In */
-            tokens_in?: number | null;
-            /** Tokens Out */
-            tokens_out?: number | null;
-            /** Ts */
-            ts: number;
-        };
-        /** ReportList */
-        ReportList: {
-            /** Items */
-            items: components["schemas"]["ReportSummary"][];
-            /** Limit */
-            limit: number;
-            /** Offset */
-            offset: number;
-            /** Total */
-            total: number;
-        };
-        /** ReportSettings */
-        ReportSettings: {
-            /**
-             * Digest Token Budget
-             * @description Size limit (in tokens, ~4 characters each) of the pre-analyzed data digest the model
-             *     reads. Over the limit, the least important sections are shortened or dropped first.
-             *     Raise it for models with a big context, lower it for small ones.
-             * @default 3000
-             */
-            digest_token_budget: number;
-            /**
-             * Digest Top N
-             * @description How many top processes, containers and disk writers the digest lists.
-             * @default 5
-             */
-            digest_top_n: number;
-            /**
-             * Disk Crit Percent
-             * @description A filesystem fuller than this is flagged as critical.
-             * @default 95
-             */
-            disk_crit_percent: number;
-            /**
-             * Disk Full Crit Days
-             * @description Critical when a disk is predicted to be full within this many days.
-             * @default 3
-             */
-            disk_full_crit_days: number;
-            /**
-             * Disk Full Warn Days
-             * @description Warn when a disk's growth trend predicts it will be full within this many days.
-             * @default 14
-             */
-            disk_full_warn_days: number;
-            /**
-             * Disk Warn Percent
-             * @description A filesystem fuller than this is flagged as a warning.
-             * @default 85
-             */
-            disk_warn_percent: number;
-            /**
-             * Gpu Temp Warn C
-             * @description A GPU hotter than this is a warning.
-             * @default 85
-             */
-            gpu_temp_warn_c: number;
-            /**
-             * Interval
-             * Format: duration
-             * @description How often the LLM writes a status report.
-             * @default 5m
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            interval: string;
-            /**
-             * Language
-             * @description Language of reports and chat answers.
-             * @default en
-             */
-            language: string;
-            /**
-             * Load Crit Per Core
-             * @description 5-minute load average per CPU core above this is critical.
-             * @default 3
-             */
-            load_crit_per_core: number;
-            /**
-             * Load Warn Per Core
-             * @description 5-minute load average per CPU core above this is a warning.
-             * @default 1.5
-             */
-            load_warn_per_core: number;
-            /**
-             * Log Error Burst
-             * @description This many error lines (journal in one report interval, or one container's log in one
-             *     check) count as an error burst.
-             * @default 20
-             */
-            log_error_burst: number;
-            /**
-             * Memory Crit Percent
-             * @description Memory use (excluding cache) above this is critical.
-             * @default 97
-             */
-            memory_crit_percent: number;
-            /**
-             * Memory Warn Percent
-             * @description Memory use (excluding cache) above this is a warning.
-             * @default 90
-             */
-            memory_warn_percent: number;
-            /**
-             * Reasoning Effort
-             * @description Thinking level for reports (the API's reasoning_effort). A report is a summary of an
-             *     already analysed digest, so none (no thinking) is fastest and most reliable: thinking models
-             *     can loop in their reasoning for minutes and never write the report. auto = not sent, the
-             *     model decides; low / medium / high = as the model supports. Chat uses LLM → reasoning effort.
-             * @default none
-             * @enum {string}
-             */
-            reasoning_effort: "auto" | "none" | "low" | "medium" | "high";
-            /**
-             * Restart Loop Count
-             * @description A container or service restarted this many times within a day counts as a restart loop.
-             * @default 3
-             */
-            restart_loop_count: number;
-            /**
-             * Skip If Unchanged
-             * @description Skip the LLM call when nothing relevant changed since the last report.
-             * @default false
-             */
-            skip_if_unchanged: boolean;
-            /**
-             * Swap Warn Percent
-             * @description Swap use above this is a warning.
-             * @default 50
-             */
-            swap_warn_percent: number;
-            /**
-             * Trend Window
-             * Format: duration
-             * @description How much stored history the digest uses for trends (disk growth, restarts).
-             * @default 7d
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            trend_window: string;
-            /**
-             * Unused Images Note Gb
-             * @description Suggest pruning when this many GB of Docker images are unused while the disk holding
-             *     Docker data is above the disk warning level.
-             * @default 20
-             */
-            unused_images_note_gb: number;
-        };
-        /**
-         * ReportSummary
-         * @description A report without its Markdown body (list view).
-         */
-        ReportSummary: {
-            /** Error */
-            error?: string | null;
-            /**
-             * Findings
-             * @default []
-             */
-            findings: components["schemas"]["Finding"][];
-            /** Health */
-            health?: ("ok" | "warn" | "crit") | null;
-            /** Id */
-            id: number;
-            /** Latency Ms */
-            latency_ms?: number | null;
-            /** Model */
-            model?: string | null;
-            /**
-             * Parsed
-             * @default true
-             */
-            parsed: boolean;
-            /** Score */
-            score?: number | null;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "ok" | "failed" | "skipped";
-            /** Summary */
-            summary?: string | null;
-            /** Tokens In */
-            tokens_in?: number | null;
-            /** Tokens Out */
-            tokens_out?: number | null;
-            /** Ts */
-            ts: number;
-        };
-        /**
-         * Resources
-         * @description Key numbers from the latest collector results; None where a collector has no data.
-         */
-        Resources: {
-            containers?: components["schemas"]["ContainersSummary"] | null;
-            /** Cores */
-            cores?: number | null;
-            /** Cpu Percent */
-            cpu_percent?: number | null;
-            /** Failed Units */
-            failed_units?: number | null;
-            fullest_disk?: components["schemas"]["FullestDisk"] | null;
-            gpu?: components["schemas"]["GpuSummary"] | null;
-            /** Load 1M */
-            load_1m?: number | null;
-            /** Memory Percent */
-            memory_percent?: number | null;
-            pending_updates?: components["schemas"]["PendingUpdates"] | null;
-            /** Swap Percent */
-            swap_percent?: number | null;
-            /** Uptime S */
-            uptime_s?: number | null;
-        };
-        /** RunStarted */
-        RunStarted: {
-            /**
-             * Status
-             * @default started
-             * @constant
-             */
-            status: "started";
         };
         /**
          * Settings
@@ -2372,78 +1347,8 @@ export interface components {
             chat: components["schemas"]["ChatSettings"];
             /**
              * @default {
-             *       "apt": {
-             *         "enabled": true,
-             *         "interval": "6h"
-             *       },
-             *       "docker": {
-             *         "df_interval": "30m",
-             *         "enabled": true,
-             *         "interval": "30s",
-             *         "log_scan": true,
-             *         "log_tail": 300,
-             *         "url": ""
-             *       },
-             *       "gpu": {
-             *         "enabled": "auto",
-             *         "interval": "30s"
-             *       },
-             *       "image_updates": {
-             *         "cache_ttl": "6h",
-             *         "enabled": "auto",
-             *         "interval": "12h",
-             *         "url": ""
-             *       },
-             *       "journal": {
-             *         "directory": "",
-             *         "enabled": true,
-             *         "initial_lookback": "1h",
-             *         "interval": "1m",
-             *         "max_entries": 2000,
-             *         "priority": "warning"
-             *       },
-             *       "prometheus": {
-             *         "auto_queries": true,
-             *         "enabled": "auto",
-             *         "interval": "1m",
-             *         "max_auto_queries": 12,
-             *         "max_series": 50,
-             *         "password": "",
-             *         "queries": [
-             *           {
-             *             "description": "Scrape targets that are down",
-             *             "name": "targets_down",
-             *             "query": "up == 0",
-             *             "unit": ""
-             *           },
-             *           {
-             *             "description": "Alerts currently firing in Prometheus",
-             *             "name": "firing_alerts",
-             *             "query": "ALERTS{alertstate=\"firing\"}",
-             *             "unit": ""
-             *           }
-             *         ],
-             *         "replan_interval": "7d",
-             *         "timeout": "10s",
-             *         "token": "",
-             *         "url": "",
-             *         "username": ""
-             *       },
-             *       "system": {
-             *         "enabled": true,
-             *         "interval": "15s",
-             *         "top_n": 10
-             *       },
-             *       "systemd": {
-             *         "bus_address": "",
-             *         "enabled": true,
-             *         "interval": "1m"
-             *       }
-             *     }
-             */
-            collectors: components["schemas"]["CollectorsSettings"];
-            /**
-             * @default {
+             *       "docker_url": "",
+             *       "language": "en",
              *       "log_level": "info"
              *     }
              */
@@ -2453,15 +1358,12 @@ export interface components {
              *       "api_key": "",
              *       "base_url": "",
              *       "extra_body": {},
-             *       "max_context_tokens": 8192,
              *       "max_output_tokens": 16384,
              *       "max_retries": 2,
              *       "model": "",
              *       "reasoning_effort": "auto",
-             *       "stream_usage": true,
              *       "temperature": "auto",
              *       "timeout": "3m",
-             *       "tool_mode": "auto",
              *       "top_k": "auto",
              *       "top_p": "auto"
              *     }
@@ -2492,12 +1394,10 @@ export interface components {
              *         "enabled": true
              *       },
              *       "telegram": {
-             *         "alerts": true,
              *         "allowed_chat_ids": [],
              *         "api_url": "",
              *         "enabled": false,
              *         "new_session_after": "6h",
-             *         "report_every": 1,
              *         "token": "",
              *         "web_url": ""
              *       }
@@ -2506,34 +1406,8 @@ export interface components {
             outputs: components["schemas"]["OutputsSettings"];
             /**
              * @default {
-             *       "digest_token_budget": 3000,
-             *       "digest_top_n": 5,
-             *       "disk_crit_percent": 95,
-             *       "disk_full_crit_days": 3,
-             *       "disk_full_warn_days": 14,
-             *       "disk_warn_percent": 85,
-             *       "gpu_temp_warn_c": 85,
-             *       "interval": "5m",
-             *       "language": "en",
-             *       "load_crit_per_core": 3,
-             *       "load_warn_per_core": 1.5,
-             *       "log_error_burst": 20,
-             *       "memory_crit_percent": 97,
-             *       "memory_warn_percent": 90,
-             *       "reasoning_effort": "none",
-             *       "restart_loop_count": 3,
-             *       "skip_if_unchanged": false,
-             *       "swap_warn_percent": 50,
-             *       "trend_window": "7d",
-             *       "unused_images_note_gb": 20
-             *     }
-             */
-            report: components["schemas"]["ReportSettings"];
-            /**
-             * @default {
              *       "prune_interval": "1h",
-             *       "retention": "30d",
-             *       "sample_interval": "5m"
+             *       "retention": "30d"
              *     }
              */
             storage: components["schemas"]["StorageSettings"];
@@ -2542,15 +1416,12 @@ export interface components {
              *       "api_key": "",
              *       "base_url": "",
              *       "extra_body": {},
-             *       "max_context_tokens": 8192,
              *       "max_output_tokens": 16384,
              *       "max_retries": 2,
              *       "model": "",
              *       "reasoning_effort": "auto",
-             *       "stream_usage": true,
              *       "temperature": "auto",
              *       "timeout": "3m",
-             *       "tool_mode": "auto",
              *       "top_k": "auto",
              *       "top_p": "auto"
              *     }
@@ -2575,24 +1446,24 @@ export interface components {
         };
         /** StatusResponse */
         StatusResponse: {
-            /** Collectors */
-            collectors: {
-                [key: string]: components["schemas"]["CollectorState"];
+            /** Automation */
+            automation: {
+                [key: string]: unknown;
             };
-            last_attempt: components["schemas"]["LastAttempt"] | null;
             /** Llm Configured */
             llm_configured: boolean;
-            next_report: components["schemas"]["NextReport"];
+            /** Main Model */
+            main_model: string;
             /** Now */
             now: number;
             /** Pending Approvals */
             pending_approvals: number;
-            report: components["schemas"]["LatestReport"] | null;
-            resources: components["schemas"]["Resources"];
             /** Uptime S */
             uptime_s: number;
             /** Version */
             version: string;
+            /** Worker Model */
+            worker_model: string;
         };
         /** StorageSettings */
         StorageSettings: {
@@ -2610,7 +1481,7 @@ export interface components {
             /**
              * Retention
              * Format: duration
-             * @description How long metrics history, reports and chat messages are kept. The action log is permanent.
+             * @description How long chat messages are kept. The action log is permanent.
              * @default 30d
              * @example 30s
              * @example 5m
@@ -2618,79 +1489,9 @@ export interface components {
              * @example 30d
              */
             retention: string;
-            /**
-             * Sample Interval
-             * Format: duration
-             * @description Resolution of stored history. Live data is always fresh.
-             * @default 5m
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            sample_interval: string;
-        };
-        /** SystemCollectorSettings */
-        SystemCollectorSettings: {
-            /**
-             * Enabled
-             * @description auto = use it if available on this host, silently skip otherwise.
-             * @default true
-             */
-            enabled: boolean | "auto";
-            /**
-             * Interval
-             * Format: duration
-             * @description How often this collector gathers fresh data.
-             * @default 15s
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            interval: string;
-            /**
-             * Top N
-             * @description How many top processes (by CPU and by memory) to report.
-             * @default 10
-             */
-            top_n: number;
-        };
-        /** SystemdCollectorSettings */
-        SystemdCollectorSettings: {
-            /**
-             * Bus Address
-             * @description D-Bus address. Empty = the host's system bus under the host mount.
-             * @default
-             */
-            bus_address: string;
-            /**
-             * Enabled
-             * @description auto = use it if available on this host, silently skip otherwise.
-             * @default true
-             */
-            enabled: boolean | "auto";
-            /**
-             * Interval
-             * Format: duration
-             * @description How often this collector gathers fresh data.
-             * @default 1m
-             * @example 30s
-             * @example 5m
-             * @example 6h
-             * @example 30d
-             */
-            interval: string;
         };
         /** TelegramSettings */
         TelegramSettings: {
-            /**
-             * Alerts
-             * @description Send a short alert whenever the health status changes (also when reports are not
-             *     sent every time).
-             * @default true
-             */
-            alerts: boolean;
             /**
              * Allowed Chat Ids
              * @description Only these chats may talk to the bot. Don't know a chat id? Send /id to the bot: it
@@ -2721,12 +1522,6 @@ export interface components {
              * @example 30d
              */
             new_session_after: string;
-            /**
-             * Report Every
-             * @description Send every Nth report (0 = alerts only).
-             * @default 1
-             */
-            report_every: number;
             /**
              * Token
              * Format: password
@@ -2901,14 +1696,8 @@ export interface components {
                 [key: string]: unknown;
             };
             /**
-             * Max Context Tokens
-             * @description Context window to plan prompts for. For Ollama, also raise OLLAMA_CONTEXT_LENGTH.
-             * @default 8192
-             */
-            max_context_tokens: number;
-            /**
              * Max Output Tokens
-             * @description Maximum tokens per answer/report, counting a thinking model's reasoning too. Too low and
+             * @description Maximum tokens per answer, counting a thinking model's reasoning too. Too low and
              *     a model that thinks long runs out before it writes the answer (shown as an error).
              * @default 16384
              */
@@ -2927,21 +1716,14 @@ export interface components {
             model: string;
             /**
              * Reasoning Effort
-             * @description How much a thinking model reasons before answering chat questions and reports, sent as
-             *     the API's reasoning_effort. auto = not sent, the model decides; none = no thinking (fast,
-             *     shallower); low / medium / high = as the model supports. Short helper calls (chat titles,
-             *     tool routing, tests) always ask for none.
+             * @description How much a thinking model reasons before answering chat questions, sent as the API's
+             *     reasoning_effort (left out from then on if the endpoint rejects it). auto = not sent, the
+             *     model decides; none = no thinking (fast, shallower); low / medium / high = as the model
+             *     supports. Short helper calls (chat titles, tests) always ask for none.
              * @default auto
              * @enum {string}
              */
             reasoning_effort: "auto" | "none" | "low" | "medium" | "high";
-            /**
-             * Stream Usage
-             * @description Ask the endpoint for token usage while streaming (turned off automatically if
-             *     the endpoint rejects it).
-             * @default true
-             */
-            stream_usage: boolean;
             /**
              * Temperature
              * @description Randomness of answers: 0 is the most predictable, higher is more varied. auto = not sent,
@@ -2960,14 +1742,6 @@ export interface components {
              * @example 30d
              */
             timeout: string;
-            /**
-             * Tool Mode
-             * @description How the model calls tools in chat. auto = detect; native = OpenAI tool calls;
-             *     json = JSON-in-text fallback for models without tool calling; none = no tools.
-             * @default auto
-             * @enum {string}
-             */
-            tool_mode: "auto" | "native" | "json" | "none";
             /**
              * Top K
              * @description Only the this-many most likely words are considered at each step (0 = no limit). auto =
@@ -3344,61 +2118,6 @@ export interface operations {
             };
         };
     };
-    collectors_api_collectors_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    collector_api_collectors__name__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     info_api_info_get: {
         parameters: {
             query?: never;
@@ -3681,255 +2400,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ToolCallDetail"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    recent_metrics_api_metrics_recent_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: {
-                            [key: string]: unknown;
-                        }[];
-                    };
-                };
-            };
-        };
-    };
-    list_queries_api_prometheus_queries_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    delete_query_api_prometheus_queries__query_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                query_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    patch_query_api_prometheus_queries__query_id__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                query_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["QueryPatch"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    replan_api_prometheus_replan_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    list_reports_api_reports_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                offset?: number;
-                status?: ("ok" | "failed" | "skipped") | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReportList"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    current_digest_api_reports_digest_get: {
-        parameters: {
-            query?: {
-                format?: "json" | "text";
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Digest"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    run_report_api_reports_run_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RunStarted"];
-                };
-            };
-        };
-    };
-    get_report_api_reports__report_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                report_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Report"];
                 };
             };
             /** @description Validation Error */
