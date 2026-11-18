@@ -137,7 +137,7 @@ async def test_database_at_schema_4_migrates_to_latest(tmp_path: Path) -> None:
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 18
+        assert await db.schema_version() == 19
         info = await db.fetchall("PRAGMA table_info(telegram_batch_messages)")
         cols = {r["name"] for r in info}
         assert cols == {"batch_id", "chat_id", "message_id", "created_ts"}
@@ -160,7 +160,33 @@ async def test_database_at_schema_5_loses_the_prometheus_query_table(tmp_path: P
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 18
+        assert await db.schema_version() == 19
         assert not await db.fetchall("PRAGMA table_info(prom_queries)")
+    finally:
+        await db.close()
+
+
+async def test_schema_18_settings_lose_the_mcp_token_budget(tmp_path: Path) -> None:
+    import json
+    import sqlite3
+
+    path = tmp_path / "v18.db"
+    conn = sqlite3.connect(path)
+    for _, _, sql in load_migrations()[:18]:
+        conn.executescript(sql)
+    conn.execute("PRAGMA user_version = 18")
+    stored = {"mcp": {"servers": [], "max_inline_tool_tokens": 1200, "dry_run": True}}
+    for key in ("settings", "settings.backup.1"):
+        conn.execute(
+            "INSERT INTO kv (key, value, updated) VALUES (?, ?, 1)", (key, json.dumps(stored))
+        )
+    conn.commit()
+    conn.close()
+
+    db = Database(path)
+    await db.connect()
+    try:
+        for key in ("settings", "settings.backup.1"):
+            assert await db.kv_get(key) == {"mcp": {"servers": [], "dry_run": True}}
     finally:
         await db.close()

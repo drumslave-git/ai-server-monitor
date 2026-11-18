@@ -340,8 +340,8 @@ class OutputsSettings(_Model):
 # --------------------------------------------------------------------------- mcp
 
 McpTransport = Literal["auto", "streamable_http", "sse"]
-Policy = Literal["off", "suggest", "approve", "auto"]
-ToolPolicy = Literal["inherit", "off", "suggest", "approve", "auto"]
+Policy = Literal["suggest", "approve", "auto"]
+ToolPolicy = Literal["inherit", "suggest", "approve", "auto"]
 ToolKindSetting = Literal["auto", "read", "write"]
 
 ServerName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9-]{0,23}$")]
@@ -370,8 +370,8 @@ class McpToolOverride(_Model):
     name: Name
     """Tool name as the server calls it."""
     policy: ToolPolicy = "inherit"
-    """inherit = the server's default policy; off = the chat does not get this tool at all;
-    suggest / approve / auto as for the server (only used for tools that change things)."""
+    """inherit = the server's default policy; suggest / approve / auto as for the server (only
+    used for tools that change things)."""
     kind: ToolKindSetting = "auto"
     """auto = read-only only if the server says so; read / write = your own call. A tool
     treated as read runs immediately; a write goes through the action policy."""
@@ -398,10 +398,37 @@ class McpServerSettings(_Model):
     """The tools the chat may use. Empty = none: pick them after pressing Test (small models
     cope badly with dozens of tools, so choose only what you need)."""
     default_policy: Policy = "approve"
-    """For tools that change things: off = never; suggest = only record the request;
-    approve = ask you first (UI / Telegram); auto = just do it. Read-only tools always run."""
+    """For tools that change things: suggest = only record the request; approve = ask you
+    first (UI / Telegram); auto = just do it. Read-only tools always run."""
     tool_overrides: list[McpToolOverride] = Field(default_factory=list)
     """Per-tool exceptions to the policy or to the read-only detection."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _policy_off_is_gone(cls, data: Any) -> Any:
+        """Settings saved before 0.8 may say `off`: a server's `off` (writes never run) is now
+        `suggest` (writes only recorded); a tool's `off` (not offered) is the tool unchosen."""
+        if not isinstance(data, dict):
+            return data
+        if data.get("default_policy") == "off":
+            data = {**data, "default_policy": "suggest"}
+        overrides = data.get("tool_overrides")
+        if isinstance(overrides, list):
+            off = {
+                o.get("name") for o in overrides if isinstance(o, dict) and o.get("policy") == "off"
+            }
+            if off:
+                data = {
+                    **data,
+                    "tool_filter": [t for t in data.get("tool_filter") or [] if t not in off],
+                    "tool_overrides": [
+                        {**o, "policy": "inherit"}
+                        if isinstance(o, dict) and o.get("name") in off
+                        else o
+                        for o in overrides
+                    ],
+                }
+        return data
 
     @field_validator("tool_filter")
     @classmethod
@@ -426,16 +453,6 @@ class McpServerSettings(_Model):
             return override.policy
         return self.default_policy
 
-    def request_headers(self) -> dict[str, str]:
-        """Headers to send, secrets in clear. Never log or return the result."""
-        out: dict[str, str] = {}
-        token = self.token.get_secret_value().strip()
-        if token:
-            out["Authorization"] = f"Bearer {token}"
-        for header in self.headers:
-            out[header.name] = header.value.get_secret_value()
-        return out
-
     def secret_values(self) -> list[str]:
         values = [
             self.token.get_secret_value(),
@@ -450,10 +467,6 @@ class McpSettings(_Model):
     )
     """MCP servers whose tools the chat may use (tools only: prompts and resources of a
     server are not used)."""
-    max_inline_tool_tokens: int = Field(default=1200, ge=0)
-    """If the schemas of all chosen tools together are bigger than this (about 4 characters
-    per token), the chat gets two generic tools (list tools / call tool) instead of one tool
-    per MCP tool. Small models do better with fewer schemas. 0 = always use the generic pair."""
     dry_run: bool = False
     """Pretend: record write calls in the action log but send nothing to the servers."""
 

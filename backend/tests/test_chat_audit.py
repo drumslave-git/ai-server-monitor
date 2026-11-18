@@ -72,7 +72,7 @@ def test_host_line_reads_the_hosts_own_files(tmp_path) -> None:  # type: ignore[
 
 
 def test_every_pending_note_leads_with_not_done() -> None:
-    from ai_server_monitor.mcp_client.tools import _NOTES
+    from ai_server_monitor.agent.tools import MCP_NOTES as _NOTES
 
     pending = _NOTES["pending"]
     assert pending.startswith("NOT DONE: waiting for")

@@ -27,6 +27,7 @@ from pydantic import ValidationError
 from pydantic_ai import (
     Agent,
     ApprovalRequired,
+    CallDeferred,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
@@ -35,8 +36,15 @@ from pydantic_ai import (
     ToolDenied,
     UsageLimits,
 )
-from pydantic_ai.capabilities import PrepareTools
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.capabilities import AbstractCapability, PrepareTools
+from pydantic_ai.exceptions import (
+    ModelRetry,
+    ToolFailed,
+    ToolFailedError,
+    ToolRetryError,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+)
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -56,6 +64,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 
 from ..tracing import trace_scope
@@ -72,6 +81,14 @@ RETRIES = 3
 """Retries of a tool call or a final result before the model is given up on (Pydantic AI)."""
 NOT_FINISHED = "The model did not finish within {steps} steps (the limit is {limit})."
 Event = dict[str, Any]
+ToolCallFailures = (ToolRetryError, ToolFailedError, ModelRetry, ToolFailed)
+"""How a toolset's tool (MCP) reports its own failure: the message is for the model."""
+
+
+def _failure(exc: Exception) -> str:
+    if isinstance(exc, ToolCallFailures) and str(exc).strip():
+        return str(exc).strip()
+    return f"{type(exc).__name__}: {exc}"
 
 
 class ToolError(Exception):
@@ -89,9 +106,6 @@ class AgentTool:
     handler: Callable[[dict[str, Any]], Awaitable[Any]]
     requires_approval: bool = False
     """Pydantic AI defers the call instead of running it; `on_approval` takes over."""
-    approval_for: Callable[[dict[str, Any]], bool] | None = None
-    """Per call: True = defer this call like `requires_approval` (the generic `mcp_call`,
-    which writes only for some of the tools it reaches)."""
 
 
 @dataclass
@@ -183,6 +197,31 @@ class AgentConfig:
     resolved: dict[str, str] = field(default_factory=dict)
     """Call id -> result of an approval-required call that already ran (settled at once, or
     approved and executed before a resume): the tool returns it instead of running."""
+    toolsets: Sequence[AbstractToolset[Any]] = ()
+    """Pydantic AI toolsets besides `tools` (the MCP servers). Connected in parallel when the
+    run starts; their calls get the same tracing, scrubbing, cap and untrusted wrapping."""
+    approval_tool: Callable[[str], AgentTool | None] | None = None
+    """For approval-required calls of a toolset's tool (no AgentTool of that name): the tool
+    whose handler files the approval request."""
+    notes: Callable[[], str] | None = None
+    """Extra instructions decided when the run is under way (e.g. MCP servers that could not
+    be reached)."""
+
+
+@dataclass
+class _ToolCalls(AbstractCapability[Any]):
+    """Toolset tools (MCP) go through `_Run.execute` like our own tools do."""
+
+    run: Any = None
+
+    async def wrap_tool_execute(
+        self, ctx: RunContext[Any], *, call: Any, tool_def: ToolDefinition, args: Any, handler: Any
+    ) -> Any:
+        if tool_def.name in self.run.by_name:
+            return await handler(args)
+        return await self.run.execute(
+            tool_def.name, call.tool_call_id or "", dict(args or {}), lambda: handler(args)
+        )
 
 
 @dataclass
@@ -234,53 +273,61 @@ class _Run:
         cleaned = scrub.clean(value) if scrub else value
         return shrink(cleaned, self.cfg.result_chars)
 
-    async def execute(self, tool: AgentTool, call_id: str, args: dict[str, Any]) -> str:
-        """Run one tool call; never raises (every failure is text the model can react to)."""
+    async def execute(
+        self,
+        name: str,
+        call_id: str,
+        args: dict[str, Any],
+        call: Callable[[], Awaitable[Any]],
+    ) -> str:
+        """Run one tool call; never raises (every failure is text the model can react to),
+        except the deferrals Pydantic AI handles itself."""
         timer = None
         if self.cfg.tracing is not None:
-            timer = self.cfg.tracing.start_tool(self.cfg.trace_tool_prefix + tool.name, args)
+            timer = self.cfg.tracing.start_tool(self.cfg.trace_tool_prefix + name, args)
         ok, truncated = True, False
         if call_id in self.cfg.resolved:  # approved and run already (by the approval service)
             text = self.cfg.resolved[call_id]
             if timer is not None:
                 timer.finish(ok=True, result=text, result_size=len(text))
             self.outcomes[call_id] = _ToolOutcome(True, False, text)
-            return wrap_untrusted(tool.name, text)
+            return wrap_untrusted(name, text)
         try:
             async with asyncio.timeout(self.cfg.tool_timeout_s):
-                result = await tool.handler(args)
-            text, truncated = self._shape(tool.name, result)
+                result = await call()
+            text, truncated = self._shape(name, result)
+        except (ApprovalRequired, CallDeferred):
+            if timer is not None:
+                timer.finish(ok=True, result="deferred")
+            raise
         except ToolError as exc:
-            ok, text = False, self._shape(tool.name, str(exc))[0]
+            ok, text = False, self._shape(name, str(exc))[0]
         except ValidationError as exc:
             details = "; ".join(
                 f"{'.'.join(map(str, e['loc'])) or 'args'}: {e['msg']}"
                 for e in exc.errors(include_url=False, include_input=False, include_context=False)
             )
-            ok, text = False, f"invalid arguments for {tool.name}: {details}"
+            ok, text = False, f"invalid arguments for {name}: {details}"
         except TimeoutError:
-            ok, text = False, f"{tool.name} timed out after {self.cfg.tool_timeout_s:.0f}s"
+            ok, text = False, f"{name} timed out after {self.cfg.tool_timeout_s:.0f}s"
         except asyncio.CancelledError:
             if timer is not None:
                 timer.finish(ok=False, error="cancelled")
             raise
         except Exception as exc:
-            log.exception("agent tool %s crashed", tool.name)
-            ok, text = False, f"{tool.name} failed: {type(exc).__name__}: {exc}"
+            if not isinstance(exc, ToolCallFailures):
+                log.exception("agent tool %s crashed", name)
+            ok, text = False, self._shape(name, f"{name} failed: {_failure(exc)}")[0]
         if timer is not None:
             timer.finish(ok=ok, result=text, error=None if ok else text, result_size=len(text))
         self.outcomes[call_id] = _ToolOutcome(ok, truncated, text)
-        return wrap_untrusted(tool.name, text)
+        return wrap_untrusted(name, text)
 
     def pydantic_tool(self, tool: AgentTool) -> Tool[Any]:
         async def call(ctx: RunContext[Any], **kwargs: Any) -> str:
-            if (
-                tool.approval_for is not None
-                and not ctx.tool_call_approved
-                and tool.approval_for(kwargs)
-            ):
-                raise ApprovalRequired()
-            return await self.execute(tool, ctx.tool_call_id or "", kwargs)
+            return await self.execute(
+                tool.name, ctx.tool_call_id or "", kwargs, lambda: tool.handler(kwargs)
+            )
 
         out = Tool.from_schema(
             call,
@@ -314,6 +361,9 @@ class _Run:
     def limit_note(self, ctx: RunContext[Any]) -> str:
         return STEP_LIMIT_NOTE if ctx.run_step > self.cfg.max_steps else ""
 
+    def notes(self, ctx: RunContext[Any]) -> str:
+        return self.cfg.notes() if self.cfg.notes is not None else ""
+
     # ------------------------------------------------------------------ the run
 
     async def pump(
@@ -325,13 +375,15 @@ class _Run:
         cfg = self.cfg
         agent: Agent[None, Any] = Agent(
             cfg.model,
-            instructions=[cfg.instructions, self.limit_note],
+            instructions=[cfg.instructions, self.limit_note, self.notes],
             tools=[self.pydantic_tool(t) for t in cfg.tools],
+            toolsets=list(cfg.toolsets),
             output_type=[cfg.output_type, DeferredToolRequests]
-            if any(t.requires_approval or t.approval_for for t in cfg.tools)
+            if any(t.requires_approval for t in cfg.tools)
+            or (cfg.toolsets and cfg.approval_tool is not None)
             else cfg.output_type,
             model_settings=cfg.model_settings,
-            capabilities=[PrepareTools(self.prepare)],
+            capabilities=[PrepareTools(self.prepare), _ToolCalls(run=self)],
             # A small model at the step limit may still call a tool that is gone or give a
             # malformed result a few times before it answers: retry instead of crashing.
             retries={"tools": RETRIES, "output": RETRIES},
@@ -349,6 +401,10 @@ class _Run:
         # Filled in place by Pydantic AI: a run that ends in an exception (the step limit, too
         # many invalid results) still reports what it used.
         usage = RunUsage()
+        # The toolsets (MCP servers) connect in parallel; one that cannot be reached gives no
+        # tools (see mcp_client.toolsets.Reachable). Pydantic AI enters them again per run.
+        stack = contextlib.AsyncExitStack()
+        await asyncio.gather(*(stack.enter_async_context(t) for t in cfg.toolsets))
         try:
             with trace_scope(**cfg.trace):
                 for _ in range(MAX_APPROVAL_ROUNDS + 1):
@@ -394,6 +450,8 @@ class _Run:
             await self.queue.put(("end", (self.not_finished(), usage)))
         except BaseException as exc:  # handed to the consumer, which re-raises it
             await self.queue.put(("error", exc))
+        finally:
+            await stack.aclose()
 
     async def approve(self, requests: DeferredToolRequests) -> DeferredToolResults:
         """File each approval-required call. Settled at once: the model reads what happened.
@@ -403,6 +461,8 @@ class _Run:
         self.round_resolved = {}
         for part in requests.approvals:
             tool = self.by_name.get(part.tool_name)
+            if tool is None and self.cfg.approval_tool is not None:
+                tool = self.cfg.approval_tool(part.tool_name)
             args = _args_dict(part)
             call_id = part.tool_call_id
             if tool is None or self.cfg.on_approval is None:

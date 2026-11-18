@@ -1,8 +1,9 @@
 """A real MCP server for the tests, run in-process on a local port.
 
-Built with the SDK's own server side (FastMCP) and served by uvicorn on 127.0.0.1, because
-the client's streaming transports need an actual socket (an in-memory ASGI transport buffers
-whole responses). Both transports are available: Streamable HTTP and the legacy HTTP+SSE.
+Built with the SDK's own server side (`MCPServer`) and served by uvicorn on 127.0.0.1, because
+the client's streaming transports need an actual socket. Both transports are available:
+Streamable HTTP and the legacy HTTP+SSE. `extra_tools=N` adds N more tools (every third one
+writes, some with long descriptions) for the UI and the big-server tests.
 """
 
 from __future__ import annotations
@@ -13,12 +14,20 @@ import socket
 from typing import Any
 
 import uvicorn
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.types import ToolAnnotations
+from mcp.server.mcpserver import MCPServer
+from mcp.types import ImageContent, TextContent, ToolAnnotations
 from starlette.responses import PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 SECRET_IN_RESULT = "hunter2-very-secret"
+LONG_DESCRIPTION = (
+    "Searches every configured indexer for a release and returns each match with its size, "
+    "age, seeders, indexer and the quality profile it would satisfy. Use it before adding a "
+    "download when the owner asks whether something is available. The search can take up to a "
+    "minute on slow indexers; results are sorted by the indexer's own score, then by seeders. "
+    "Filters: category (movies, tv, music), minimum seeders, maximum size in GiB and a free-text "
+    "query. Torznab categories are mapped automatically."
+)
 
 
 def free_port() -> int:
@@ -36,14 +45,15 @@ class FakeMcp:
         *,
         token: str | None = None,
         port: int | None = None,
+        extra_tools: int = 0,
     ):
         self.transport = transport
         self.token = token
         self.port = port or free_port()
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.headers: list[dict[str, str]] = []
-        self.mcp = FastMCP("fake-home", host="127.0.0.1", port=self.port)
-        self._register()
+        self.mcp = MCPServer("fake-home", version="1.0")
+        self._register(extra_tools)
         self._server: uvicorn.Server | None = None
         self._task: asyncio.Task[None] | None = None
 
@@ -54,10 +64,11 @@ class FakeMcp:
 
     # ------------------------------------------------------------------ the tools
 
-    def _register(self) -> None:
+    def _register(self, extra: int) -> None:
         mcp = self.mcp
+        read = ToolAnnotations(readOnlyHint=True)
 
-        @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True), description="Room temperature.")
+        @mcp.tool(annotations=read, description="Room temperature.")
         def get_temperature(room: str) -> str:
             self.calls.append(("get_temperature", {"room": room}))
             return f"21.5 C in {room}"
@@ -67,37 +78,42 @@ class FakeMcp:
             self.calls.append(("set_heating", {"room": room, "on": on}))
             return f"heating in {room} is now {'on' if on else 'off'}"
 
-        @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+        @mcp.tool(annotations=read)
         async def slow(seconds: float) -> str:
             self.calls.append(("slow", {"seconds": seconds}))
             await asyncio.sleep(seconds)
             return "finally"
 
-        @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+        @mcp.tool(annotations=read)
         def boom() -> str:
             raise RuntimeError("the sensor exploded")
 
-        @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+        @mcp.tool(annotations=read)
         def leak() -> str:
             return f"the key is {SECRET_IN_RESULT} and the token is {self.token}"
 
-        @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-        async def add_tool(ctx: Context) -> str:  # type: ignore[type-arg]
-            def extra() -> str:
-                return "extra!"
-
-            mcp.add_tool(extra, name="extra", description="Added at runtime.")
-            await ctx.session.send_tool_list_changed()
-            return "added"
-
-        @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+        @mcp.tool(annotations=read)
         def image() -> list[Any]:
-            from mcp.types import ImageContent, TextContent
-
             return [
                 TextContent(type="text", text="caption"),
                 ImageContent(type="image", data="iVBORw0KGgo=", mimeType="image/png"),
             ]
+
+        for i in range(extra):
+
+            def make(i: int = i) -> Any:
+                def bulk(x: int = 0) -> str:
+                    return f"bulk {i}: {x}"
+
+                return bulk
+
+            description = LONG_DESCRIPTION if i % 10 == 3 else f"Bulk tool number {i}."
+            mcp.add_tool(
+                make(),
+                name=f"bulk_{i:02d}",
+                description=description,
+                annotations=ToolAnnotations(readOnlyHint=i % 3 != 0),
+            )
 
     # ------------------------------------------------------------------ serving
 

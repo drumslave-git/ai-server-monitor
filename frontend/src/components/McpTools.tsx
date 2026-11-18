@@ -11,10 +11,9 @@ type ToolRow = {
   description: string;
   read_only?: boolean | null;
   kind: "read" | "write";
-  schema_tokens: number;
 };
 
-const POLICIES = ["inherit", "off", "suggest", "approve", "auto"];
+const POLICIES = ["inherit", "suggest", "approve", "auto"];
 const KINDS = ["auto", "read", "write"];
 
 export function mcpTools(result: ConnectionTestResult | null): ToolRow[] | null {
@@ -40,18 +39,16 @@ export function McpToolPicker({ tools, value, onChange }: {
     onChange({ ...value, tool_overrides: (neutral ? rest : [...rest, next]) as Json });
   };
 
-  const tokens = tools.filter((t) => chosen.includes(t.name)).reduce((sum, t) => sum + t.schema_tokens, 0);
   return (
     <div className="mcp-tools">
       <p className="help">
-        Tick the tools the chat may use ({chosen.length} of {tools.length} chosen, about {tokens} tokens of tool
-        definitions). Above the "Max inline tool tokens" setting the chat gets a generic list/call pair instead.
+        Tick the tools the agents may use ({chosen.length} of {tools.length} chosen).
         A tool counts as read-only only if the server says so; anything else is a write and goes through the policy.
       </p>
       <div className="table-scroll">
         <table className="table">
           <thead>
-            <tr><th>Use</th><th>Tool</th><th>Policy</th><th>Treat as</th><th>Tokens</th></tr>
+            <tr><th>Use</th><th>Tool</th><th>Policy</th><th>Treat as</th></tr>
           </thead>
           <tbody>
             {tools.map((t) => {
@@ -79,7 +76,6 @@ export function McpToolPicker({ tools, value, onChange }: {
                       {KINDS.map((k) => <option key={k} value={k}>{k === "auto" ? `auto (${t.read_only ? "read" : "write"})` : k}</option>)}
                     </select>
                   </td>
-                  <td data-label="Tokens">{t.schema_tokens}</td>
                 </tr>
               );
             })}

@@ -1621,12 +1621,12 @@ export interface components {
         McpServerSettings: {
             /**
              * Default Policy
-             * @description For tools that change things: off = never; suggest = only record the request;
-             *     approve = ask you first (UI / Telegram); auto = just do it. Read-only tools always run.
+             * @description For tools that change things: suggest = only record the request; approve = ask you
+             *     first (UI / Telegram); auto = just do it. Read-only tools always run.
              * @default approve
              * @enum {string}
              */
-            default_policy: "off" | "suggest" | "approve" | "auto";
+            default_policy: "suggest" | "approve" | "auto";
             /**
              * Enabled
              * @description Off = never connected, its tools are not offered.
@@ -1696,14 +1696,6 @@ export interface components {
              */
             dry_run: boolean;
             /**
-             * Max Inline Tool Tokens
-             * @description If the schemas of all chosen tools together are bigger than this (about 4 characters
-             *     per token), the chat gets two generic tools (list tools / call tool) instead of one tool
-             *     per MCP tool. Small models do better with fewer schemas. 0 = always use the generic pair.
-             * @default 1200
-             */
-            max_inline_tool_tokens: number;
-            /**
              * Servers
              * @description MCP servers whose tools the chat may use (tools only: prompts and resources of a
              *     server are not used).
@@ -1727,12 +1719,12 @@ export interface components {
             name: string;
             /**
              * Policy
-             * @description inherit = the server's default policy; off = the chat does not get this tool at all;
-             *     suggest / approve / auto as for the server (only used for tools that change things).
+             * @description inherit = the server's default policy; suggest / approve / auto as for the server (only
+             *     used for tools that change things).
              * @default inherit
              * @enum {string}
              */
-            policy: "inherit" | "off" | "suggest" | "approve" | "auto";
+            policy: "inherit" | "suggest" | "approve" | "auto";
         };
         /** MetricsSettings */
         MetricsSettings: {
@@ -1892,7 +1884,6 @@ export interface components {
             /**
              * @default {
              *       "dry_run": false,
-             *       "max_inline_tool_tokens": 1200,
              *       "servers": []
              *     }
              */

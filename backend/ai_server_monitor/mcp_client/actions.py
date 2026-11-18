@@ -2,11 +2,10 @@
 
 A single action (not one per tool) because tools are discovered at runtime while approvals
 must survive restarts: the audit row holds `{server, tool, arguments}` and everything else
-(policy, whether the tool is still allowed) is read from the current settings when the
-request is made and again when it is approved.
+(policy, whether the tool is still chosen) is read from the current settings when the request
+is made and again when it is approved.
 
-The functions here are the pieces of an `ActionDef`; `actions/registry.py` assembles them
-through its per-action hooks (`policy_of`, `max_per_hour_of`, `uses_dry_run`, `run`).
+The functions here are the pieces of an `ActionDef`; `actions/registry.py` assembles them.
 """
 
 from __future__ import annotations
@@ -15,12 +14,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .connection import McpCallError, McpUnavailable
-from .manager import McpManager
 from .settings import McpSettings
+from .toolsets import McpServers
 
 ACTION_NAME = "mcp_call"
 DESCRIPTION = "Call a tool of an MCP server that may change something outside this monitor."
+RESULT_CHARS = 2000
 
 
 class McpCallArgs(BaseModel):
@@ -34,9 +33,9 @@ class McpCallArgs(BaseModel):
 
 
 def policy_of(settings: McpSettings, args: McpCallArgs) -> str:
-    """The policy for this call (off | suggest | approve | auto), from the settings."""
+    """The policy for this call (suggest | approve | auto), from the settings."""
     cfg = settings.server(args.server)
-    return cfg.policy_of(args.tool) if cfg is not None else "off"
+    return cfg.policy_of(args.tool) if cfg is not None else "approve"
 
 
 def policy_key(args: McpCallArgs) -> str:
@@ -58,14 +57,15 @@ def check(settings: McpSettings, args: McpCallArgs) -> str | None:
     return None
 
 
-async def execute(manager: McpManager, args: McpCallArgs) -> dict[str, Any]:
+async def execute(servers: McpServers, args: McpCallArgs) -> dict[str, Any]:
     """Run the approved call. Failures raise ActionError (recorded as `failed`)."""
     from ..actions import ActionError  # lazy: the action package imports settings types
 
     try:
-        outcome = await manager.call(args.server, args.tool, args.arguments, source="action")
-    except (McpUnavailable, McpCallError) as exc:
+        result = await servers.call(args.server, args.tool, args.arguments, source="action")
+    except RuntimeError as exc:
         raise ActionError(str(exc)) from None
-    if outcome.is_error:
-        raise ActionError(outcome.text or "the tool reported an error")
-    return {"server": args.server, "tool": args.tool, "result": outcome.payload(2000)}
+    text = result if isinstance(result, str) else str(result)
+    if len(text) > RESULT_CHARS:
+        text = text[: RESULT_CHARS - 1] + "…"
+    return {"server": args.server, "tool": args.tool, "result": text}

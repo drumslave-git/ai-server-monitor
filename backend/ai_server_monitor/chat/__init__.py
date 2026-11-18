@@ -2,6 +2,6 @@
 
 from .engine import ChatEngine
 from .store import ChatStore
-from .tools import Tool, ToolContext, ToolError
+from .tools import ToolContext, ToolError
 
-__all__ = ["ChatEngine", "ChatStore", "Tool", "ToolContext", "ToolError"]
+__all__ = ["ChatEngine", "ChatStore", "ToolContext", "ToolError"]

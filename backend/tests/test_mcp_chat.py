@@ -68,17 +68,17 @@ def used_tools(events: list[dict[str, Any]]) -> list[str]:
 
 
 async def test_read_tool_is_answered_directly_and_audited(tmp_path: Path, fake: FakeMcp) -> None:
-    llm = FakeLLM(call("home__get_temperature", {"room": "kitchen"}), say("It is 21.5 C."))
+    llm = FakeLLM(call("home_get_temperature", {"room": "kitchen"}), say("It is 21.5 C."))
     async for app in start_app(tmp_path, llm, settings_for(fake.url)):
         events = await ask(app, "how warm is the kitchen?")
-        assert used_tools(events) == ["home__get_temperature"]
+        assert used_tools(events) == ["home_get_temperature"]
         result = next(e for e in events if e["type"] == "tool_result")
         assert result["ok"] and "21.5 C in kitchen" in result["preview"]
         assert events[-1]["type"] == "done" and "21.5" in events[-1]["text"]
         # the model saw the tools in the first request, the result wrapped as untrusted data
         first, second = llm.requests
         names = {t["function"]["name"] for t in first["tools"]}
-        assert {"home__get_temperature", "home__set_heating"} <= names
+        assert {"home_get_temperature", "home_set_heating"} <= names
         assert "MCP servers" in first["messages"][0]["content"]
         tool_message = next(m for m in second["messages"] if m["role"] == "tool")
         assert 'trust="untrusted"' in tool_message["content"]
@@ -93,7 +93,7 @@ async def test_write_tool_becomes_a_pending_approval_then_runs_on_approve(
     tmp_path: Path, fake: FakeMcp
 ) -> None:
     llm = FakeLLM(
-        call("home__set_heating", {"room": "bedroom", "on": False}),
+        call("home_set_heating", {"room": "bedroom", "on": False}),
         say("I asked for approval."),
     )
     async for app in start_app(tmp_path, llm, settings_for(fake.url)):
@@ -112,7 +112,7 @@ async def test_write_tool_becomes_a_pending_approval_then_runs_on_approve(
         # approve → executed on the server (mcp.dry_run is off by default)
         done = await app.actions.decide(record["id"], "approve")
         assert done["status"] == "executed", done
-        assert done["result"]["result"] == {"text": "heating in bedroom is now off"}
+        assert done["result"]["result"] == "heating in bedroom is now off"
         assert ("set_heating", {"room": "bedroom", "on": False}) in fake.calls
         # ... and the chat continues by itself with the result
         history: list[dict[str, str]] = []
@@ -155,7 +155,7 @@ async def test_policies_and_checks_of_the_mcp_action(tmp_path: Path, fake: FakeM
             and "not one of the tools" in rejected["result"]["detail"]
         )
         gone = await app.actions.request("mcp_call", {"server": "x", "tool": "y"}, "t")
-        assert gone["status"] == "rejected"  # unknown server: policy off
+        assert gone["status"] == "rejected"  # unknown server
         assert not fake.calls
 
 
@@ -165,18 +165,20 @@ async def test_dead_server_does_not_break_the_chat(tmp_path: Path) -> None:
         events = await ask(app, "hello")
         assert events[-1]["type"] == "done"
         names = {t["function"]["name"] for t in llm.requests[0]["tools"]}
-        assert not any("__" in n for n in names)
-        assert "MCP server 'home' is unavailable" in llm.requests[0]["messages"][0]["content"]
+        assert not any(n.startswith("home_") for n in names)
+        assert "MCP server 'home' is unavailable" in json.dumps(llm.requests[0]["messages"])
 
 
 async def test_settings_change_rebuilds_the_manager(tmp_path: Path, fake: FakeMcp) -> None:
     llm = FakeLLM()
     async for app in start_app(tmp_path, llm, settings_for(fake.url)):
         old = app.mcp
-        await app.actions.mcp.call("home", "get_temperature", {"room": "a"})
-        await app.apply_settings(settings_for(fake.url, max_inline_tool_tokens=5))
+        assert await app.actions.mcp.call("home", "get_temperature", {"room": "a"}, "t") == (
+            "21.5 C in a"
+        )
+        await app.apply_settings(settings_for(fake.url, dry_run=True))
         assert app.mcp is not old and app.actions.mcp is app.mcp
-        assert app.mcp.settings.max_inline_tool_tokens == 5
+        assert app.mcp.settings.dry_run is True
 
 
 # --------------------------------------------------------------------------- the hooks
@@ -260,52 +262,8 @@ async def test_settings_test_endpoint_unmasks_the_stored_token() -> None:
         assert "tok-stored" not in json.dumps(result.details) + result.message
         wrong = {**body, "token": "wrong-token-000"}
         bad = await run_test("mcp", wrong, stored)
-        assert not bad.ok and "credentials" in bad.message
+        assert not bad.ok and "could not be used" in bad.message
         invalid = await run_test("mcp", {"name": "x y", "url": "ftp://z"}, stored)
         assert not invalid.ok and invalid.message.startswith("Fix this first")
     finally:
         await server.stop()
-
-
-async def test_generic_pair_prompt_names_the_servers_and_tools(
-    tmp_path: Path, fake: FakeMcp
-) -> None:
-    llm = FakeLLM(say("ok"))
-    async for app in start_app(tmp_path, llm, settings_for(fake.url, max_inline_tool_tokens=0)):
-        await ask(app, "hello")
-        system = llm.requests[0]["messages"][0]["content"]
-        names = {t["function"]["name"] for t in llm.requests[0]["tools"]}
-        assert {"mcp_list_tools", "mcp_call"} <= names
-        assert "MCP server 'home' offers: get_temperature, set_heating (write)" in system
-
-
-async def test_generic_mcp_call_to_a_write_tool_continues_the_chat_after_approval(
-    tmp_path: Path, fake: FakeMcp
-) -> None:
-    write = {"server": "home", "tool": "set_heating", "arguments": {"room": "hall", "on": True}}
-    read = {"server": "home", "tool": "get_temperature", "arguments": {"room": "hall"}}
-    llm = FakeLLM(
-        call("mcp_call", read),
-        call("mcp_call", write),
-        say("Heating is on now."),
-    )
-    settings = settings_for(fake.url, max_inline_tool_tokens=0)
-    async for app in start_app(tmp_path, llm, settings):
-        events = await ask(app, "warm up the hall")
-        # a read through mcp_call runs at once; a write waits for the owner
-        assert ("get_temperature", {"room": "hall"}) in fake.calls
-        assert events[-1]["text"].startswith("Waiting for approval #")
-        session_id = events[-1]["session_id"]
-        [record] = await app.actions.pending()
-        assert record["target"] == "home · set_heating"
-        done = await app.actions.decide(record["id"], "approve")
-        assert done["status"] == "executed"
-        history: list[dict[str, str]] = []
-        for _ in range(200):
-            await asyncio.gather(*list(app.chat._background))
-            history = await app.chat.store.history(session_id, 10)
-            if history[-1]["content"] == "Heating is on now.":
-                break
-            await asyncio.sleep(0.02)
-        assert history[-1]["content"] == "Heating is on now."
-        assert "heating in hall is now on" in json.dumps(llm.requests[-1]["messages"])

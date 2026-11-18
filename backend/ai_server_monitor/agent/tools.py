@@ -1,4 +1,4 @@
-"""The agents' tools: `bash`, `delegate`, and the MCP servers' tools in agent form."""
+"""The agents' tools: `bash`, `delegate`, `bash_write`, and the filing of MCP write calls."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from .safety import Scrubber
 from .shell import HostShell
 
 if TYPE_CHECKING:
-    from ..chat.tools import Tool, ToolContext
     from ..context import AppContext
 
 Audit = Callable[..., Awaitable[None]]
@@ -108,31 +107,66 @@ def delegate_tool(run_worker: Callable[[str], Awaitable[str]]) -> AgentTool:
     )
 
 
-def mcp_agent_tools(tools: list[Tool], ctx: ToolContext) -> list[AgentTool]:
-    """The MCP servers' chat tools (`mcp_client`) as agent tools. A tool that always writes
-    is approval-required: Pydantic AI defers it and the handler files the approval request
-    (see `file_for_approval`). The generic `mcp_call` is deferred the same way for the calls
-    that reach a write tool (`kind_for`)."""
+MCP_NOTES = {
+    "pending": "NOT DONE: waiting for the owner's approval (approval #{batch}). Say \"waiting "
+    'for your approval", never "saved" or "done". Tell the owner to approve or reject it in '
+    "the approvals list; it has NOT been done yet.",
+    "suggested": "Recorded as a suggestion only; the policy does not let it run. It has NOT been "
+    "done.",
+    "executed": "Done.",
+    "dry_run": "Dry-run mode is on: nothing was sent. It has NOT been done.",
+    "failed": "The request failed (see result.error). It has NOT been done.",
+    "rejected": "Rejected (see result.detail). It has NOT been done.",
+    "queued": "Approved, but held back by the hourly limit; it runs by itself when the limit "
+    "frees up. It has NOT been done yet.",
+    "deferred": "Held back by the hourly limit (see result.detail). It has NOT been done.",
+}
 
-    def wrap(tool: Tool) -> AgentTool:
-        async def handler(args: dict[str, Any]) -> Any:
-            return await tool.handler(ctx, tool.args_model.model_validate(args))
 
-        definition = tool.definition()["function"]
-        kind_for = tool.kind_for
-        writes = tool.kind == "write"
-        return AgentTool(
-            name=tool.name,
-            description=definition["description"],
-            parameters=definition["parameters"],
-            handler=handler,
-            requires_approval=writes and kind_for is None,
-            approval_for=(lambda args: kind_for(args) == "write")
-            if writes and kind_for is not None
-            else None,
+async def request_mcp_write(
+    app: AppContext, server: str, tool: str, args: dict[str, Any], source: str, run_key: str
+) -> dict[str, Any]:
+    """File one MCP write call as an `mcp_call` action (the server's policy decides) and
+    return what the model is told."""
+    from ..actions import ActionError
+    from ..mcp_client.actions import ACTION_NAME
+
+    try:
+        record = await app.actions.request(
+            ACTION_NAME,
+            {"server": server, "tool": tool, "arguments": args},
+            source,
+            reason="requested by the model",
+            run_key=run_key,
+            label="Chat" if source.startswith("chat") else "Job",
         )
+    except ActionError as exc:
+        raise ToolError(str(exc)) from exc
+    return {
+        "action_id": record["id"],
+        "approval_id": record.get("batch_id"),
+        "status": record["status"],
+        "policy": record["policy"],
+        "target": record["target"],
+        "result": record["result"],
+        "note": MCP_NOTES[record["status"]].format(batch=record.get("batch_id")),
+    }
 
-    return [wrap(t) for t in tools]
+
+def mcp_approval_tool(app: AppContext, source: str, run_key: str) -> Callable[[str], AgentTool]:
+    """`AgentConfig.approval_tool` of the chat: a deferred MCP write call (`<server>_<tool>`)
+    is filed by a tool whose handler requests the `mcp_call` action."""
+    from ..mcp_client import split_name
+
+    def tool_for(name: str) -> AgentTool:
+        server, tool = split_name(name)
+
+        async def handler(args: dict[str, Any]) -> Any:
+            return await request_mcp_write(app, server, tool, args, source, run_key)
+
+        return AgentTool(name=name, description="", parameters={}, handler=handler)
+
+    return tool_for
 
 
 async def file_for_approval(tool: AgentTool, args: dict[str, Any]) -> str | PendingApproval:
