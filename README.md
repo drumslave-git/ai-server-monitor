@@ -463,6 +463,11 @@ log and the model call logs are kept; the rest of the old data is deleted by the
 - The summary lists every enabled topic job with its status and one line (Dashboard and
   Telegram).
 
+### 0.7.4
+
+- Jobs that start together no longer fail with a database transaction error; the MCP manager
+  runs on Pydantic AI; Settings → MCP servers shows the tools of each server in a table.
+
 ### 0.7.5
 
 - Commands the model shows without a valid mark get one: after the answer is final, one more
@@ -475,7 +480,7 @@ log and the model call logs are kept; the rest of the old data is deleted by the
 - Settings → Main model: the connection test works again (it failed with HTTP 422); error
   messages of the API now name the field and the problem.
 
-### Next release (after 0.7.5)
+### 0.7.6
 
 - The chat and Explain prompts no longer ask the model to mark commands (it wrote the marks
   as headings outside the code blocks instead); the extra `chat_marks` call marks every command
