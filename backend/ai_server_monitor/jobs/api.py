@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
+from pydantic import BaseModel, Field
 
 from ..context import AppContext
+from ..mcp_client.turn import classify
 from .schemas import Job, JobCreate, JobList, JobRun, JobRunList, JobUpdate, RunStarted, job_out
-from .store import JobError
+from .store import JobError, UnknownDomain
 
 router = APIRouter()
 
@@ -46,10 +48,38 @@ async def create_job(request: Request, body: JobCreate) -> Job:
     ctx = _ctx(request)
     try:
         await ctx.jobs.store.create(body.model_dump(), created_by="user")
+    except UnknownDomain as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     except JobError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     await ctx.jobs_changed()
     return await _job(ctx, body.slug)
+
+
+class ClassifyRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=8000)
+
+
+class ClassifyResult(BaseModel):
+    domains: list[str]
+    """The domains the job's prompt needs (empty: none, or there are no domains with tools)."""
+
+
+@router.post("/api/jobs/classify-domains")
+async def classify_domains(request: Request, body: ClassifyRequest) -> ClassifyResult:
+    """The job form's "Classify" button: the worker model picks the MCP domains a job's
+    prompt needs (nothing is saved)."""
+    ctx = _ctx(request)
+    domains = [d for d in await ctx.domains.domains() if d["tools"]]
+    if not domains:
+        return ClassifyResult(domains=[])
+    try:
+        picked = await classify(ctx.models.model("worker"), domains, body.prompt)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"classification failed: {type(exc).__name__}: {exc}"
+        ) from None
+    return ClassifyResult(domains=picked)
 
 
 @router.get("/api/jobs/runs/{run_id}")
@@ -72,6 +102,8 @@ async def update_job(request: Request, slug: str, body: JobUpdate) -> Job:
     ctx = _ctx(request)
     try:
         await ctx.jobs.store.update(slug, body.model_dump(exclude_unset=True))
+    except UnknownDomain as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     except JobError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
     await ctx.jobs_changed()

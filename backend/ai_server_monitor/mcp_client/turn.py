@@ -126,12 +126,14 @@ async def prepare(
     store: DomainStore,
     *,
     sort_model: Model | None,
-    classify_model: Model,
+    classify_model: Model | None,
     request: str | None,
     keep: list[str],
+    only: list[str] | None = None,
 ) -> McpTurn:
-    """Connect, sort, classify `request` (None: a resumed run, nothing new to classify) and
-    build the domain capabilities; `keep` = domains given directly besides the picked ones."""
+    """Connect, sort, classify `request` (None: a resumed run or a job, nothing to classify)
+    and build the domain capabilities; `keep` = domains given directly besides the picked ones;
+    `only` (jobs) = no other domain is offered, not even deferred."""
     turn = McpTurn()
     if not mcp.servers:
         return turn
@@ -151,10 +153,14 @@ async def prepare(
         placed.setdefault(t["domain_id"], {}).setdefault(t["server"], set()).add(
             full_name(t["server"], t["tool"])
         )
-    domains = [d for d in await store.domains() if d["id"] in placed]
+    domains = [
+        d
+        for d in await store.domains()
+        if d["id"] in placed and (only is None or d["name"] in only)
+    ]
     if not domains:
         return turn
-    if request is not None:
+    if request is not None and classify_model is not None:
         try:
             turn.picked = await classify(classify_model, domains, request)
         except Exception as exc:  # a miss of everything: the model loads what it needs

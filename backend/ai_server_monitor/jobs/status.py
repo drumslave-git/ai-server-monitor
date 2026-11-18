@@ -34,6 +34,8 @@ _FAILURES = (
 def failure_reason(error: str | None) -> str:
     """A failed run's error in plain words; the raw text stays in the run's `error`."""
     text = (error or "").strip()
+    if text.startswith("missing tools: "):  # the model's own sentence says what was missing
+        return text
     for start, words in _FAILURES:
         if text.startswith(start):
             return words

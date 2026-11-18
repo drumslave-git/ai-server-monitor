@@ -117,6 +117,17 @@ class DomainStore:
         wanted = None if servers is None else set(servers)
         return [dict(r) for r in rows if wanted is None or r["server"] in wanted]
 
+    async def servers_of(self, domains: list[str]) -> set[str]:
+        """The servers that have tools in the named domains (as last listed)."""
+        if not domains:
+            return set()
+        rows = await self.db.fetchall(
+            "SELECT DISTINCT t.server FROM mcp_tools t JOIN mcp_domains d ON d.id = t.domain_id "
+            f"WHERE d.name IN ({','.join('?' * len(domains))})",
+            domains,
+        )
+        return {r["server"] for r in rows}
+
     async def listings(self) -> dict[str, dict[str, Any]]:
         rows = await self.db.fetchall("SELECT server, ts, error FROM mcp_listings")
         return {r["server"]: {"ts": r["ts"], "error": r["error"]} for r in rows}

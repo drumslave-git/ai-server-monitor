@@ -325,6 +325,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs/classify-domains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Classify Domains
+         * @description The job form's "Classify" button: the worker model picks the MCP domains a job's
+         *     prompt needs (nothing is saved).
+         */
+        post: operations["classify_domains_api_jobs_classify_domains_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -1056,6 +1077,16 @@ export interface components {
              */
             worker_max_steps: number;
         };
+        /** ClassifyRequest */
+        ClassifyRequest: {
+            /** Prompt */
+            prompt: string;
+        };
+        /** ClassifyResult */
+        ClassifyResult: {
+            /** Domains */
+            domains: string[];
+        };
         /**
          * ConnectionTestResult
          * @description Outcome of a Settings → Test button.
@@ -1168,6 +1199,11 @@ export interface components {
             created_by: "builtin" | "user" | "llm";
             /** Cron */
             cron?: string | null;
+            /**
+             * Domains
+             * @default []
+             */
+            domains: string[];
             /** Edited */
             edited: boolean;
             /** Enabled */
@@ -1206,6 +1242,8 @@ export interface components {
         JobCreate: {
             /** Cron */
             cron?: string | null;
+            /** Domains */
+            domains?: string[] | null;
             /**
              * Enabled
              * @default true
@@ -1254,6 +1292,7 @@ export interface components {
             id: number;
             /** Job Slug */
             job_slug: string;
+            mcp?: components["schemas"]["JobRunMcp"] | null;
             /** Model */
             model?: string | null;
             /** Prompt Tokens */
@@ -1287,6 +1326,23 @@ export interface components {
             /** Items */
             items: components["schemas"]["JobRun"][];
         };
+        /** JobRunMcp */
+        JobRunMcp: {
+            /** Domains */
+            domains: string[];
+            /**
+             * Unreachable
+             * @default {}
+             */
+            unreachable: {
+                [key: string]: string;
+            };
+            /**
+             * Unsorted
+             * @default []
+             */
+            unsorted: string[];
+        };
         /** JobStatus */
         JobStatus: {
             /** Enabled */
@@ -1316,6 +1372,8 @@ export interface components {
         JobUpdate: {
             /** Cron */
             cron?: string | null;
+            /** Domains */
+            domains?: string[] | null;
             /** Enabled */
             enabled?: boolean | null;
             /** Interval S */
@@ -3074,6 +3132,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    classify_domains_api_jobs_classify_domains_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClassifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassifyResult"];
                 };
             };
             /** @description Validation Error */

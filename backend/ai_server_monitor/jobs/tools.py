@@ -31,6 +31,11 @@ class _SaveArgs(BaseModel):
     cron: str | None = Field(default=None, description="Or a crontab line, e.g. '0 6 * * *'.")
     model: str | None = Field(default=None, description="worker (default) or main.")
     enabled: bool | None = None
+    domains: list[str] | None = Field(
+        default=None,
+        description="MCP domains whose tools the job's runs get (names from the deferred "
+        "capabilities list without 'domain-'). Without domains a job has only the shell.",
+    )
 
 
 def _schema(model: type[BaseModel]) -> dict[str, Any]:
@@ -56,6 +61,7 @@ def _job_line(job: dict[str, Any], last: dict[str, Any] | None) -> dict[str, Any
         "enabled": job["enabled"],
         "builtin": job["builtin"],
         "model": job["model"],
+        "domains": job.get("domains", []),
         "last_status": last["status"] if last else None,
         "last_finished": last["finished"] if last else None,
         "last_summary": (last.get("summary") or last.get("error")) if last else None,

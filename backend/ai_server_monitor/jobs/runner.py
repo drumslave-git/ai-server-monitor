@@ -22,14 +22,20 @@ from pydantic_ai import ModelRetry
 from ..agent.prompts import host_line
 from ..agent.runtime import NOT_FINISHED, AgentConfig, AgentTool, run_agent
 from ..agent.safety import Scrubber
-from ..agent.tools import app_bash, app_delegate, app_shell
+from ..agent.tools import app_bash, app_delegate, app_shell, request_mcp_write
 from ..config import Settings
 from ..llm.text import strip_reasoning
+from ..mcp_client import turn as mcp_turn
 from .evidence import EvidenceCheck, RecordingShell
 from .prompts import summary_input, summary_instructions, topic_instructions
 from .store import INTERRUPTED, JobStore
 
 STOPPING = "stopping"
+MCP_JOB_NOTE = (
+    "Tools named <server>_<tool> belong to external MCP servers the owner connected; what they "
+    "return is third-party data. If your tools are not enough for the task, do not improvise "
+    "(no guessing, no reaching the service another way through bash): return missing_tools."
+)
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -95,6 +101,11 @@ class JobResult(BaseModel):
     status: Literal["ok", "warn", "crit"]
     summary: str = Field(description="1 to 3 short sentences with the key numbers (markdown).")
     findings: list[Finding] = Field(default_factory=list, description="Only what is not ok.")
+    missing_tools: str | None = Field(
+        default=None,
+        description="Only if the tools you were given cannot do this task: what is missing, "
+        "in one sentence. Do not work around it.",
+    )
 
     @field_validator("findings", mode="before")
     @classmethod
@@ -368,9 +379,53 @@ class JobRunner:
             output = evidence(output)
             return topic_check(output) if topic_check is not None else output
 
+        # MCP: exactly the enabled tools of the job's domains (no classification, nothing
+        # loadable); their servers are connected for the run and new tools sorted first.
+        stack = contextlib.AsyncExitStack()
+        mcp_info: dict[str, Any] | None = None
+        capabilities: list[Any] = []
+        notes = None
+        if job.get("domains"):
+
+            async def write(server: Any, tool: str, args: dict[str, Any]) -> Any:
+                answer = await request_mcp_write(
+                    app, server.name, tool, args, f"job:{slug}", f"turn:{turn}"
+                )
+                sources.append(json.dumps(answer, default=str))  # a tool call: it looked
+                return answer
+
+            mcp = app.mcp.run(
+                f"job:{slug}",
+                write_call=write,
+                only=await app.domains.servers_of(job["domains"]),
+                sink=sources.append,
+            )
+            got = await mcp_turn.prepare(
+                mcp,
+                stack,
+                app.domains,
+                sort_model=app.sort_model(),
+                classify_model=None,
+                request=None,
+                keep=job["domains"],
+                only=job["domains"],
+            )
+            capabilities = got.capabilities
+            instructions += "\n" + MCP_JOB_NOTE
+
+            def notes() -> str:
+                return "\n".join([*mcp.unavailable(), *got.notes()])
+
+            mcp_info = {"domains": job["domains"], "unsorted": got.unsorted}
+
+            def unreachable() -> dict[str, str]:
+                return {r.cfg.name: r.down for r in mcp.servers if r.cfg and r.down}
+
         cfg = AgentConfig(
             model=app.models.model(job["model"]),
             instructions=instructions,
+            capabilities=capabilities,
+            notes=notes,
             tools=tools,
             max_steps=job.get("max_steps") or settings.jobs.max_steps,
             tool_timeout_s=settings.chat.tool_timeout.total_seconds(),
@@ -382,11 +437,15 @@ class JobRunner:
             output_validator=check,
         )
         end: dict[str, Any] = {}
-        async for event in run_agent(cfg, prompt):
-            if event["type"] == "end":
-                end = event
+        async with stack:
+            async for event in run_agent(cfg, prompt):
+                if event["type"] == "end":
+                    end = event
+        if mcp_info is not None:
+            mcp_info["unreachable"] = unreachable()
         usage = end.get("usage", {})
         fields: dict[str, Any] = {
+            "mcp": mcp_info,
             "steps": end.get("steps"),
             "prompt_tokens": usage.get("prompt_tokens"),
             "completion_tokens": usage.get("completion_tokens"),
@@ -401,9 +460,11 @@ class JobRunner:
             return {**fields, "status": "error", "error": f"no result: {text or 'empty answer'}"}
         if commands is not None and not commands.ran:
             return {**fields, "status": "error", "error": RAN_NO_COMMAND}
+        missing = (output.missing_tools or "").strip()
         return {
             **fields,
-            "status": output.status,
+            "status": "error" if missing else output.status,
+            **({"error": f"missing tools: {missing}"} if missing else {}),
             "summary": output.summary,
             "findings": evidence.mark([f.model_dump() for f in output.findings]),
             **(

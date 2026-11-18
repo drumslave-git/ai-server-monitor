@@ -1,8 +1,9 @@
-import { ArrowLeft, Play } from "lucide-react";
+import { ArrowLeft, Play, X } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { useAutomation } from "../automation";
 import { ExplainButton } from "../components/Explain";
 import { api } from "../api";
+import type { components } from "../api-types";
 import { ago, clock, until } from "../fmt";
 import {
   originText,
@@ -193,6 +194,7 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
   const [enabled, setEnabled] = useState(job?.enabled ?? true);
   const [timeout, setTimeoutMin] = useState(job?.timeout_s ? String(job.timeout_s / 60) : "");
   const [steps, setSteps] = useState(job?.max_steps ? String(job.max_steps) : "");
+  const [domains, setDomains] = useState<string[]>(job?.domains ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -214,6 +216,7 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
       enabled,
       timeout_s: timeout ? Math.round(Number(timeout) * 60) : null,
       max_steps: steps ? Number(steps) : null,
+      domains,
     };
     if (mode === "interval") body.interval_s = Math.round(Number(n) * (UNITS.find((u) => u.key === unit)?.s ?? 60));
     else body.cron = cron.trim();
@@ -367,6 +370,7 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
             </select>
           </div>
         </div>
+        <DomainsField prompt={prompt} value={domains} onChange={setDomains} />
         <div className="field">
           <div className="field-label"><label htmlFor="job-enabled">Enabled</label></div>
           <div className="field-control">
@@ -409,6 +413,80 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
           <a className="btn btn-quiet" href={back}>Cancel</a>
         </div>
       </form>
+    </div>
+  );
+}
+
+type McpToolsPage = components["schemas"]["McpToolsPage"];
+
+/** The job's MCP domains: its runs get exactly their enabled tools. "Classify" asks the worker
+ *  model which domains the prompt needs and fills the field; nothing is saved until Save. */
+function DomainsField({ prompt, value, onChange }: { prompt: string; value: string[]; onChange: (v: string[]) => void }) {
+  const [page, setPage] = useState<McpToolsPage | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    api.get<McpToolsPage>("/api/mcp/tools").then(setPage, () => setPage(null));
+  }, []);
+  const known = (page?.domains ?? []).filter((d) => d.tools > 0 || value.includes(d.name));
+  const free = known.filter((d) => !value.includes(d.name));
+  const tools = (page?.tools ?? []).filter((t) => t.enabled && t.domain && value.includes(t.domain));
+  const writes = tools.filter((t) => t.kind === "write").length;
+  const classify = () => {
+    setBusy(true);
+    setNote(null);
+    api.post<{ domains: string[] }>("/api/jobs/classify-domains", { prompt }).then(
+      (r) => {
+        setBusy(false);
+        onChange(r.domains);
+        setNote(r.domains.length ? null : "The model picked no domain for this prompt.");
+      },
+      (err) => {
+        setBusy(false);
+        setNote(errorText(err));
+      },
+    );
+  };
+  return (
+    <div className="field">
+      <div className="field-label">
+        <label htmlFor="job-domains">Domains</label>
+        <p className="help">MCP tools the runs get: exactly the enabled tools of these domains. Empty: the shell only.</p>
+      </div>
+      <div className="field-control">
+        <div className="domain-picker">
+          {value.map((name) => (
+            <span key={name} className="domain-chip">
+              {name}
+              <button type="button" className="domain-chip-x" aria-label={`Remove ${name}`} onClick={() => onChange(value.filter((v) => v !== name))}>
+                <X size={12} strokeWidth={1.5} aria-hidden />
+              </button>
+            </span>
+          ))}
+          <select
+            id="job-domains"
+            value=""
+            disabled={free.length === 0}
+            onChange={(e) => e.target.value && onChange([...value, e.target.value].sort())}
+          >
+            <option value="">{free.length ? "Add domain…" : known.length ? "All added" : "No domains yet"}</option>
+            {free.map((d) => (
+              <option key={d.id} value={d.name}>
+                {d.name} ({d.tools} tool{d.tools === 1 ? "" : "s"})
+              </option>
+            ))}
+          </select>
+          <button className="btn" type="button" onClick={classify} disabled={busy || prompt.trim().length < 10 || known.length === 0}>
+            {busy ? "Classifying…" : "Classify"}
+          </button>
+        </div>
+        <p className="field-note">
+          {value.length === 0
+            ? "This job uses only the shell."
+            : `This job can use ${tools.length} tool${tools.length === 1 ? "" : "s"}: ${tools.length - writes} read, ${writes} write.`}
+        </p>
+        {note && <p className="error">{note}</p>}
+      </div>
     </div>
   );
 }
@@ -534,6 +612,20 @@ function RunView({ run, now }: { run: JobRun; now: number }) {
             </span>
           )}
         </dd>
+        {run.mcp && (
+          <>
+            <dt>MCP</dt>
+            <dd>
+              {run.mcp.domains.length ? run.mcp.domains.join(", ") : "—"}
+              {Object.entries(run.mcp.unreachable ?? {}).map(([server, why]) => (
+                <span key={server} className="muted"> · server {server} unreachable: {why}</span>
+              ))}
+              {(run.mcp.unsorted ?? []).length > 0 && (
+                <span className="muted"> · not sorted, not given: {(run.mcp.unsorted ?? []).join(", ")}</span>
+              )}
+            </dd>
+          </>
+        )}
       </dl>
       {run.error && <pre className="run-error">{run.error}</pre>}
       {run.status === "running" && <p className="muted run-wait">The model is working on it. This view updates when it ends.</p>}

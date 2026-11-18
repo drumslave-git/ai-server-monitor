@@ -19,16 +19,27 @@ _JOB_COLUMNS = (
     "slug, name, kind, prompt, interval_s, cron, model, enabled, builtin, edited, timeout_s, "
     "max_steps, created_by, created, updated"
 )
+_DOMAINS = (
+    "(SELECT json_group_array(name) FROM (SELECT d.name FROM job_domains jd "
+    "JOIN mcp_domains d ON d.id = jd.domain_id WHERE jd.job_id = jobs.id ORDER BY d.name)) "
+    "AS domains"
+)
+"""The names of a job's MCP domains (a JSON array)."""
 
 
 class JobError(Exception):
     """A request about jobs that cannot be done (unknown job, a builtin cannot be deleted...)."""
 
 
+class UnknownDomain(JobError):
+    """A domain name that does not exist (the message names the existing ones)."""
+
+
 def job_dict(row: Any) -> dict[str, Any]:
     out = dict(row)
     for key in ("enabled", "builtin", "edited"):
         out[key] = bool(out[key])
+    out["domains"] = json.loads(out.get("domains") or "[]")
     return out
 
 
@@ -40,6 +51,7 @@ def run_dict(row: Any) -> dict[str, Any]:
             out[key] = json.loads(raw) if raw else []
         except ValueError:
             out[key] = []
+    out["mcp"] = json.loads(out["mcp"]) if out.get("mcp") else None
     started, finished = out.get("started"), out.get("finished")
     out["duration_s"] = round(finished - started, 1) if finished and started else None
     return out
@@ -92,12 +104,14 @@ class JobStore:
 
     async def list(self) -> list[dict[str, Any]]:
         rows = await self.db.fetchall(
-            f"SELECT {_JOB_COLUMNS} FROM jobs ORDER BY builtin DESC, kind DESC, slug"
+            f"SELECT {_JOB_COLUMNS}, {_DOMAINS} FROM jobs ORDER BY builtin DESC, kind DESC, slug"
         )
         return [job_dict(r) for r in rows]
 
     async def get(self, slug: str) -> dict[str, Any] | None:
-        row = await self.db.fetchone(f"SELECT {_JOB_COLUMNS} FROM jobs WHERE slug = ?", (slug,))
+        row = await self.db.fetchone(
+            f"SELECT {_JOB_COLUMNS}, {_DOMAINS} FROM jobs WHERE slug = ?", (slug,)
+        )
         return job_dict(row) if row else None
 
     async def require(self, slug: str) -> dict[str, Any]:
@@ -112,6 +126,7 @@ class JobStore:
             raise JobError("slug: 2-40 characters, lowercase letters, digits, - and _")
         if await self.get(slug) is not None:
             raise JobError(f"a job {slug!r} exists already")
+        domain_ids = await self.domain_ids(data.get("domains") or [])
         now = time.time()
         await self.db.execute(
             f"INSERT INTO jobs ({_JOB_COLUMNS}) "
@@ -131,11 +146,19 @@ class JobStore:
                 now,
             ),
         )
+        if domain_ids:
+            await self._set_domains(slug, domain_ids)
         return await self.require(slug)
 
     async def update(self, slug: str, changes: dict[str, Any]) -> dict[str, Any]:
         """Apply the given fields (a schedule change sets interval_s/cron together)."""
         job = await self.require(slug)
+        domains = changes.get("domains")
+        if domains is not None and sorted(set(domains)) != job["domains"]:
+            await self._set_domains(slug, await self.domain_ids(domains))
+            if job["builtin"]:
+                await self.db.execute("UPDATE jobs SET edited = 1 WHERE slug = ?", (slug,))
+            job = await self.require(slug)
         changes = {k: v for k, v in changes.items() if k in (*EDITABLE, "enabled")}
         if "interval_s" in changes or "cron" in changes:
             changes.setdefault("interval_s", None)
@@ -165,7 +188,33 @@ class JobStore:
         if not job["builtin"] or definition is None:
             raise JobError(f"{slug!r} is not a builtin job")
         await self._apply_definition(definition, time.time(), only_if_changed=False)
+        await self._set_domains(slug, [])  # builtins ship without domains
         return await self.require(slug)
+
+    # ------------------------------------------------------------------ MCP domains
+
+    async def domain_ids(self, names: list[str]) -> list[int]:
+        """The ids of the named domains; an unknown name raises `UnknownDomain`."""
+        rows = await self.db.fetchall("SELECT id, name FROM mcp_domains ORDER BY name")
+        known = {r["name"]: r["id"] for r in rows}
+        unknown = sorted({n for n in names if n not in known})
+        if unknown:
+            existing = ", ".join(known) or "none yet"
+            raise UnknownDomain(
+                f"unknown domain {', '.join(unknown)} (existing domains: {existing})"
+            )
+        return sorted({known[n] for n in names})
+
+    async def _set_domains(self, slug: str, domain_ids: list[int]) -> None:
+        async with self.db.transaction() as conn:
+            async with conn.execute("SELECT id FROM jobs WHERE slug = ?", (slug,)) as cur:
+                row = await cur.fetchone()
+            assert row is not None
+            await conn.execute("DELETE FROM job_domains WHERE job_id = ?", (row["id"],))
+            await conn.executemany(
+                "INSERT INTO job_domains (job_id, domain_id) VALUES (?, ?)",
+                [(row["id"], d) for d in domain_ids],
+            )
 
     # ------------------------------------------------------------------ runs
 
@@ -179,8 +228,8 @@ class JobStore:
             return int(cur.lastrowid or 0)
 
     async def finish_run(self, run_id: int, **fields: Any) -> None:
-        for key in ("findings", "topics"):
-            if key in fields:
+        for key in ("findings", "topics", "mcp"):
+            if key in fields and fields[key] is not None:
                 fields[key] = json.dumps(fields[key], ensure_ascii=False)
         fields["finished"] = time.time()
         sets = ", ".join(f"{k} = ?" for k in fields)

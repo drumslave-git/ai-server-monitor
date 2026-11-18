@@ -40,6 +40,9 @@ class _JobFields(BaseModel):
     """Longest a run may take; empty = Settings → Jobs → timeout."""
     max_steps: int | None = Field(default=None, ge=1, le=60)
     """Most tool-use rounds of a run; empty = Settings → Jobs → max steps."""
+    domains: list[str] | None = None
+    """MCP domains whose enabled tools the job's runs get (exactly those; empty = the shell
+    only). Names of existing domains (MCP tools page)."""
 
     @field_validator("cron")
     @classmethod
@@ -91,6 +94,15 @@ class TopicLine(BaseModel):
     """The summary's one clause about it, with its key number."""
 
 
+class JobRunMcp(BaseModel):
+    domains: list[str]
+    """The job's domains when it ran."""
+    unreachable: dict[str, str] = {}
+    """MCP servers that could not be reached: name → why."""
+    unsorted: list[str] = []
+    """Enabled tools of those servers without a domain (not given to the run)."""
+
+
 class JobRun(BaseModel):
     id: int
     job_slug: str
@@ -111,6 +123,8 @@ class JobRun(BaseModel):
     steps: int | None = None
     trace_turn: str | None = None
     """The run's LLM and tool calls on the Logs page (turn id)."""
+    mcp: JobRunMcp | None = None
+    """What the run had of MCP (None: the job has no domains)."""
 
 
 class Job(BaseModel):
@@ -127,6 +141,8 @@ class Job(BaseModel):
     """A builtin the user changed (it no longer follows prompt updates of new releases)."""
     timeout_s: int | None = None
     max_steps: int | None = None
+    domains: list[str] = []
+    """MCP domains: its runs get exactly their enabled tools."""
     created_by: Literal["builtin", "user", "llm"]
     created: float
     updated: float

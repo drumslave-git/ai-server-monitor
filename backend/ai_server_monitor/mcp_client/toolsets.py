@@ -19,6 +19,7 @@ and Pydantic AI connects the servers when the run starts and closes them when it
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -203,12 +204,22 @@ class McpServers:
     def _enabled(self) -> list[McpServerSettings]:
         return [s for s in self.settings.servers if s.enabled and s.tool_filter]
 
-    def run(self, source: str, *, write_call: WriteCall | None = None) -> McpRun:
+    def run(
+        self,
+        source: str,
+        *,
+        write_call: WriteCall | None = None,
+        only: set[str] | None = None,
+        sink: Callable[[str], None] | None = None,
+    ) -> McpRun:
         """Fresh toolsets for one run. Without `write_call` (the chat) write tools are
-        approval-required; with it (jobs) a write tool call goes to `write_call` instead."""
+        approval-required; with it (jobs) a write tool call goes to `write_call` instead.
+        `only`: just these servers. `sink` gets the text of every result (a job's evidence)."""
         servers = []
         for cfg in self._enabled():
-            reach = Reachable(server_toolset(cfg, self._process(cfg, source)), cfg=cfg)
+            if only is not None and cfg.name not in only:
+                continue
+            reach = Reachable(server_toolset(cfg, self._process(cfg, source, sink)), cfg=cfg)
             chosen = set(cfg.tool_filter)
             view: AbstractToolset[Any] = reach.filtered(
                 lambda ctx, td, chosen=chosen: td.name in chosen
@@ -223,7 +234,9 @@ class McpServers:
             servers.append(reach)
         return McpRun(servers)
 
-    def _process(self, cfg: McpServerSettings, source: str) -> Any:
+    def _process(
+        self, cfg: McpServerSettings, source: str, sink: Callable[[str], None] | None = None
+    ) -> Any:
         secrets = cfg.secret_values()
 
         async def process(
@@ -231,7 +244,10 @@ class McpServers:
         ) -> Any:
             started, error = time.monotonic(), None
             try:
-                return scrub(await call_tool(name, args), secrets)
+                result = scrub(await call_tool(name, args), secrets)
+                if sink is not None:
+                    sink(result if isinstance(result, str) else json.dumps(result, default=str))
+                return result
             except Exception as exc:
                 error = failure_text(exc, cfg)
                 raise
