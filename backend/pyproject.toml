@@ -21,6 +21,7 @@ dependencies = [
     "tzdata>=2024.1",
     "apscheduler>=3.10,<4",
     "python-telegram-bot>=22.8,<23",
+    "markdown-it-py>=3,<5",
 ]
 
 [project.optional-dependencies]

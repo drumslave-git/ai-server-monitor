@@ -24,6 +24,7 @@ from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.exceptions import AgentRunError, UnexpectedModelBehavior
 from pydantic_ai.messages import TextPart
 from pydantic_ai.models.openai import OpenAIChatModelSettings
+from pydantic_ai.run import AgentRunResultEvent
 
 from ..agent.models import ModelHub
 from ..agent.output import scrub_output
@@ -52,6 +53,15 @@ from ..tracing import trace_scope
 from ..tracing.parse import empty_answer_message
 from .audit import record_call
 from .explain import Explain
+from .marks import (
+    MARKS_SYSTEM,
+    RUN_MARK,  # noqa: F401  (re-exported: the mark the Run endpoint reads)
+    Marks,
+    add_marks,
+    marks_prompt,
+    read_only_marked,
+    unmarked_commands,
+)
 from .store import ChatStore
 from .title import TITLE_MAX_TOKENS, TITLE_SYSTEM, TITLE_TIMEOUT_S, clean_title, title_prompt
 from .tools import ToolContext
@@ -302,6 +312,42 @@ class ChatEngine:
             log.info("chat: no LLM title (%s: %s)", type(exc).__name__, exc)
             return None
 
+    # ------------------------------------------------------------------ command marks
+
+    async def _mark_commands(self, answer: str, session_id: str, trace_turn: str) -> str:
+        """The answer with a mark on every command of its shell blocks (see `chat.marks`).
+        Commands without a valid one are labelled by one structured call of the main model
+        (Logs: purpose `chat_marks`); if it fails they stay unmarked, and the log says so."""
+        commands = unmarked_commands(answer)
+        if not commands:
+            return answer
+        try:
+            agent: Agent[None, Marks] = Agent(
+                self.app.models.model("main"), instructions=MARKS_SYSTEM, output_type=Marks
+            )
+            result = None
+            with trace_scope("chat_marks", link_kind="chat", link_id=session_id, turn=trace_turn):
+                # streamed like the chat's own requests
+                async with agent.run_stream_events(marks_prompt(commands)) as stream:
+                    async for event in stream:
+                        if isinstance(event, AgentRunResultEvent):
+                            result = event.result
+            if result is None:
+                raise ValueError("no result")
+            kinds = result.output.kinds
+            if len(kinds) != len(commands):
+                raise ValueError(f"{len(kinds)} labels for {len(commands)} commands")
+        except Exception as exc:  # the answer is kept either way: unmarked commands run as root
+            log.warning(
+                "chat: %d command(s) of turn %s left unmarked, labelling failed (%s: %s)",
+                len(commands),
+                trace_turn,
+                type(exc).__name__,
+                exc,
+            )
+            return answer
+        return add_marks(answer, commands, kinds)
+
     # ------------------------------------------------------------------ one question
 
     async def _answer(
@@ -453,6 +499,7 @@ class ChatEngine:
             final = "\n".join(p.message for p in output.pending.values())
         else:
             final = strip_reasoning(str(output or "")) or "(no answer)"
+            final = await self._mark_commands(final, session_id, trace_turn)
         # Whatever of the answer was not streamed already (the step-limit fallback text, an
         # empty-answer placeholder, the waiting note) goes out now.
         rest = final[len(streamed) :] if final.startswith(streamed) else ""
@@ -589,17 +636,6 @@ class ChatEngine:
                 "text": failed or final,
             },
         )
-
-
-RUN_MARK = re.compile(r"^\s*#\s*\[(read-only|write)\]", re.IGNORECASE | re.MULTILINE)
-"""How an answer marks a command it shows (chat prompt): `# [read-only] ...` or
-`# [write] ...` on a comment line above it. The web UI reads the same mark for its label."""
-
-
-def read_only_marked(command: str) -> bool:
-    """Only a command the answer explicitly marked read-only (and not also write) goes to the
-    read-only shell; a write or unmarked one runs through the change shell."""
-    return {m.lower() for m in RUN_MARK.findall(command)} == {"read-only"}
 
 
 LOOKS = ("bash", "delegate")
