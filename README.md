@@ -509,6 +509,15 @@ log and the model call logs are kept; the rest of the old data is deleted by the
 - A chat answer that is only a tool call written as text is sent back once; written like that
   again it is stored with a note that the model cannot use tools reliably.
 
+### 0.8.1
+
+- MCP tools page: the opened menus are readable in dark mode (every dropdown list now uses the
+  app's own colours).
+- *Move to… → New domain…* and a domain's pencil open the app's own dialog (name and
+  description together; the name rule and its 24-character limit are shown while typing).
+- **Select all** / **Deselect all** in each domain card and next to the filters; with a search
+  or filter active both switch only the tools shown, and the page-level pair says how many.
+
 ## Troubleshooting
 
 - **A job or the summary shows `error`** — open the run on the Jobs page: its error says why
