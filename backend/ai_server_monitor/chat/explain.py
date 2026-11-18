@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, tzinfo
 from typing import TYPE_CHECKING, Any
 
-from ..agent.prompts import language_name
+from ..agent.prompts import language_name, zone_name
 from ..agent.safety import wrap_untrusted
 from ..hostenv import resolve_timezone
 from ..llm.modelinfo import read_model_info
@@ -100,10 +100,6 @@ def host_zone(app: AppContext) -> tzinfo:
         return resolve_timezone(app.settings.general.timezone, app.host_env)
     except Exception:  # an unreadable zone: UTC, and the data says so
         return UTC
-
-
-def zone_name(zone: tzinfo) -> str:
-    return str(getattr(zone, "key", None) or zone)
 
 
 async def build(app: AppContext, run_id: int, finding: int | None = None) -> Explain:

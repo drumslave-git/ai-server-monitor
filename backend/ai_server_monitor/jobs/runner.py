@@ -23,6 +23,7 @@ from ..agent.prompts import host_line
 from ..agent.runtime import NOT_FINISHED, AgentConfig, AgentTool, run_agent
 from ..agent.safety import Scrubber
 from ..agent.tools import app_bash, app_delegate, app_shell, request_mcp_write
+from ..chat.explain import host_zone
 from ..config import Settings
 from ..llm.text import strip_reasoning
 from ..mcp_client import turn as mcp_turn
@@ -435,6 +436,7 @@ class JobRunner:
             trace={"purpose": "job", "link_kind": "job", "link_id": slug, "turn": turn},
             output_type=SummaryResult if topic_check is not None else JobResult,
             output_validator=check,
+            zone=host_zone(app),
         )
         end: dict[str, Any] = {}
         async with stack:
@@ -483,4 +485,4 @@ class JobRunner:
             j["slug"]: str(latest[j["slug"]]["status"]) if j["slug"] in latest else "none"
             for j in topics
         }
-        return summary_input(topics, latest, latest.get(slug)), expected
+        return summary_input(topics, latest, latest.get(slug), zone=host_zone(self.app)), expected

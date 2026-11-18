@@ -312,6 +312,7 @@ def app_delegate(
     shell: HostShell | None = None,
 ) -> AgentTool:
     """`delegate`: a fresh worker-model agent with only `bash` (traced as `subagent`)."""
+    from ..chat.explain import host_zone
     from .prompts import worker_prompt
 
     settings = app.settings
@@ -327,6 +328,7 @@ def app_delegate(
             scrub=scrub,
             tracing=app.tracing,
             trace={"purpose": "subagent"},
+            zone=host_zone(app),
             trace_tool_prefix="worker:",
         )
         output, steps, stopped = "", 0, None

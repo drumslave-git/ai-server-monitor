@@ -21,6 +21,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import tzinfo
 from typing import Any
 
 from pydantic import ValidationError
@@ -70,7 +71,7 @@ from pydantic_ai.usage import RunUsage
 
 from ..tracing import trace_scope
 from ..tracing.scope import current_scope
-from .prompts import STEP_LIMIT_NOTE
+from .prompts import STEP_LIMIT_NOTE, now_line
 from .safety import Scrubber, cap_text, shrink, wrap_untrusted
 
 log = logging.getLogger(__name__)
@@ -211,6 +212,9 @@ class AgentConfig:
     notes: Callable[[], str] | None = None
     """Extra instructions decided when the run is under way (e.g. MCP servers that could not
     be reached)."""
+    zone: tzinfo | None = None
+    """The owner's time zone: the instructions get the current moment in it (`now_line`),
+    computed for every model request. None: no date line."""
     capabilities: Sequence[AbstractCapability[Any]] = ()
     """More Pydantic AI capabilities (the chat's MCP domains, some deferred: then the library
     adds `load_capability` and the catalog). Which ones the run loaded: `end` event `loaded`."""
@@ -374,6 +378,9 @@ class _Run:
     def notes(self, ctx: RunContext[Any]) -> str:
         return self.cfg.notes() if self.cfg.notes is not None else ""
 
+    def now(self, ctx: RunContext[Any]) -> str:
+        return now_line(self.cfg.zone) if self.cfg.zone is not None else ""
+
     # ------------------------------------------------------------------ the run
 
     async def pump(
@@ -385,7 +392,7 @@ class _Run:
         cfg = self.cfg
         agent: Agent[None, Any] = Agent(
             cfg.model,
-            instructions=[cfg.instructions, self.limit_note, self.notes],
+            instructions=[cfg.instructions, self.now, self.limit_note, self.notes],
             tools=[self.pydantic_tool(t) for t in cfg.tools],
             toolsets=list(cfg.toolsets),
             output_type=[cfg.output_type, DeferredToolRequests]

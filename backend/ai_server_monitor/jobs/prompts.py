@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime, tzinfo
 from typing import Any
 
-from ..agent.prompts import SHELL_FACTS, language_name
+from ..agent.prompts import SHELL_FACTS, language_name, zone_name
 
 TOPIC_SYSTEM = """\
 You run one scheduled check on the Linux server {host}. Nobody is chatting with you.
@@ -95,11 +96,12 @@ def summary_input(
     latest: dict[str, dict[str, Any]],
     previous: dict[str, Any] | None,
     now: float | None = None,
+    zone: tzinfo = UTC,
 ) -> str:
     """The user message of a summary run: the latest result of every enabled topic job and the
-    previous summary."""
+    previous summary; `zone` = the owner's time zone (the one of the instructions' date line)."""
     now = now or time.time()
-    stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(now))
+    stamp = f"{datetime.fromtimestamp(now, zone):%Y-%m-%d %H:%M} {zone_name(zone)}"
     parts = [f"Latest results of the topic checks (now {stamp}):"]
     for job in topics:
         parts.append(f"\n## {job['name']} ({job['slug']}, {schedule_text(job)})")

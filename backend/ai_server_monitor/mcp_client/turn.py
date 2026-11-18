@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass, field
+from datetime import tzinfo
 from typing import Any, Literal
 
 from pydantic_ai import Agent
@@ -21,6 +22,7 @@ from pydantic_ai.capabilities import AbstractCapability, Toolset
 from pydantic_ai.models import Model
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
 
+from ..agent.prompts import now_line
 from ..tracing import trace_scope
 from .domains import DomainStore, full_name, listed
 from .toolsets import McpRun, failure_text
@@ -31,6 +33,12 @@ CAPABILITY = "domain-{}"
 LOAD_NOTE = (
     "Tools of external MCP servers are grouped into domains. If a tool you need is missing, "
     "load its domain with `load_capability` (the deferred domains are listed below)."
+)
+LOOKUP_NOTE = (
+    "Facts that change or that a connected tool can look up (the state of this server, and "
+    "whatever the MCP domains listed here cover) are looked up with tools, loading a domain "
+    "when its tools are not offered, and never answered from memory; if no tool can look it "
+    "up, say that the answer is from memory and may be out of date."
 )
 CLASSIFY_PROMPT = """\
 Pick the domains whose tools are needed to answer the request. Answer with the names of the \
@@ -105,15 +113,28 @@ async def connect(
         await store.sort_tools(sort_model, up)
 
 
-async def classify(model: Model, domains: list[dict[str, Any]], request: str) -> list[str]:
-    """The domains `request` needs, picked by `model` (structured: names of existing domains)."""
+async def classify(
+    model: Model,
+    domains: list[dict[str, Any]],
+    request: str,
+    tools: dict[str, list[str]] | None = None,
+    zone: tzinfo | None = None,
+) -> list[str]:
+    """The domains `request` needs, picked by `model` (structured: names of existing domains).
+    `tools`: domain name -> names of its enabled tools (shown next to the description);
+    `zone`: the owner's time zone (the instructions get the current moment)."""
     names = tuple(d["name"] for d in domains)
     agent: Agent[None, list[Any]] = Agent(
         model,
-        instructions=CLASSIFY_PROMPT,
+        instructions=[CLASSIFY_PROMPT, lambda: now_line(zone) if zone is not None else ""],
         output_type=list[Literal[names]],  # type: ignore[valid-type]
     )
-    prompt = "Domains:\n" + "\n".join(f"- {d['name']}: {d['description']}" for d in domains)
+    tools = tools or {}
+    prompt = "Domains:\n" + "\n".join(
+        f"- {d['name']}: {d['description']}"
+        + (f" (tools: {', '.join(tools[d['name']])})" if tools.get(d["name"]) else "")
+        for d in domains
+    )
     prompt += f"\n\nRequest:\n{request}"
     with trace_scope("mcp_classify"):
         result = await agent.run(prompt)
@@ -130,6 +151,7 @@ async def prepare(
     request: str | None,
     keep: list[str],
     only: list[str] | None = None,
+    zone: tzinfo | None = None,
 ) -> McpTurn:
     """Connect, sort, classify `request` (None: a resumed run or a job, nothing to classify)
     and build the domain capabilities; `keep` = domains given directly besides the picked ones;
@@ -162,7 +184,11 @@ async def prepare(
         return turn
     if request is not None and classify_model is not None:
         try:
-            turn.picked = await classify(classify_model, domains, request)
+            tools = {
+                d["name"]: sorted(n for group in placed[d["id"]].values() for n in group)
+                for d in domains
+            }
+            turn.picked = await classify(classify_model, domains, request, tools, zone)
         except Exception as exc:  # a miss of everything: the model loads what it needs
             turn.classify_error = f"classification failed: {type(exc).__name__}: {exc}"[:500]
             log.warning("MCP %s", turn.classify_error)

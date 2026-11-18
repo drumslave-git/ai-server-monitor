@@ -54,7 +54,7 @@ from ..mcp_client import turn as mcp_turn
 from ..tracing import trace_scope
 from ..tracing.parse import empty_answer_message
 from .audit import record_call
-from .explain import Explain
+from .explain import Explain, host_zone
 from .marks import (
     MARKS_SYSTEM,
     RUN_MARK,  # noqa: F401  (re-exported: the mark the Run endpoint reads)
@@ -417,6 +417,7 @@ class ChatEngine:
         who = source or f"chat:{session_id}"
         shell = app_shell(app)
         mcp = app.mcp.run(who)
+        zone = host_zone(app)
         with trace_scope(link_kind="chat", link_id=session_id, turn=trace_turn):
             turn = await mcp_turn.prepare(
                 mcp,
@@ -426,6 +427,7 @@ class ChatEngine:
                 classify_model=app.models.model("worker"),
                 request=request,
                 keep=keep,
+                zone=zone,
             )
         fixed = {"job_save": "write", "job_delete": "write", "bash_write": "write"}
 
@@ -436,6 +438,7 @@ class ChatEngine:
         instructions = chat_prompt(host, settings.general.language)
         if mcp.servers:
             instructions += "\n" + MCP_NOTE
+        instructions += "\n" + mcp_turn.LOOKUP_NOTE
         if turn.deferred:
             instructions += "\n" + mcp_turn.LOAD_NOTE
         cfg = AgentConfig(
@@ -457,6 +460,7 @@ class ChatEngine:
             capabilities=turn.capabilities,
             approval_tool=mcp_approval_tool(app, who, f"turn:{ctx.turn}"),
             notes=lambda: "\n".join([*mcp.unavailable(), *turn.notes()]),
+            zone=zone,
         )
         look = LookFirst() if require_look else None
         text_call = TextCall({t.name for t in tools}, look)

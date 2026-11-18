@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import time
+from datetime import datetime, tzinfo
 from pathlib import Path
 
 _LANGUAGES = {
@@ -145,3 +147,19 @@ def chat_prompt(host: str, language: str) -> str:
 
 def worker_prompt(host: str, language: str) -> str:
     return WORKER_PROMPT.format(host=host, shell=SHELL_FACTS, language=language_name(language))
+
+
+def zone_name(zone: tzinfo) -> str:
+    return str(getattr(zone, "key", None) or zone)
+
+
+def now_line(zone: tzinfo, now: float | None = None) -> str:
+    """The current moment for the instructions, in `zone` (the owner's time zone); computed
+    when called, so every run (every model request) gets the time it runs at."""
+    moment = datetime.fromtimestamp(time.time() if now is None else now, zone)
+    offset = moment.strftime("%z")
+    return (
+        f"Now: {moment.strftime('%A %Y-%m-%d %H:%M')}, time zone {zone_name(zone)} "
+        f"(UTC{offset[:3]}:{offset[3:]}). Your own knowledge ends earlier than this date: compare "
+        "anything about dates (released, upcoming, how long ago, next) with this date."
+    )
