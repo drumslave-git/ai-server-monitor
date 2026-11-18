@@ -168,6 +168,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .input-short { max-width: 180px; }
 .invalid { border-color: var(--crit); }
 select { width: auto; min-width: 140px; }
+/* The popup list of every native select: the app's own colours. Without this, a select with a
+   transparent background gets the browser's light popup while its options inherit the light
+   text of the dark theme (unreadable), and the other way round. */
+option, optgroup { background-color: var(--surface); color: var(--text); }
 .btn {
   display: inline-block; font: inherit; line-height: 20px; cursor: pointer; white-space: nowrap; text-decoration: none;
   padding: 6px 12px; border-radius: var(--radius-sm);
@@ -497,9 +501,6 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .btn-icon:hover { color: var(--text); background: var(--hover); }
 .mt-empty-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 20px 8px 48px; }
 .mt-empty-domain .mt-dname, .mt-empty-domain .mt-ddesc { opacity: 0.7; }
-.mt-edit { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 8px; padding: 0 20px 12px 48px; }
-.mt-edit input { padding: 6px 8px; }
-.mt-edit-buttons { grid-column: 1 / -1; display: flex; gap: 8px; }
 .mt-delete { margin-left: auto; }
 .mt-tools { border-top: 1px solid var(--border); }
 .mt-tool { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 12px; padding: 10px 20px; align-items: start; }
@@ -514,7 +515,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .mt-kind.write { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
 .mt-reason { margin: 4px 0 0; font-size: 12px; color: var(--warn); overflow-wrap: anywhere; }
 select.mt-move {
-  font-size: 12px; padding: 3px 6px; min-width: 0; max-width: 160px; color: var(--muted);
+  font-size: 12px; padding: 3px 6px; min-width: 0; width: 104px; color: var(--muted);
   background: transparent; border-color: transparent;
 }
 select.mt-move:hover, select.mt-move:focus { border-color: var(--border); color: var(--text); }
@@ -525,15 +526,16 @@ select.mt-move:hover, select.mt-move:focus { border-color: var(--border); color:
 .mt-dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
 .mt-dialog h3 { margin: 0 0 4px; }
 .mt-dialog-field { display: grid; gap: 4px; margin: 12px 0; font-size: 13px; }
+.mt-dialog-field input { padding: 6px 8px; }
+.mt-dialog .form-buttons { flex-wrap: wrap; padding-bottom: 0; }
 .mt-check { display: flex; gap: 8px; align-items: center; font-size: 13px; }
 .mt-check input { width: auto; }
 @media (max-width: 640px) {
   .mt-domain > summary { grid-template-columns: 16px minmax(0, 1fr); padding: 12px 16px; }
   .mt-dmeta { grid-column: 2; }
   .mt-empty-line { grid-template-columns: minmax(0, 1fr); padding: 8px 16px; }
-  .mt-edit { grid-template-columns: minmax(0, 1fr); padding: 0 16px 12px; }
   .mt-tool { gap: 8px; padding: 10px 12px 10px 16px; }
-  select.mt-move { max-width: 76px; padding: 2px 2px; }
+  select.mt-move { width: 92px; padding: 2px 4px; }
   .mt-search { flex-basis: 100%; max-width: none; }
 }
 .domain-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

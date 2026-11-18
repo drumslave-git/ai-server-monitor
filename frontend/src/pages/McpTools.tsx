@@ -42,7 +42,11 @@ export function McpToolsPage() {
     return () => clearInterval(timer);
   }, [page?.sorting, load]);
 
-  const act = (p: Promise<unknown>) => p.then(load, (e) => setError(errorText(e)));
+  const act = (p: Promise<unknown>) => {
+    const done = p.then(load);
+    done.catch((e) => setError(errorText(e)));
+    return done;
+  };
 
   const filtering = query.trim() !== "" || server !== "all" || kind !== "all" || onOff !== "all";
   const shown = useMemo(() => {
@@ -180,12 +184,13 @@ function Section({
   id, title, description, count, total, open, onToggle, domain, act, warn, children,
 }: {
   id: string; title: string; description: string; count: Tool[]; total: Tool[]; open: boolean;
-  onToggle: (open: boolean) => void; domain?: Domain; act?: (p: Promise<unknown>) => void; warn?: boolean;
+  onToggle: (open: boolean) => void; domain?: Domain; act?: (p: Promise<unknown>) => Promise<unknown>; warn?: boolean;
   children: React.ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
   const on = total.filter((t) => t.enabled).length;
   return (
+    <>
     <details className={`mt-domain${warn ? " mt-unsorted" : ""}`} open={open} onToggle={(e) => onToggle((e.target as HTMLDetailsElement).open)} id={`domain-${id}`}>
       <summary>
         <ChevronRight className="mt-chev" size={16} strokeWidth={1.5} aria-hidden />
@@ -204,13 +209,15 @@ function Section({
           )}
         </span>
       </summary>
-      {editing && domain && act && <DomainEdit domain={domain} act={act} onClose={() => setEditing(false)} />}
       <div className="mt-tools">{children}</div>
     </details>
+    {/* outside <details>: a dialog inside a closed one would not show */}
+    {editing && domain && act && <DomainEdit domain={domain} act={act} onClose={() => setEditing(false)} />}
+    </>
   );
 }
 
-function EmptyDomain({ domain, act }: { domain: Domain; act: (p: Promise<unknown>) => void }) {
+function EmptyDomain({ domain, act }: { domain: Domain; act: (p: Promise<unknown>) => Promise<unknown> }) {
   const [editing, setEditing] = useState(false);
   return (
     <div className="mt-domain mt-empty-domain">
@@ -231,47 +238,80 @@ function EmptyDomain({ domain, act }: { domain: Domain; act: (p: Promise<unknown
   );
 }
 
-function DomainEdit({ domain, act, onClose }: { domain: Domain; act: (p: Promise<unknown>) => void; onClose: () => void }) {
-  const [name, setName] = useState(domain.name);
-  const [description, setDescription] = useState(domain.description);
-  const save = () => {
-    act(api.put(`/api/mcp/domains/${domain.id}`, { name, description }));
-    onClose();
+const NAME_MAX = 24;
+const NAME_OK = /^[a-z0-9][a-z0-9-]*$/;
+
+/** The app's dialog for a domain: a new one (`domain` undefined; `onCreated` gets it) or
+ *  renaming / describing / deleting one. The name rule is shown and checked while typing. */
+function DomainEdit({
+  domain, act, onClose, onCreated,
+}: {
+  domain?: Domain; act: (p: Promise<unknown>) => Promise<unknown>; onClose: () => void; onCreated?: (d: Domain) => Promise<unknown>;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const [name, setName] = useState(domain?.name ?? "");
+  const [description, setDescription] = useState(domain?.description ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { ref.current?.showModal(); }, []);
+  const trimmed = name.trim();
+  const problem = !trimmed ? null : !NAME_OK.test(trimmed) ? "Only lowercase letters, digits and hyphens; start with a letter or digit" : null;
+  const valid = trimmed !== "" && problem === null && (domain !== undefined || description.trim() !== "");
+  const run = (p: Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    act(p).then(onClose, (e) => { setBusy(false); setError(errorText(e)); });
   };
+  const save = () =>
+    run(
+      domain
+        ? api.put(`/api/mcp/domains/${domain.id}`, { name: trimmed, description })
+        : api.post<Domain>("/api/mcp/domains", { name: trimmed, description }).then((d) => onCreated?.(d)),
+    );
   const remove = () => {
-    if (!confirm(`Delete the domain "${domain.name}"?${domain.tools ? ` Its ${domain.tools} tools are sorted again at the next listing.` : ""}`)) return;
-    act(api.del(`/api/mcp/domains/${domain.id}`));
-    onClose();
+    if (!domain || !confirm(`Delete the domain "${domain.name}"?${domain.tools ? ` Its ${domain.tools} tools are sorted again at the next listing.` : ""}`)) return;
+    run(api.del(`/api/mcp/domains/${domain.id}`));
   };
   return (
-    <div className="mt-edit">
-      <input value={name} onChange={(e) => setName(e.target.value)} aria-label="Domain name" className="mono" />
-      <input value={description} onChange={(e) => setDescription(e.target.value)} aria-label="Description" placeholder="What a person can ask about there" />
-      <div className="mt-edit-buttons">
-        <button type="button" className="btn btn-sm btn-primary" onClick={save}>Save</button>
-        <button type="button" className="btn btn-sm btn-quiet" onClick={onClose}>Cancel</button>
-        <button type="button" className="btn btn-sm btn-quiet mt-delete" onClick={remove} disabled={domain.used_by.length > 0} title={domain.used_by.length ? `Used by ${domain.used_by.join(", ")}` : undefined}>
-          Delete domain
-        </button>
+    <dialog ref={ref} className="mt-dialog" onClose={onClose}>
+      <h3>{domain ? `Domain ${domain.name}` : "New domain"}</h3>
+      <label className="mt-dialog-field">
+        Name
+        <input value={name} maxLength={NAME_MAX} onChange={(e) => setName(e.target.value)} className="mono" aria-invalid={problem !== null} autoFocus />
+        <span className={`small ${problem ? "mt-reason" : "muted"}`}>
+          {problem ?? "Lowercase letters, digits and hyphens"} · {trimmed.length} of {NAME_MAX} characters
+        </span>
+      </label>
+      <label className="mt-dialog-field">
+        Description
+        <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What a person can ask about there" />
+        {!domain && <span className="small muted">One line; the chat's model reads it to pick the domain.</span>}
+      </label>
+      {error && <p className="error">{error}</p>}
+      <div className="form-buttons">
+        <button type="button" className="btn btn-primary" onClick={save} disabled={!valid || busy}>{domain ? "Save" : "Create and move"}</button>
+        <button type="button" className="btn btn-quiet" onClick={onClose}>Cancel</button>
+        {domain && (
+          <button type="button" className="btn btn-quiet mt-delete" onClick={remove} disabled={busy || domain.used_by.length > 0} title={domain.used_by.length ? `Used by ${domain.used_by.join(", ")}` : undefined}>
+            Delete domain
+          </button>
+        )}
       </div>
-    </div>
+    </dialog>
   );
 }
 
 function Row({
   tool, domains, servers, act, reason,
 }: {
-  tool: Tool; domains: Domain[]; servers: Page["servers"]; act: (p: Promise<unknown>) => void; reason?: boolean;
+  tool: Tool; domains: Domain[]; servers: Page["servers"]; act: (p: Promise<unknown>) => Promise<unknown>; reason?: boolean;
 }) {
   const state = servers.find((s) => s.name === tool.server);
   const path = `/api/mcp/tools/${encodeURIComponent(tool.server)}/${encodeURIComponent(tool.tool)}`;
+  const [creating, setCreating] = useState(false);
   const move = (value: string) => {
-    if (value === NEW_DOMAIN) {
-      const name = prompt("Name of the new domain (lowercase letters, digits and -):")?.trim();
-      if (!name) return;
-      const description = prompt(`One line: what can a person ask about in "${name}"?`) ?? "";
-      act(api.post<Domain>("/api/mcp/domains", { name, description }).then((d) => api.patch(path, { domain_id: d.id })));
-    } else if (value) act(api.patch(path, { domain_id: Number(value) }));
+    if (value === NEW_DOMAIN) setCreating(true);
+    else if (value) void act(api.patch(path, { domain_id: Number(value) })).catch(() => undefined);
   };
   return (
     <div className={`mt-tool${tool.enabled ? "" : " off"}`}>
@@ -297,6 +337,9 @@ function Row({
         {domains.filter((d) => d.id !== tool.domain_id).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
         <option value={NEW_DOMAIN}>New domain…</option>
       </select>
+      {creating && (
+        <DomainEdit act={act} onClose={() => setCreating(false)} onCreated={(d) => api.patch(path, { domain_id: d.id })} />
+      )}
     </div>
   );
 }
