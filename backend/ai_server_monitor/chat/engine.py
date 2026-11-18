@@ -464,6 +464,8 @@ def outcome_line(record: dict[str, Any]) -> str:
     result = record.get("result") or {}
     if record["status"] == "executed" and result.get("exit_code") is not None:
         words += f", exit code {result['exit_code']}"
+    elif record["status"] == "failed" and result.get("error"):
+        words += f" ({result['error']})"
     approval = f"Approval #{record['batch_id']}: " if record.get("batch_id") else ""
     return f"{approval}{record['target']}: {words}."
 

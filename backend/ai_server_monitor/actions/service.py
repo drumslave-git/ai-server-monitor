@@ -47,6 +47,7 @@ EVENT_PROGRESS = "approval.progress"  # queued (approved) items of a batch were 
 BATCH_EVENTS = (EVENT_PENDING, EVENT_UPDATED, EVENT_DECIDED, EVENT_EXPIRED, EVENT_PROGRESS)
 
 HOUR = 3600.0
+INTERRUPTED = "interrupted: the service stopped while the command was running"
 _RAN = ("executed", "failed", "dry_run")
 _OUTCOME_ORDER = (
     "executed",
@@ -316,6 +317,15 @@ class ActionService:
         view["decision"] = "approve"
         view["decided_by"] = decided_by
         await self._notify(EVENT_PROGRESS, view)
+
+    async def close_interrupted(self) -> int:
+        """At start: items still "approved" were running when the service stopped (the status
+        moves on once an item has run). Closed as failed, announced like any result, so a
+        waiting chat continues. Returns how many."""
+        rows = await self.db.fetchall("SELECT id FROM actions WHERE status = 'approved'")
+        for row in rows:
+            await self._set(int(row["id"]), "failed", {"error": INTERRUPTED, "interrupted": True})
+        return len(rows)
 
     async def wait_background(self) -> None:
         """Wait for approved items that are still running (tests, shutdown)."""

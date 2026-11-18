@@ -222,3 +222,30 @@ def test_the_missing_capabilities_reason_names_the_compose_lines() -> None:
 
     assert "`- SYS_ADMIN`" in COMPOSE_HINT and "`- SYS_PTRACE`" in COMPOSE_HINT
     assert "`cap_add:`" in COMPOSE_HINT and "docker compose up -d" in COMPOSE_HINT
+
+
+def test_a_command_running_at_a_stop_is_closed_as_failed_and_the_chat_is_told(
+    bootstrap: Bootstrap, models: ScriptedModels, root_shell: list[str]
+) -> None:
+    from ai_server_monitor.actions.service import INTERRUPTED
+
+    with TestClient(make_app(bootstrap)) as client:
+        done = ask_for_restart(client, models)[-1]
+        [batch] = client.get("/api/approvals").json()["items"]
+        ctx = client.app.state.ctx  # type: ignore[attr-defined]
+        # approved and running when the process dies: the row stays "approved"
+        client.portal.call(  # type: ignore[union-attr]
+            ctx.db.execute, "UPDATE actions SET status = 'approved' WHERE batch_id = ?",
+            (batch["id"],),
+        )  # fmt: skip
+    models.script = ["The restart was interrupted; please check nginx."]
+    with TestClient(make_app(bootstrap)) as client:
+        messages = wait_for_answer(
+            client, done["session_id"], "The restart was interrupted; please check nginx."
+        )
+        [row] = client.get("/api/actions", params={"action": "host_command"}).json()["items"]
+        assert row["status"] == "failed" and row["result"]["error"] == INTERRUPTED
+        assert INTERRUPTED in models.requests[-1]["text"]
+        note = next(m for m in messages if m["id"] == done["message_id"])
+        assert note["content"].endswith(f"approved, but it failed ({INTERRUPTED}).")
+        assert root_shell == []  # not run again

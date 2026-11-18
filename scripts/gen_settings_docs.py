@@ -1,7 +1,7 @@
 """Print (or update in README.md) the settings reference, generated from config.Settings.
 
     python scripts/gen_settings_docs.py            # print Markdown
-    python scripts/gen_settings_docs.py --write    # replace the block between the markers in README.md
+    python scripts/gen_settings_docs.py --write    # replace the marked block in README.md
     python scripts/gen_settings_docs.py --check    # exit 1 if README.md is out of date
 
 Needs the backend installed (pip install -e backend).

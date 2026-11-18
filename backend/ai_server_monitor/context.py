@@ -122,6 +122,8 @@ class AppContext:
             log.warning("%d job run(s) were interrupted by the last stop", interrupted)
         await self._start_services()
         await self._rerun_interrupted()
+        if closed := await self.actions.close_interrupted():
+            log.warning("%d approved action(s) were interrupted by the last stop", closed)
         await self._refresh_pending_metrics()
         await self._load_job_metrics()
         log.info("started (data=%s, host root=%s)", self.bootstrap.data_dir, self.host_env.root)

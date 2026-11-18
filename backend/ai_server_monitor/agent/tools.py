@@ -225,6 +225,8 @@ def command_outcome(record: dict[str, Any]) -> dict[str, Any] | str:
             "target": record.get("target"),
         }
     detail = result.get("error") or result.get("detail") or ""
+    if result.get("interrupted"):
+        return f"The command was {detail}; it may have run partly. Check before trying again."
     texts = {
         "rejected": "The owner rejected this command; it was not run.",
         "expired": "Nobody approved this command in time (it expired); it was not run.",
