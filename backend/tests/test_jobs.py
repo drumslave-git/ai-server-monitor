@@ -74,8 +74,9 @@ def test_a_topic_run_uses_only_bash_and_stores_the_structured_result(
         assert [r["tools"] for r in models.requests] == [["bash"], ["bash"]]
         assert "Disk space and inodes" in models.requests[0]["instructions"]
         assert shell == ["df -h /"]
+        # job commands stay out of the chat audit trail (they are in the run's trace)
         audit = client.get("/api/chat/audit", params={"kind": "shell"}).json()["items"]
-        assert audit[0]["session"] == "job:storage" and audit[0]["cmd"] == "df -h /"
+        assert audit == []
         # listed with the job, and through the runs API
         job = client.get("/api/jobs/storage").json()
         assert job["last_run"]["id"] == result["id"] and job["last_run"]["status"] == "warn"

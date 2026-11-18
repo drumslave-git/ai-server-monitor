@@ -13,7 +13,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 
 JOB_PREFIX = "job:"
 HOUSEKEEPING_TIMEOUT_S = 600.0
+HOUSEKEEPING_JITTER_S = 30.0
+HOUSEKEEPING_GRACE_S = 5
 MIN_DELAY = timedelta(seconds=0.2)
 
 
@@ -41,16 +43,20 @@ class _Stats:
     last_error: str | None = None
 
 
-def job_trigger(job: dict[str, Any]) -> BaseTrigger:
+def job_trigger(job: dict[str, Any], tz: tzinfo | None = None) -> BaseTrigger:
+    """Interval or cron trigger; cron times are in `tz` (`general.timezone`, default the
+    host's)."""
     if job.get("interval_s"):
         return IntervalTrigger(seconds=int(job["interval_s"]))
-    return CronTrigger.from_crontab(job["cron"])
+    return CronTrigger.from_crontab(job["cron"], timezone=tz or UTC)
 
 
 class Schedule:
-    def __init__(self, *, paused: bool = False):
+    def __init__(self, *, paused: bool = False, timezone: tzinfo | None = None):
+        self.timezone = timezone or UTC
         self._sched = AsyncIOScheduler(
-            job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": None}
+            job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": None},
+            timezone=self.timezone,
         )
         self._start_paused = paused
         self._stats: dict[str, _Stats] = {}
@@ -90,7 +96,10 @@ class Schedule:
         *,
         initial_delay: timedelta = timedelta(seconds=1),
         timeout_s: float = HOUSEKEEPING_TIMEOUT_S,
+        jitter_s: float | None = None,
     ) -> None:
+        """`jitter_s`: random delay added to every run time (default 10 % of the interval, at
+        most HOUSEKEEPING_JITTER_S), so the housekeeping jobs do not all fire together."""
         stats = self._stats.setdefault(name, _Stats(name, "housekeeping"))
 
         async def run() -> None:
@@ -102,10 +111,20 @@ class Schedule:
                 seconds=max(every.total_seconds(), 1.0),
                 # (a start time already past would wait a whole interval)
                 start_date=datetime.now(UTC) + max(initial_delay, MIN_DELAY),
+                # spread the housekeeping jobs over time instead of all at the same second
+                jitter=(
+                    min(every.total_seconds() * 0.1, HOUSEKEEPING_JITTER_S)
+                    if jitter_s is None
+                    else jitter_s
+                )
+                or None,
             ),
             id=name,
             name=name,
             replace_existing=True,
+            # A run missed by more than this (the schedule was paused) is skipped, not
+            # caught up: after a pause they come back on their own jittered times, not at once.
+            misfire_grace_time=HOUSEKEEPING_GRACE_S,
         )
 
     def sync_jobs(
@@ -125,7 +144,7 @@ class Schedule:
             async def run(slug: str = slug, stats: _Stats = stats) -> None:
                 await self._run(stats, lambda: run_job(slug), None)
 
-            trigger = job_trigger(job)
+            trigger = job_trigger(job, self.timezone)
             current = self._sched.get_job(job_id)
             if current is not None and str(current.trigger) == str(trigger):
                 continue  # unchanged: keep its next run time

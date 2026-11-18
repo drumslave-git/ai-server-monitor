@@ -39,7 +39,7 @@ async def test_housekeeping_runs_and_a_paused_schedule_holds_it_until_resume() -
         runs.append(time.monotonic())
 
     sched = Schedule(paused=True)
-    sched.add_housekeeping("work", work, timedelta(hours=1), initial_delay=timedelta(0))
+    sched.add_housekeeping("work", work, timedelta(hours=1), initial_delay=timedelta(0), jitter_s=0)
     sched.start()
     try:
         await asyncio.sleep(0.4)
@@ -62,9 +62,9 @@ async def test_failures_and_timeouts_are_recorded() -> None:
         await asyncio.sleep(5)
 
     sched = Schedule()
-    sched.add_housekeeping("boom", boom, timedelta(hours=1), initial_delay=timedelta(0))
+    sched.add_housekeeping("boom", boom, timedelta(hours=1), initial_delay=timedelta(0), jitter_s=0)
     sched.add_housekeeping(
-        "slow", slow, timedelta(hours=1), initial_delay=timedelta(0), timeout_s=0.2
+        "slow", slow, timedelta(hours=1), initial_delay=timedelta(0), timeout_s=0.2, jitter_s=0
     )
     sched.start()
     try:

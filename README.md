@@ -207,6 +207,7 @@ a fresh install starts with.
 | `general.log_level` | debug / info / warning / error | `info` | Log verbosity of the service. |
 | `general.language` | string | `en` | Language of chat answers and Telegram messages. |
 | `general.docker_url` | string | empty | Docker API the shell's `docker` commands use, e.g. tcp://docker-proxy:2375 or unix:///var/run/docker.sock. Empty = $DOCKER_HOST (set by the compose file), else the local socket. |
+| `general.timezone` | string | empty | Time zone of cron schedules, e.g. Europe/Berlin. Empty = the host's own time zone (its /etc/timezone or /etc/localtime), UTC when that cannot be read. |
 
 ### Main model (`llm`)
 

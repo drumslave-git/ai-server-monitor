@@ -176,10 +176,10 @@ class JobRunner:
         language = settings.general.language
         scrub = Scrubber(settings)
         shell = app_shell(app)
-        session = f"job:{slug}"
-        tools: list[AgentTool] = [app_bash(app, session, shell)]
+        # Not in the chat audit trail: every command is in this run's trace (turn below).
+        tools: list[AgentTool] = [app_bash(app, None, shell)]
         if job["kind"] == "summary":
-            tools.append(app_delegate(app, session, scrub, host, shell))
+            tools.append(app_delegate(app, None, scrub, host, shell))
             instructions = summary_instructions(host, language, job["prompt"])
             prompt = await self._summary_input(slug)
         else:

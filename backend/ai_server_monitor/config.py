@@ -17,6 +17,7 @@ import re
 from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
     BaseModel,
@@ -158,6 +159,20 @@ class GeneralSettings(_Model):
     """Docker API the shell's `docker` commands use, e.g. tcp://docker-proxy:2375 or
     unix:///var/run/docker.sock. Empty = $DOCKER_HOST (set by the compose file), else the local
     socket."""
+    timezone: str = ""
+    """Time zone of cron schedules, e.g. Europe/Berlin. Empty = the host's own time zone (its
+    /etc/timezone or /etc/localtime), UTC when that cannot be read."""
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_timezone(cls, value: str) -> str:
+        value = value.strip()
+        if value:
+            try:
+                ZoneInfo(value)
+            except (ZoneInfoNotFoundError, ValueError) as exc:
+                raise ValueError(f"unknown time zone {value!r}") from exc
+        return value
 
 
 class ApprovalsSettings(_Model):

@@ -148,9 +148,12 @@ def app_shell(app: AppContext) -> HostShell:
     return HostShell(app.host_env.root, docker_host=docker or None)
 
 
-def app_bash(app: AppContext, audit_session: str, shell: HostShell | None = None) -> AgentTool:
-    """`bash` with the chat's limits; every command goes to the audit trail under
-    `audit_session` (a chat session id, or `job:<slug>`)."""
+def app_bash(
+    app: AppContext, audit_session: str | None, shell: HostShell | None = None
+) -> AgentTool:
+    """`bash` with the chat's limits; every command goes to the chat audit trail under
+    `audit_session` (a chat session id). None = not audited there (job runs: their commands
+    are in the run's trace already, and would flood the trail)."""
     from ..chat.audit import record_call  # (chat imports this module)
 
     chat = app.settings.chat
@@ -165,13 +168,13 @@ def app_bash(app: AppContext, audit_session: str, shell: HostShell | None = None
         ),
         max_timeout_s=chat.tool_timeout.total_seconds(),
         max_chars=max(chat.max_tool_result_chars - 400, 400),
-        audit=audit,
+        audit=audit if audit_session is not None else None,
     )
 
 
 def app_delegate(
     app: AppContext,
-    audit_session: str,
+    audit_session: str | None,
     scrub: Scrubber,
     host: str,
     shell: HostShell | None = None,

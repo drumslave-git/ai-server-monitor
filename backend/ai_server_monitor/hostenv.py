@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import os
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 @dataclass(frozen=True)
@@ -31,3 +34,24 @@ class HostEnv:
     def path(self, host_path: str) -> Path:
         """Translate an absolute host path to where it is visible to us."""
         return self.root / host_path.lstrip("/")
+
+    def timezone(self) -> ZoneInfo:
+        """The host's time zone: /etc/timezone, else the /etc/localtime link or file; UTC when
+        neither can be read."""
+        with contextlib.suppress(OSError, ValueError, ZoneInfoNotFoundError):
+            name = self.path("/etc/timezone").read_text(errors="replace").strip()
+            if name:
+                return ZoneInfo(name)
+        localtime = self.path("/etc/localtime")
+        with contextlib.suppress(OSError, ValueError, ZoneInfoNotFoundError):
+            target = os.readlink(localtime)
+            if "zoneinfo/" in target:
+                return ZoneInfo(target.split("zoneinfo/", 1)[1])
+        with contextlib.suppress(OSError, ValueError), localtime.open("rb") as fh:
+            return ZoneInfo.from_file(fh, key="localtime")
+        return ZoneInfo("UTC")
+
+
+def resolve_timezone(name: str, env: HostEnv) -> ZoneInfo:
+    """`general.timezone`: a zone name, or empty for the host's own."""
+    return ZoneInfo(name) if name.strip() else env.timezone()

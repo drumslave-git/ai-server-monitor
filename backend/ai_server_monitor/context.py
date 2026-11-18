@@ -26,7 +26,7 @@ from .chat.audit import audit_hook
 from .config import Bootstrap, Settings
 from .db import Database
 from .events import EventBus
-from .hostenv import HostEnv
+from .hostenv import HostEnv, resolve_timezone
 from .jobs import JobRunner
 from .mcp_client import McpManager
 from .outputs.action_events import ActionEventBridge
@@ -140,7 +140,10 @@ class AppContext:
     async def _start_services(self) -> None:
         s = self.settings
         logging.getLogger().setLevel(s.general.log_level.upper())
-        self.schedule = Schedule(paused=self.automation.paused)
+        self.schedule = Schedule(
+            paused=self.automation.paused,
+            timezone=resolve_timezone(s.general.timezone, self.host_env),
+        )
         self.tracing.apply_settings(s.logs)
         self.models = ModelHub(s, tracing=self.tracing, transport=self._llm_transport)
         self.jobs.apply_settings(s)
