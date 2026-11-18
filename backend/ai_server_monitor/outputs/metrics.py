@@ -1,234 +1,172 @@
-"""Prometheus exposition for GET /metrics (hand-rolled text format 0.0.4, no dependency).
+"""Prometheus metrics for GET /metrics, on `prometheus_client` with the app's own registry (no
+default process metrics). Every value is updated when something happens (an LLM call, an
+action, a job run) and only read at scrape time: a scrape does no I/O.
 
-Two ways to get numbers in:
-
-* **Instruments** held by `MetricsHub`: counters, gauges and histograms updated from hooks
-  (the event bus: LLM calls recorded by the trace, actions). Updating one is a dict write; a
-  scrape never touches the LLM.
-* **Providers**: `hub.add_provider(fn)` where `fn()` returns `Family` objects (sync or
-  async), evaluated at scrape time. Other modules plug in this way.
-
-The action layer series are added by `AppContext` (a provider for the two gauges) and
-`outputs/action_events.py` (the `asm_actions_total` counter):
-
-    asm_actions_total{action,result}          counter  actions by type and status
-    asm_pending_approvals                     gauge    action items waiting for a decision
-    asm_pending_approval_batches              gauge    approvals (batches of items) waiting
+    asm_build_info{version}                         gauge    1
+    asm_llm_requests_total{result}                  counter  LLM requests (ok, error)
+    asm_llm_tokens_total{direction}                 counter  prompt / completion tokens
+    asm_llm_errors_total{type}                      counter  failed LLM requests by error type
+    asm_llm_request_duration_seconds                histogram
+    asm_actions_total{action,result}                counter  actions by type and status
+    asm_pending_approvals                           gauge    action items waiting for a decision
+    asm_pending_approval_batches                    gauge    approvals waiting for a decision
+    asm_job_status{job}                     gauge    latest run: 0 ok, 1 warn, 2 crit, 3 error
+    asm_job_last_run_timestamp_seconds{job}         gauge    when the latest run finished
+    asm_job_last_run_duration_seconds{job}          gauge
+    asm_job_findings{job,severity}                  gauge    findings of the latest run
+    asm_job_runs_total{job,status}                  counter  finished runs since the start
 """
 
 from __future__ import annotations
 
-import inspect
-import logging
-import math
-from collections.abc import Awaitable, Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Mapping
 from typing import Any
 
-log = logging.getLogger(__name__)
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    Histogram,
+    disable_created_metrics,
+    generate_latest,
+)
 
-CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+disable_created_metrics()  # no `*_created` series next to every counter
+
+CONTENT_TYPE = CONTENT_TYPE_LATEST
 LLM_BUCKETS = (0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300)
-
-Labels = Mapping[str, str]
-
-
-@dataclass
-class Sample:
-    value: float
-    labels: Labels = field(default_factory=dict)
-    suffix: str = ""
-    """'' for plain series; '_bucket', '_sum', '_count' for histograms."""
-
-
-@dataclass
-class Family:
-    name: str
-    type: str  # counter | gauge | histogram
-    help: str
-    samples: list[Sample] = field(default_factory=list)
-
-
-Provider = Callable[[], Iterable[Family] | Awaitable[Iterable[Family]]]
-
-
-# --------------------------------------------------------------------------- text format
-
-
-def _escape_help(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("\n", "\\n")
-
-
-def _escape_label(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
-
-
-def _fmt_value(value: float) -> str:
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    if math.isnan(value):
-        return "NaN"
-    if math.isinf(value):
-        return "+Inf" if value > 0 else "-Inf"
-    if float(value).is_integer() and abs(value) < 1e15:
-        return str(int(value))
-    return repr(float(value))
-
-
-def render_families(families: Iterable[Family]) -> str:
-    lines: list[str] = []
-    for fam in families:
-        if not fam.samples:
-            continue
-        lines.append(f"# HELP {fam.name} {_escape_help(fam.help)}")
-        lines.append(f"# TYPE {fam.name} {fam.type}")
-        for s in fam.samples:
-            labels = ""
-            if s.labels:
-                inner = ",".join(f'{k}="{_escape_label(str(v))}"' for k, v in s.labels.items())
-                labels = "{" + inner + "}"
-            lines.append(f"{fam.name}{s.suffix}{labels} {_fmt_value(s.value)}")
-    return "\n".join(lines) + "\n" if lines else ""
-
-
-# --------------------------------------------------------------------------- instruments
-
-
-def _key(labels: Labels) -> tuple[tuple[str, str], ...]:
-    return tuple(sorted((k, str(v)) for k, v in labels.items()))
-
-
-@dataclass
-class _Hist:
-    buckets: tuple[float, ...]
-    counts: list[int]
-    total: float = 0.0
-    n: int = 0
+STATUS_VALUE = {"ok": 0, "warn": 1, "crit": 2, "error": 3}
+SEVERITIES = ("info", "warn", "crit")
 
 
 class MetricsHub:
-    def __init__(self) -> None:
-        self._meta: dict[
-            str, tuple[str, str, tuple[float, ...]]
-        ] = {}  # name -> type, help, buckets
-        self._values: dict[str, dict[tuple[tuple[str, str], ...], Any]] = {}
-        self._providers: list[Provider] = []
-        self._define_builtin()
-
-    # -- definitions ------------------------------------------------------------
-
-    def define(self, name: str, kind: str, help_: str, buckets: tuple[float, ...] = ()) -> None:
-        self._meta[name] = (kind, help_, buckets)
-        self._values.setdefault(name, {})
-        if kind == "histogram":  # an unobserved histogram still exposes its (zero) buckets
-            self._values[name][()] = _Hist(buckets, [0] * len(buckets))
-
-    def _define_builtin(self) -> None:
-        d = self.define
-        d(
-            "asm_llm_request_duration_seconds",
-            "histogram",
-            "Duration of successful LLM requests.",
-            LLM_BUCKETS,
+    def __init__(self, version: str = "") -> None:
+        r = self.registry = CollectorRegistry()
+        self.build_info = Gauge("asm_build_info", "Build information.", ["version"], registry=r)
+        if version:
+            self.build_info.labels(version=version).set(1)
+        self.llm_requests = Counter(
+            "asm_llm_requests", "LLM requests by result (ok, error).", ["result"], registry=r
         )
-        d("asm_llm_requests_total", "counter", "LLM requests by result (ok, error).")
-        d("asm_llm_tokens_total", "counter", "LLM tokens (prompt, completion) as the endpoint "
-          "reported them.")  # fmt: skip
-        d("asm_llm_errors_total", "counter", "Failed LLM requests by error type.")
-        d(
-            "asm_actions_total",
-            "counter",
+        self.llm_tokens = Counter(
+            "asm_llm_tokens",
+            "LLM tokens (prompt, completion) as the endpoint reported them.",
+            ["direction"],
+            registry=r,
+        )
+        self.llm_errors = Counter(
+            "asm_llm_errors", "Failed LLM requests by error type.", ["type"], registry=r
+        )
+        self.llm_duration = Histogram(
+            "asm_llm_request_duration_seconds",
+            "Duration of successful LLM requests.",
+            buckets=LLM_BUCKETS,
+            registry=r,
+        )
+        self.actions = Counter(
+            "asm_actions",
             "Actions by type and status (suggested, pending, executed, failed, dry_run, "
             "rejected, deferred, expired).",
+            ["action", "result"],
+            registry=r,
+        )
+        self.pending_approvals = Gauge(
+            "asm_pending_approvals", "Actions (items) waiting for a human decision.", registry=r
+        )
+        self.pending_batches = Gauge(
+            "asm_pending_approval_batches",
+            "Approvals (batches of items) waiting for a human decision.",
+            registry=r,
+        )
+        self.job_status = Gauge(
+            "asm_job_status",
+            "Status of the job's latest finished run: 0 ok, 1 warn, 2 crit, 3 error.",
+            ["job"],
+            registry=r,
+        )
+        self.job_last_run = Gauge(
+            "asm_job_last_run_timestamp_seconds",
+            "When the job's latest run finished (Unix time).",
+            ["job"],
+            registry=r,
+        )
+        self.job_duration = Gauge(
+            "asm_job_last_run_duration_seconds",
+            "How long the job's latest run took.",
+            ["job"],
+            registry=r,
+        )
+        self.job_findings = Gauge(
+            "asm_job_findings",
+            "Findings of the job's latest run by severity.",
+            ["job", "severity"],
+            registry=r,
+        )
+        self.job_runs = Counter(
+            "asm_job_runs", "Finished job runs by status.", ["job", "status"], registry=r
         )
         for result in ("ok", "error"):
-            self.inc("asm_llm_requests_total", {"result": result}, 0)
+            self.llm_requests.labels(result=result)
         for direction in ("prompt", "completion"):
-            self.inc("asm_llm_tokens_total", {"direction": direction}, 0)
+            self.llm_tokens.labels(direction=direction)
 
-    # -- updates ----------------------------------------------------------------
-
-    def inc(self, name: str, labels: Labels | None = None, amount: float = 1) -> None:
-        series = self._values[name]
-        k = _key(labels or {})
-        series[k] = series.get(k, 0) + amount
-
-    def set(self, name: str, value: float, labels: Labels | None = None) -> None:
-        self._values[name][_key(labels or {})] = value
-
-    def observe(self, name: str, value: float, labels: Labels | None = None) -> None:
-        series = self._values[name]
-        k = _key(labels or {})
-        hist = series.get(k)
-        if hist is None:
-            buckets = self._meta[name][2]
-            hist = series[k] = _Hist(buckets, [0] * len(buckets))
-        for i, bound in enumerate(hist.buckets):
-            if value <= bound:
-                hist.counts[i] += 1
-        hist.total += value
-        hist.n += 1
-
-    def clear(self, name: str) -> None:
-        self._values[name].clear()
-
-    def add_provider(self, provider: Provider) -> None:
-        self._providers.append(provider)
-
-    # -- hooks (called by event consumers) ----------------------------------------
+    # ------------------------------------------------------------------ updates
 
     def on_llm_call(self, call: Mapping[str, Any]) -> None:
         """One recorded LLM request (the trace's `llm.call` event)."""
         if call.get("status") == "ok":
             if call.get("total_ms") is not None:
-                self.observe("asm_llm_request_duration_seconds", call["total_ms"] / 1000)
-            self.inc("asm_llm_requests_total", {"result": "ok"})
+                self.llm_duration.observe(call["total_ms"] / 1000)
+            self.llm_requests.labels(result="ok").inc()
             for direction in ("prompt", "completion"):
                 tokens = call.get(f"{direction}_tokens")
                 if tokens:
-                    self.inc("asm_llm_tokens_total", {"direction": direction}, tokens)
+                    self.llm_tokens.labels(direction=direction).inc(tokens)
         else:
-            self.inc("asm_llm_requests_total", {"result": "error"})
-            self.inc("asm_llm_errors_total", {"type": str(call.get("error_type") or "error")})
+            self.llm_requests.labels(result="error").inc()
+            self.llm_errors.labels(type=str(call.get("error_type") or "error")).inc()
 
-    # -- rendering --------------------------------------------------------------
+    def on_action(self, action: str, result: str, amount: int = 1) -> None:
+        self.actions.labels(action=action, result=result).inc(amount)
 
-    def families(self) -> list[Family]:
-        out: list[Family] = []
-        for name, (kind, help_, _buckets) in self._meta.items():
-            samples: list[Sample] = []
-            for k, value in sorted(self._values[name].items()):
-                labels = dict(k)
-                if kind == "histogram":
-                    for bound, count in zip(value.buckets, value.counts, strict=True):
-                        samples.append(
-                            Sample(count, {**labels, "le": _fmt_value(bound)}, "_bucket")
-                        )
-                    samples.append(Sample(value.n, {**labels, "le": "+Inf"}, "_bucket"))
-                    samples.append(Sample(value.total, labels, "_sum"))
-                    samples.append(Sample(value.n, labels, "_count"))
-                else:
-                    samples.append(Sample(value, labels))
-            out.append(Family(name, kind, help_, samples))
-        return out
+    def set_pending(self, items: int, batches: int) -> None:
+        self.pending_approvals.set(items)
+        self.pending_batches.set(batches)
 
-    async def render(self, extra: Iterable[Family] = ()) -> str:
-        families = [*self.families(), *extra]
-        for provider in self._providers:
-            try:
-                result = provider()
-                if inspect.isawaitable(result):
-                    result = await result
-                families.extend(result)
-            except Exception:
-                log.exception("metrics provider %r failed", provider)
-        return render_families(families)
+    def set_job_run(self, run: Mapping[str, Any], *, count: bool) -> None:
+        """The latest finished run of a job; `count` adds it to `asm_job_runs_total`."""
+        job = str(run["job_slug"])
+        status = str(run.get("status"))
+        if status not in STATUS_VALUE:
+            return
+        self.job_status.labels(job=job).set(STATUS_VALUE[status])
+        if run.get("finished"):
+            self.job_last_run.labels(job=job).set(run["finished"])
+        if run.get("duration_s") is not None:
+            self.job_duration.labels(job=job).set(run["duration_s"])
+        found = {s: 0 for s in SEVERITIES}
+        for finding in run.get("findings") or []:
+            severity = finding.get("severity")
+            if severity in found:
+                found[severity] += 1
+        for severity, n in found.items():
+            self.job_findings.labels(job=job, severity=severity).set(n)
+        if count:
+            self.job_runs.labels(job=job, status=status).inc()
 
+    def forget_jobs(self, keep: Iterable[str]) -> None:
+        """Drop the series of jobs that no longer exist."""
+        wanted = set(keep)
+        for gauge in (self.job_status, self.job_last_run, self.job_duration):
+            for (job,) in list(gauge._metrics):
+                if job not in wanted:
+                    gauge.remove(job)
+        for job, severity in list(self.job_findings._metrics):
+            if job not in wanted:
+                self.job_findings.remove(job, severity)
 
-# --------------------------------------------------------------------------- build info
+    # ------------------------------------------------------------------ scrape
 
-
-def build_info_families(version: str) -> list[Family]:
-    return [
-        Family("asm_build_info", "gauge", "Build information.", [Sample(1, {"version": version})])
-    ]
+    def render(self) -> bytes:
+        return generate_latest(self.registry)

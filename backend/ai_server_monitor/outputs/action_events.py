@@ -79,14 +79,12 @@ class ActionEventBridge:
     def __call__(self, event: str, record: dict[str, Any]) -> None:
         if event in BATCH_EVENTS:
             if event in ("approval.pending", "approval.updated"):  # `added` new pending items
-                self.metrics.inc(
-                    "asm_actions_total",
-                    {"action": str(record["action"]), "result": "pending"},
-                    int(record.get("added") or 0),
+                self.metrics.on_action(
+                    str(record["action"]), "pending", int(record.get("added") or 0)
                 )
             self.bus.publish(event, compact_batch(record))
             return
         data = compact_action(record)
         status = str(record.get("status") or "")
-        self.metrics.inc("asm_actions_total", {"action": str(data["action"]), "result": status})
+        self.metrics.on_action(str(data["action"]), status)
         self.bus.publish(event, data)

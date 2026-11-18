@@ -26,7 +26,7 @@ from .context import AppContext
 from .jobs.api import router as jobs_router
 from .llm.check import check_model
 from .llm.modelinfo import read_model_info
-from .outputs.metrics import CONTENT_TYPE, build_info_families
+from .outputs.metrics import CONTENT_TYPE
 from .outputs.sse import SSE_HEADERS, event_stream, parse_types
 from .settings_store import SettingsStore, merge_secrets
 from .tracing.api import router as logs_router
@@ -195,8 +195,7 @@ def create_app(
                 detail="bearer token required",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        text = await ctx.metrics.render(build_info_families(__version__))
-        return Response(text, headers={"content-type": CONTENT_TYPE})
+        return Response(ctx.metrics.render(), headers={"content-type": CONTENT_TYPE})
 
     @app.get("/api/status")
     async def status(request: Request) -> api_models.StatusResponse:

@@ -89,6 +89,16 @@ async def test_database_at_the_old_main_schema_upgrades(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- end to end
 
 
+def metrics_with(client: Any, line: str, timeout: float = 5.0) -> str:
+    """The scrape once it contains `line` (the metrics follow the events asynchronously)."""
+    deadline = time.monotonic() + timeout
+    while True:
+        text = client.get("/metrics").text
+        if line in text or time.monotonic() > deadline:
+            return text
+        time.sleep(0.05)
+
+
 def test_approval_request_reaches_the_stream_and_the_metrics(
     bootstrap: Bootstrap, fake_action: FakeAction
 ) -> None:
@@ -130,10 +140,9 @@ def test_approval_request_reaches_the_stream_and_the_metrics(
         assert pending["data"]["pending"] == 1 and pending["data"]["id"] == result["batch_id"]
         assert "items" not in pending["data"] and "args" not in pending["data"]  # compact
 
-        scrape = client.get("/metrics").text
-        assert "asm_pending_approvals 1\n" in scrape
-        assert "asm_pending_approval_batches 1\n" in scrape
-        assert 'asm_actions_total{action="fake_write",result="pending"} 1' in scrape
+        scrape = metrics_with(client, "asm_pending_approvals 1.0\n")
+        assert "asm_pending_approval_batches 1.0\n" in scrape
+        assert 'asm_actions_total{action="fake_write",result="pending"} 1.0' in scrape
         assert client.get("/api/status").json()["pending_approvals"] == 1
 
         # Approve over HTTP: decided + result events, and the gauge drops back.
@@ -152,9 +161,8 @@ def test_approval_request_reaches_the_stream_and_the_metrics(
         assert events[0][1]["status"] == "executed"
         assert events[1][1]["decision"] == "approve" and events[1][1]["decided_by"] == "ui"
         assert events[1][1]["counts"] == {"executed": 1}
-        after = client.get("/metrics").text
-        assert "asm_pending_approvals 0\n" in after
-        assert 'asm_actions_total{action="fake_write",result="executed"} 1' in after
-        assert "asm_pending_approval_batches 0\n" in after
+        after = metrics_with(client, "asm_pending_approvals 0.0\n")
+        assert 'asm_actions_total{action="fake_write",result="executed"} 1.0' in after
+        assert "asm_pending_approval_batches 0.0\n" in after
         assert fake_action.calls == ["alpha"]
         assert client.get("/api/status").json()["pending_approvals"] == 0

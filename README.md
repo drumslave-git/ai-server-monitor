@@ -128,8 +128,9 @@ button that checks what you typed, before you save, and says what answered or wh
   `GET /api/chat/sessions[/{id}]` and `DELETE /api/chat/sessions/{id}` manage the history.
   Chat can ask for changes through MCP tools but only through the
   same policy and approval path as everything else.
-- **Metrics** — `/metrics` exposes LLM request and token counters, pending approvals, action counts
-  and build info (`asm_*`). A Grafana dashboard to import is in [docs/grafana-dashboard.json](docs/grafana-dashboard.json).
+- **Metrics** — `/metrics` exposes LLM request and token counters, pending approvals, action counts,
+  the status, last run time, duration and findings of every scheduled job (`asm_job_*`) and build
+  info (`asm_*`). A Grafana dashboard to import is in [docs/grafana-dashboard.json](docs/grafana-dashboard.json).
   Scrape config:
 
   ```yaml

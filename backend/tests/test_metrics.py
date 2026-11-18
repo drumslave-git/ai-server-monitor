@@ -5,20 +5,16 @@ import time
 from typing import Any
 
 from fastapi.testclient import TestClient
+from prometheus_client.parser import text_string_to_metric_families
 
 from ai_server_monitor import __version__
 from ai_server_monitor.config import SECRET_MASK, Bootstrap
 from ai_server_monitor.main import create_app
-from ai_server_monitor.outputs.metrics import (
-    CONTENT_TYPE,
-    Family,
-    MetricsHub,
-    Sample,
-    build_info_families,
-    render_families,
-)
+from ai_server_monitor.outputs.metrics import CONTENT_TYPE, MetricsHub
 
+from .jobfakes import ScriptedModels, finish
 from .test_chat import FakeLLM, ask, make_app, say
+from .test_jobs import make_app as make_jobs_app
 
 
 def parse(text: str) -> dict[str, float]:
@@ -31,89 +27,31 @@ def parse(text: str) -> dict[str, float]:
     return out
 
 
-def test_text_format_escaping_and_numbers() -> None:
-    text = render_families(
-        [
-            Family(
-                "asm_x",
-                "gauge",
-                "Help with \\ and\nnewline.",
-                [
-                    Sample(1.5, {"l": 'a"b\\c\nd'}),
-                    Sample(float("inf")),
-                    Sample(float("nan"), {"k": "v"}),
-                    Sample(3.0, {"k": "w"}),
-                ],
-            ),
-            Family("asm_empty", "gauge", "no samples: not rendered", []),
-        ]
-    )
-    assert text == (
-        "# HELP asm_x Help with \\\\ and\\nnewline.\n"
-        "# TYPE asm_x gauge\n"
-        'asm_x{l="a\\"b\\\\c\\nd"} 1.5\n'
-        "asm_x +Inf\n"
-        'asm_x{k="v"} NaN\n'
-        'asm_x{k="w"} 3\n'
-    )
+def scrape(client: TestClient, wait: float = 0.3) -> dict[str, float]:
+    time.sleep(wait)  # the metrics consumer reads the event bus asynchronously
+    return parse(client.get("/metrics").text)
 
 
-async def test_fresh_hub_exposes_zeroed_counters_and_an_empty_histogram() -> None:
-    series = parse(await MetricsHub().render())
-    assert series['asm_llm_requests_total{result="ok"}'] == 0
-    assert not [k for k in series if "collector" in k or "report" in k]
-    assert series['asm_llm_tokens_total{direction="prompt"}'] == 0
-    assert series['asm_llm_request_duration_seconds_bucket{le="+Inf"}'] == 0
-    assert series["asm_llm_request_duration_seconds_count"] == 0
+def test_fresh_hub_exposes_zeroed_counters_and_nothing_of_the_process() -> None:
+    s = parse(MetricsHub("1.2.3").render().decode())
+    assert s['asm_llm_requests_total{result="ok"}'] == 0
+    assert s['asm_llm_tokens_total{direction="completion"}'] == 0
+    assert s['asm_build_info{version="1.2.3"}'] == 1
+    assert s["asm_pending_approvals"] == 0
+    assert not [k for k in s if k.startswith(("process_", "python_")) or "_created" in k]
 
 
-async def test_llm_call_events_update_instruments() -> None:
+def test_llm_call_events_update_the_series() -> None:
     hub = MetricsHub()
-    hub.on_llm_call(
-        {"status": "ok", "total_ms": 1500, "prompt_tokens": 100, "completion_tokens": 40}
-    )
-    hub.on_llm_call(
-        {"status": "ok", "total_ms": 70000, "prompt_tokens": 10, "completion_tokens": 5}
-    )
-    hub.on_llm_call({"status": "error", "total_ms": 20, "error_type": "ValueError"})
-    hub.on_llm_call({"status": "error", "error_type": None})
-    s = parse(await hub.render())
-
-    assert s["asm_llm_request_duration_seconds_count"] == 2
-    assert s['asm_llm_request_duration_seconds_bucket{le="2"}'] == 1  # cumulative
-    assert s['asm_llm_request_duration_seconds_bucket{le="120"}'] == 2
-    assert s["asm_llm_request_duration_seconds_sum"] == 71.5
-    assert s['asm_llm_tokens_total{direction="prompt"}'] == 110
-    assert s['asm_llm_tokens_total{direction="completion"}'] == 45
-    assert s['asm_llm_errors_total{type="ValueError"}'] == 1
-    assert s['asm_llm_errors_total{type="error"}'] == 1
-    assert s['asm_llm_requests_total{result="ok"}'] == 2
-    assert s['asm_llm_requests_total{result="error"}'] == 2
-
-
-async def test_providers_sync_async_and_broken() -> None:
-    hub = MetricsHub()
-    hub.add_provider(lambda: [Family("asm_pending_approvals", "gauge", "h", [Sample(2)])])
-
-    async def extra() -> list[Family]:
-        return [Family("asm_extra_gauge", "gauge", "h", [Sample(5, {"app": "x"})])]
-
-    def broken() -> list[Family]:
-        raise RuntimeError("provider bug")
-
-    hub.add_provider(extra)
-    hub.add_provider(broken)
-    s = parse(await hub.render())
-    assert s["asm_pending_approvals"] == 2 and s['asm_extra_gauge{app="x"}'] == 5
-    assert "asm_llm_requests_total{" in "".join(s)  # one bad provider does not hide the rest
-
-
-def test_build_info_family() -> None:
-    s = parse(render_families(build_info_families("1.2.3")))
-    assert s == {'asm_build_info{version="1.2.3"}': 1}
-
-
-# --------------------------------------------------------------------------- endpoint
+    hub.on_llm_call({"status": "ok", "total_ms": 1500, "prompt_tokens": 7, "completion_tokens": 3})
+    hub.on_llm_call({"status": "error", "error_type": "timeout"})
+    s = parse(hub.render().decode())
+    assert s['asm_llm_requests_total{result="ok"}'] == 1
+    assert s['asm_llm_requests_total{result="error"}'] == 1
+    assert s['asm_llm_errors_total{type="timeout"}'] == 1
+    assert s['asm_llm_tokens_total{direction="prompt"}'] == 7
+    assert s['asm_llm_request_duration_seconds_bucket{le="2.0"}'] == 1
+    assert s["asm_llm_request_duration_seconds_sum"] == 1.5
 
 
 def test_scrape_after_a_chat_counts_its_llm_calls(bootstrap: Bootstrap) -> None:
@@ -123,13 +61,41 @@ def test_scrape_after_a_chat_counts_its_llm_calls(bootstrap: Bootstrap) -> None:
         assert before.headers["content-type"] == CONTENT_TYPE
         assert parse(before.text)['asm_llm_requests_total{result="ok"}'] == 0
         ask(client, "how is it?")
-        time.sleep(0.3)  # the metrics consumer reads the bus asynchronously
-        s = parse(client.get("/metrics").text)
+        s = scrape(client)
     assert s['asm_llm_requests_total{result="ok"}'] >= 1
     assert s['asm_llm_tokens_total{direction="prompt"}'] >= 10
     assert s["asm_llm_request_duration_seconds_count"] >= 1
     assert s['asm_build_info{version="' + __version__ + '"}'] == 1
-    assert not [k for k in s if "collector" in k or "report" in k or "health" in k]
+
+
+def test_job_runs_show_up_as_series(
+    bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
+) -> None:
+    findings = [
+        {"severity": "crit", "title": "/ is 97% full", "detail": ""},
+        {"severity": "warn", "title": "/srv is 90% full", "detail": ""},
+        {"severity": "warn", "title": "inodes", "detail": ""},
+    ]
+    app = make_jobs_app(bootstrap)
+    with TestClient(app) as client:
+        models.script = [finish("crit", "Disks are full.", findings)]
+        storage = client.portal.call(app.state.ctx.jobs.run, "storage", "manual")  # type: ignore[union-attr]
+        models.script = [finish("ok", "Fine.")]
+        client.portal.call(app.state.ctx.jobs.run, "docker", "manual")  # type: ignore[union-attr]
+        s = scrape(client)
+        assert s['asm_job_status{job="storage"}'] == 2 and s['asm_job_status{job="docker"}'] == 0
+        assert s['asm_job_findings{job="storage",severity="crit"}'] == 1
+        assert s['asm_job_findings{job="storage",severity="warn"}'] == 2
+        assert s['asm_job_findings{job="docker",severity="warn"}'] == 0
+        assert s['asm_job_runs_total{job="storage",status="crit"}'] == 1
+        assert s['asm_job_last_run_timestamp_seconds{job="storage"}'] == storage["finished"]
+        assert s['asm_job_last_run_duration_seconds{job="storage"}'] >= 0
+        assert 'asm_job_status{job="journal"}' not in s  # never ran
+    # after a restart the latest runs are there again (the run counters start from zero)
+    with TestClient(make_jobs_app(bootstrap)) as client:
+        s = scrape(client, 0)
+        assert s['asm_job_status{job="storage"}'] == 2
+        assert 'asm_job_runs_total{job="storage",status="crit"}' not in s
 
 
 def test_metrics_can_be_disabled_and_protected_by_a_token(bootstrap: Bootstrap) -> None:
@@ -151,9 +117,19 @@ def test_metrics_can_be_disabled_and_protected_by_a_token(bootstrap: Bootstrap) 
         assert client.get("/metrics", headers={"Authorization": "Bearer s3cret"}).status_code == 404
 
 
-def test_metric_names_follow_prometheus_conventions(bootstrap: Bootstrap) -> None:
-    """Cheap stand-in for promtool: counters end in _total, nothing else does."""
-    hub = MetricsHub()
-    for fam in hub.families():
-        assert re.fullmatch(r"asm_[a-z_]+", fam.name)
-        assert fam.name.endswith("_total") == (fam.type == "counter")
+def test_the_exposition_parses_and_names_follow_conventions() -> None:
+    hub = MetricsHub("1")
+    hub.on_action("mcp_call", "pending")
+    hub.set_job_run({"job_slug": "a", "status": "warn", "findings": []}, count=True)
+    families = list(text_string_to_metric_families(hub.render().decode()))
+    assert {f.name for f in families} >= {
+        "asm_llm_requests",
+        "asm_actions",
+        "asm_job_status",
+        "asm_job_runs",
+        "asm_pending_approvals",
+    }
+    for family in families:
+        assert re.fullmatch(r"asm_[a-z_]+", family.name)
+        for sample in family.samples:
+            assert sample.name.endswith("_total") == (family.type == "counter")
