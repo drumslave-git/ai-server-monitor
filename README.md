@@ -416,6 +416,19 @@ log and the model call logs are kept; the rest of the old data is deleted by the
 - Metrics: the `asm_health_*`, `asm_findings`, `asm_report_*` and `asm_collector_*` series are
   gone; the jobs export `asm_job_*`. Re-import `docs/grafana-dashboard.json`.
 
+### 0.7.1
+
+- Built-in jobs you never edited get the new prompts by themselves. If you edited one (above
+  all `systemd`, whose old prompt used `systemctl`), press *Reset* on the Jobs page to get the
+  new text.
+- `systemctl` cannot work in the read-only shell. The `systemd` job reads systemd's Varlink
+  socket instead, which needs systemd 257 or newer; on older systems it falls back to the
+  journal of PID 1.
+- Warn and crit findings now quote the command output they rest on. A quote that is not in
+  the output is shown as "not confirmed by command output". A model that does not finish
+  within its step limit gives a run with the error "The model did not finish within N steps"
+  instead of a crash.
+
 ## Troubleshooting
 
 - **A job or the summary shows `error`** — open the run on the Jobs page: its error says why
