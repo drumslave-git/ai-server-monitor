@@ -26,6 +26,7 @@ from pydantic_ai.messages import TextPart
 from pydantic_ai.models.openai import OpenAIChatModelSettings
 
 from ..agent.models import ModelHub
+from ..agent.output import scrub_output
 from ..agent.prompts import chat_prompt, host_line
 from ..agent.runtime import (
     AgentConfig,
@@ -35,7 +36,7 @@ from ..agent.runtime import (
     resume_results,
     run_agent,
 )
-from ..agent.safety import Scrubber
+from ..agent.safety import Scrubber, wrap_untrusted
 from ..agent.tools import (
     app_bash,
     app_delegate,
@@ -49,6 +50,7 @@ from ..jobs.tools import job_tools
 from ..llm.text import strip_reasoning
 from ..tracing import trace_scope
 from ..tracing.parse import empty_answer_message
+from .audit import record_call
 from .explain import Explain
 from .store import ChatStore
 from .title import TITLE_MAX_TOKENS, TITLE_SYSTEM, TITLE_TIMEOUT_S, clean_title, title_prompt
@@ -151,6 +153,49 @@ class ChatEngine:
             require_look=True,
         ):
             yield event
+
+    async def run_command(self, session_id: str, command: str) -> dict[str, Any]:
+        """The owner pressed Run on a command in an answer: run it in the read-only shell as
+        the `bash` tool does (same sandbox, time limit, output cap, scrubbing), store it as a
+        message of the session (`meta.run`; the content is what the model sees later, as
+        untrusted data) and return it. No model turn is started."""
+        app = self.app
+        chat = app.settings.chat
+        scrub = Scrubber(app.settings)
+        result = await app_shell(app).run(
+            command,
+            timeout_s=min(chat.command_timeout.total_seconds(), chat.tool_timeout.total_seconds()),
+            max_chars=max(chat.max_tool_result_chars - 400, 400),
+        )
+        await record_call(
+            app.db,
+            "shell",
+            session_id,
+            cmd=command[:500],
+            exit=result.exit_code,
+            seconds=result.duration_s,
+            bytes=result.output_bytes,
+            stopped=result.stopped,
+            by="user",
+        )
+        run = {
+            "command": command,
+            "exit_code": result.exit_code,
+            "duration_s": round(result.duration_s, 2),
+            "stopped": result.stopped,
+            "truncated": result.truncated,
+            "output": scrub.text(scrub_output(result.output)),
+        }
+        seen = scrub.text(scrub_output(result.text()))
+        content = "I ran this command on the server myself:\n" + wrap_untrusted(
+            "bash", f"$ {command}\n{seen}"
+        )
+        lock = self._locks.setdefault(session_id, asyncio.Lock())
+        async with lock:  # after an answer that is being written, not in the middle of it
+            message_id = await self.store.add_message(
+                session_id, "user", content, meta={"run": run}
+            )
+        return {"message_id": message_id, **run}
 
     # ------------------------------------------------------------------ titles
 

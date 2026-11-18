@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type ActionRecord, type Schemas } from "../api";
 import { HostCommand } from "../components/HostCommand";
+import { RunnableMarkdown } from "../components/RunnableMarkdown";
 import { ago } from "../fmt";
 import { takeExplain, type ExplainRequest } from "../components/Explain";
 import { useStream } from "../live";
-import { Dot, Empty, Markdown, PageHead, useNow, usePoll, type Level } from "../ui";
+import { Dot, Empty, PageHead, useNow, usePoll, type Level } from "../ui";
 
 type SessionList = Schemas["ChatSessionList"];
 type SessionDoc = Schemas["ChatSession"];
@@ -22,8 +23,11 @@ type ToolUse = {
 };
 /** The first message of an Explain conversation: shown as its label, the source data folded. */
 type ExplainNote = { label: string; source: string };
+/** A command the owner ran from an answer (POST /api/chat/sessions/{id}/run). */
+type CommandRun = Schemas["CommandRun"];
 type Turn =
   | { role: "user"; text: string; explain?: ExplainNote }
+  | { role: "run"; run: Omit<CommandRun, "message_id"> }
   | {
       role: "assistant";
       text: string;
@@ -59,7 +63,11 @@ function toTurns(doc: SessionDoc): Turn[] {
   let current: Extract<Turn, { role: "assistant" }> | null = null;
   const open = () => (current ??= { role: "assistant", text: "", tools: [] });
   for (const m of doc.messages) {
-    if (m.role === "user") {
+    if (m.role === "user" && (m.meta as any)?.run) {
+      if (current) turns.push(current);
+      current = null;
+      turns.push({ role: "run", run: (m.meta as any).run });
+    } else if (m.role === "user") {
       if (current) turns.push(current);
       current = null;
       const label = (m.meta as any)?.explain?.label;
@@ -291,6 +299,20 @@ export function ChatPage() {
     }
   };
 
+  // Run on a command in an answer: the read-only shell runs it; the card joins the thread.
+  const runCommand = async (command: string) => {
+    const id = sessionId.current;
+    if (!id) return;
+    let run: Omit<CommandRun, "message_id">;
+    try {
+      run = await api.post<CommandRun>(`/api/chat/sessions/${id}/run`, { command });
+    } catch (e) {
+      run = { command, exit_code: null, duration_s: 0, stopped: "error", truncated: false, output: (e as Error).message };
+    }
+    if (sessionId.current === id) setTurns((all) => [...all, { role: "run", run }]);
+    sessions.reload();
+  };
+
   const remove = async (id: string) => {
     if (!confirm("Delete this conversation?")) return;
     await api.del(`/api/chat/sessions/${id}`);
@@ -338,7 +360,13 @@ export function ChatPage() {
           )}
           <div className="messages">
             {turns.map((t, i) =>
-              t.role === "user" ? <UserBubble key={i} text={t.text} explain={t.explain} /> : <AssistantBubble key={i} turn={t} />,
+              t.role === "user" ? (
+                <UserBubble key={i} text={t.text} explain={t.explain} />
+              ) : t.role === "run" ? (
+                <RunCard key={i} run={t.run} />
+              ) : (
+                <AssistantBubble key={i} turn={t} onRun={runCommand} />
+              ),
             )}
           </div>
           <div ref={bottom} />
@@ -402,7 +430,33 @@ function displayName(name: string): string {
   return i > 0 ? `${name.slice(0, i)} · ${name.slice(i + 2)}` : name;
 }
 
-function AssistantBubble({ turn }: { turn: Extract<Turn, { role: "assistant" }> }) {
+/** A command the owner ran, with its exit code and output (stored in the conversation). */
+function RunCard({ run }: { run: Omit<CommandRun, "message_id"> }) {
+  const failed = run.stopped === "error";
+  return (
+    <div className="bubble bubble-run">
+      <p className="muted small">You ran this command (read-only shell)</p>
+      <HostCommand
+        item={{
+          args: { command: run.command },
+          reason: null,
+          status: failed ? "failed" : "executed",
+          result: failed
+            ? { error: `Could not run: ${run.output}` }
+            : { exit_code: run.exit_code, duration_s: run.duration_s, stopped: run.stopped, truncated: run.truncated, output: run.output },
+        }}
+      />
+    </div>
+  );
+}
+
+function AssistantBubble({
+  turn,
+  onRun,
+}: {
+  turn: Extract<Turn, { role: "assistant" }>;
+  onRun: (command: string) => Promise<void>;
+}) {
   const names = Array.from(new Set(turn.tools.map((t) => displayName(t.name))));
   // approvals this answer waits for, and older write tools whose result named a pending approval
   const approvals = Array.from(
@@ -446,7 +500,7 @@ function AssistantBubble({ turn }: { turn: Extract<Turn, { role: "assistant" }> 
           <Dot level={outcomeLevel(turn.outcome)} /> <span className="waiting-text">{turn.text.trim()}</span>
         </p>
       ) : turn.text ? (
-        <Markdown text={turn.text} />
+        <RunnableMarkdown text={turn.text} onRun={turn.live ? undefined : onRun} />
       ) : turn.live && !turn.error ? (
         <p className="muted">Thinking…</p>
       ) : null}

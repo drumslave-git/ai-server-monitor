@@ -134,6 +134,14 @@ pre { margin: 0; font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wra
 .markdown code { font: 12px var(--mono); background: var(--hover); padding: 1px 4px; border-radius: 4px; }
 .markdown pre { background: var(--surface-2); padding: 12px; border-radius: var(--radius-sm); overflow: auto; }
 .markdown pre code { background: none; padding: 0; }
+.run-block { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); margin: 8px 0; }
+.run-cmd { position: relative; }
+.run-cmd + .run-cmd { border-top: 1px solid var(--border); }
+.markdown .run-block pre { background: none; margin: 0; padding: 8px 76px 8px 12px; }
+.run-cmd .btn-run { position: absolute; top: 5px; right: 6px; padding: 0 8px; font-size: 12px; line-height: 20px; gap: 4px; color: var(--text); border-color: var(--border); background: var(--surface); }
+.run-cmd .btn-run.running { color: var(--muted); }
+.no-run .btn-run { display: none; }
+.bubble-run { align-self: flex-end; width: min(100%, 76ch); display: grid; gap: 4px; }
 .markdown table { border-collapse: collapse; }
 .markdown th, .markdown td { padding: 4px 12px 4px 0; text-align: left; border-bottom: 1px solid var(--border); }
 

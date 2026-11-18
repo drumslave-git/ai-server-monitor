@@ -259,6 +259,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chat/sessions/{session_id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Command
+         * @description Run a command from an answer in the read-only host shell (as the `bash` tool does) and
+         *     add it with its result to the conversation. The model sees it with the next question; no
+         *     model turn starts now.
+         */
+        post: operations["run_command_api_chat_sessions__session_id__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/info": {
         parameters: {
             query?: never;
@@ -925,6 +947,26 @@ export interface components {
              * @default 20
              */
             worker_max_steps: number;
+        };
+        /** CommandRun */
+        CommandRun: {
+            /** Command */
+            command: string;
+            /** Duration S */
+            duration_s: number;
+            /** Exit Code */
+            exit_code?: number | null;
+            /** Message Id */
+            message_id: number;
+            /** Output */
+            output: string;
+            /** Stopped */
+            stopped?: string | null;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
         };
         /**
          * ConnectionTestResult
@@ -1787,6 +1829,11 @@ export interface components {
             count: number;
             /** Purpose */
             purpose: string;
+        };
+        /** RunRequest */
+        RunRequest: {
+            /** Command */
+            command: string;
         };
         /** RunStarted */
         RunStarted: {
@@ -2695,6 +2742,41 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_command_api_chat_sessions__session_id__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandRun"];
+                };
             };
             /** @description Validation Error */
             422: {
