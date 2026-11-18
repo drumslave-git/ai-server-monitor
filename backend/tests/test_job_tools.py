@@ -62,6 +62,7 @@ def test_the_chat_lists_creates_changes_runs_and_deletes_jobs(
         # run now: the finished result comes back in the same reply
         models.script = [
             tool("job_run", slug="docker"),
+            tool("bash", command="docker ps"),
             finish("warn", "One container restarts often.", []),  # the job's own model turn
             "Docker: one container restarts often.",
         ]

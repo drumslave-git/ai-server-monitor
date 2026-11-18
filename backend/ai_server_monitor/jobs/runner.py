@@ -137,6 +137,34 @@ class SummaryResult(JobResult):
         return json_list(value, "topics", TOPICS_EXAMPLE)
 
 
+RAN_NO_COMMAND = "ran no command"
+LOOK_FIRST = (
+    "You have not run any command yet. Run the check's commands with `bash` and look at "
+    "their output before you report; then call final_result."
+)
+
+
+class CommandCheck:
+    """Output validator of a topic run: a result before any command goes back once with
+    `LOOK_FIRST`; a run that still ran none is stored as an error (`RAN_NO_COMMAND`).
+    The summary is exempt: it reads the topic results."""
+
+    def __init__(self, sources: list[str]):
+        self.sources = sources
+        self.start = len(sources)
+        self.retried = False
+
+    @property
+    def ran(self) -> bool:
+        return len(self.sources) > self.start
+
+    def __call__(self, output: Any) -> Any:
+        if self.ran or self.retried or not isinstance(output, JobResult):
+            return output
+        self.retried = True
+        raise ModelRetry(LOOK_FIRST)
+
+
 class TopicCheck:
     """Output validator of the summary: every enabled topic job is listed with the status its
     latest run really had. One retry names what is wrong; after that the real statuses are
@@ -332,8 +360,11 @@ class JobRunner:
             prompt = "Run the check now, then call final_result."
         sources.append(prompt)  # the summary may quote the topic results it was given
         evidence = EvidenceCheck(sources)
+        commands = CommandCheck(sources) if topic_check is None else None
 
         def check(output: Any) -> Any:
+            if commands is not None:
+                output = commands(output)
             output = evidence(output)
             return topic_check(output) if topic_check is not None else output
 
@@ -368,6 +399,8 @@ class JobRunner:
                 return {**fields, "status": "error", "error": error}
             text = strip_reasoning(str(output or ""))[:500]
             return {**fields, "status": "error", "error": f"no result: {text or 'empty answer'}"}
+        if commands is not None and not commands.ran:
+            return {**fields, "status": "error", "error": RAN_NO_COMMAND}
         return {
             **fields,
             "status": output.status,

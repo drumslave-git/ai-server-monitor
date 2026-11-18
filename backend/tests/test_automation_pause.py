@@ -14,7 +14,7 @@ from ai_server_monitor.main import create_app
 from ai_server_monitor.schedule import Schedule
 
 from .conftest import LLM_URL
-from .jobfakes import ScriptedModels, finish
+from .jobfakes import ScriptedModels, finish, tool
 
 
 async def _until(predicate, timeout: float = 4.0) -> None:  # type: ignore[no-untyped-def]
@@ -196,6 +196,6 @@ def test_pause_cancels_a_scheduled_run_and_manual_runs_still_work(
         assert stopped["status"] == "error" and stopped["trigger"] == "schedule"
         assert stopped["error"] == "cancelled (automation paused)"
         # what a person starts still runs while paused
-        models.script = [finish("ok", "All containers up.")]
+        models.script = [tool("bash", command="docker ps"), finish("ok", "All containers up.")]
         manual = client.portal.call(ctx.jobs.run, "docker", "manual")  # type: ignore[union-attr]
         assert manual["status"] == "ok"

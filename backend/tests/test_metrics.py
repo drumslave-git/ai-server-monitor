@@ -13,7 +13,7 @@ from ai_server_monitor.config import SECRET_MASK, Bootstrap
 from ai_server_monitor.main import create_app
 from ai_server_monitor.outputs.metrics import CONTENT_TYPE, MetricsHub
 
-from .jobfakes import ScriptedModels, finish
+from .jobfakes import ScriptedModels, finish, tool
 from .test_chat import FakeLLM, ask, make_app, say
 from .test_jobs import make_app as make_jobs_app
 
@@ -81,9 +81,12 @@ def test_job_runs_show_up_as_series(
     ]
     app = make_jobs_app(bootstrap)
     with TestClient(app) as client:
-        models.script = [finish("crit", "Disks are full.", findings)]
+        models.script = [
+            tool("bash", command="df -h /"),
+            finish("crit", "Disks are full.", findings),
+        ]
         storage = client.portal.call(app.state.ctx.jobs.run, "storage", "manual")  # type: ignore[union-attr]
-        models.script = [finish("ok", "Fine.")]
+        models.script = [tool("bash", command="df -h /"), finish("ok", "Fine.")]
         client.portal.call(app.state.ctx.jobs.run, "docker", "manual")  # type: ignore[union-attr]
         s = scrape(client)
         assert s['asm_job_status{job="storage"}'] == 2 and s['asm_job_status{job="docker"}'] == 0

@@ -123,8 +123,10 @@ Two model settings, both any OpenAI-compatible endpoint:
 A job is a prompt for the model, a schedule (an interval or a cron line, in the host's time
 zone unless `general.timezone` says otherwise) and a model. A topic run gets only `bash` and must
 finish with a structured result: status, a short markdown summary and findings (`info`, `warn`,
-`crit`). A run that fails (model unreachable, over its time limit, no result) is stored as
-`error` with the reason. Runs are kept for `storage.retention`.
+`crit`). It must run at least one command: a result given before any is sent back once, and a
+run that still ran none is stored as `error` "ran no command" (the summary is exempt: it reads
+the topic results). A run that fails (model unreachable, over its time limit, no result) is
+stored as `error` with the reason. Runs are kept for `storage.retention`.
 
 Built-in jobs (edit them on the Jobs page; *Reset* brings back the release version, and
 unedited ones follow later releases):
@@ -162,7 +164,11 @@ working. It survives a restart. `GET /api/automation`, `POST /api/automation/pau
   chat. The Telegram summary message has the same button.
 - **Chat** — ask about the server ("what is using the most disk?"). Answers stream in; each tool
   call is shown with its command and output. The model sees the last `chat.history_messages`
-  messages of a conversation.
+  messages of a conversation. Commands in an answer have a **Run** button: **Run** for a command
+  marked `# [read-only]` (read-only shell), **Run (changes the server)** for `# [write]` and
+  **Run (may change the server)** for an unmarked one (both run as root on that click, logged
+  in Approvals). Commands the model left unmarked are labelled by one extra call of the main
+  model before the answer is stored.
 - **Approvals** — what waits for your decision, and the permanent audit log of every action
   (`GET /api/approvals`, `GET /api/actions`, one action at `GET /api/actions/{id}`).
 - **Logs** — every request to a model exactly as sent and received (messages, tool definitions,
@@ -444,6 +450,29 @@ log and the model call logs are kept; the rest of the old data is deleted by the
 - The built-in jobs, the chat and the worker share one set of tested host commands, and the
   `journal` and `updates` jobs run one combined command. Built-in jobs you never edited get the
   new prompts by themselves; if you edited one, press *Reset* on the Jobs page to get them.
+
+### 0.7.3
+
+- Every command in a chat or Explain answer has a **Run** button. The answer marks each command
+  `# [read-only]` or `# [write]`: **Run** runs a read-only command in the read-only shell;
+  **Run (changes the server)** (a write command) and **Run (may change the server)** (a command
+  without a mark) run it as root through the change shell on that one click, with an entry in
+  the Approvals audit log (decided by `user:run-button`). The result goes into the chat and the
+  model answers it at once.
+- The summary lists every enabled topic job with its status and one line (Dashboard and
+  Telegram).
+
+### Next release (after 0.7.4)
+
+- Commands the model shows without a valid mark get one: after the answer is final, one more
+  call of the main model labels them read-only or write, and the mark is written into the
+  stored answer (Logs: purpose `chat_marks`). If that call fails they stay unmarked and the app
+  log says so.
+- A topic job run must run at least one command: a result given before any command is sent
+  back once; a run that still ran none is stored as `error` "ran no command". The summary is
+  exempt.
+- Settings → Main model: the connection test works again (it failed with HTTP 422); error
+  messages of the API now name the field and the problem.
 
 ## Troubleshooting
 

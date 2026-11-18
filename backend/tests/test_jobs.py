@@ -248,7 +248,7 @@ def test_builtins_can_be_edited_and_reset_and_unedited_ones_follow_releases(
 def test_run_now_returns_at_once_and_the_run_finishes(
     bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
 ) -> None:
-    models.script = [finish("ok", "Nothing pending.")]
+    models.script = [tool("bash", command="apt list --upgradable"), finish("ok", "No updates.")]
     with TestClient(make_app(bootstrap)) as client:
         started = client.post("/api/jobs/updates/run")
         assert started.status_code == 202
@@ -374,7 +374,10 @@ def test_findings_must_quote_command_output(
         assert "has no evidence" in models.requests[-1]["text"]
         assert fixed["findings"][0]["verified"] is True
         # an info finding needs no evidence
-        models.script = [finish("ok", "Fine.", [{"severity": "info", "title": "note"}])]
+        models.script = [
+            tool("bash", command="df -h /"),
+            finish("ok", "Fine.", [{"severity": "info", "title": "note"}]),
+        ]
         assert run(client, "storage")["findings"][0]["verified"] is True
 
 
@@ -482,3 +485,30 @@ def test_the_telegram_summary_shows_one_line_per_topic() -> None:
         }
     )
     assert text.splitlines()[1:] == ["⚠️ storage: / at 91%", "✅ updates: 38 pending"]
+
+
+def test_a_topic_run_must_run_a_command(
+    bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
+) -> None:
+    """Live 0.7.3: the docker job on the worker model ran no command and said "all healthy".
+    A result before any command is sent back once; a run that still ran none is an error.
+    The summary reads the topic results and needs no command."""
+    with TestClient(make_app(bootstrap)) as client:
+        models.script = [finish("ok", "All healthy."), finish("ok", "All healthy.")]
+        lazy = run(client, "docker")
+        assert lazy["status"] == "error" and lazy["error"] == "ran no command"
+        assert "You have not run any command yet" in models.requests[-1]["text"]
+        assert shell == []
+        # sent back, it looks, and the result counts
+        models.script = [
+            finish("ok", "All healthy."),
+            tool("bash", command="docker ps -a"),
+            finish("ok", "All containers up."),
+        ]
+        looked = run(client, "docker")
+        assert looked["status"] == "ok" and looked["error"] is None
+        assert shell == ["docker ps -a"]
+        # the summary is exempt
+        models.script = [finish("ok", "Quiet.")]
+        summary = run(client, "summary")
+        assert summary["status"] == "ok" and "You have not run" not in models.requests[-1]["text"]

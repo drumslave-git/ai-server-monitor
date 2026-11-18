@@ -934,7 +934,10 @@ def test_summary_command_runs_it_and_replies_here_others_get_the_change(
 def test_run_command_runs_a_job_and_replies_with_its_result(
     bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
 ) -> None:
-    models.script = [finish("warn", "Root is 88% full.", [FINDING])]
+    models.script = [
+        tool("bash", command="df -h /"),
+        finish("warn", "Root is 88% full.", [FINDING]),
+    ]
     tg = FakeTelegram()
     app = make_app(bootstrap, tg)
     with running(app, tg) as client:
@@ -966,6 +969,7 @@ def test_status_command_shows_the_headline_and_one_line_per_job(
     bootstrap: Bootstrap, models: ScriptedModels
 ) -> None:
     models.script = [
+        tool("bash", command="df -h /"),
         finish("warn", "Root is 88% full.", [FINDING]),
         finish("crit", "Server in trouble."),
     ]
