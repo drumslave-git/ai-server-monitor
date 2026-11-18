@@ -16,7 +16,7 @@ from ai_server_monitor.agent.models import ModelHub
 Step = str | tuple[str, dict[str, Any]] | Callable[[list[ModelMessage], AgentInfo], Any]
 
 
-def tool(name: str, **args: Any) -> tuple[str, dict[str, Any]]:
+def tool(name: str, /, **args: Any) -> tuple[str, dict[str, Any]]:
     return (name, args)
 
 

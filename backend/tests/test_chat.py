@@ -216,7 +216,15 @@ def test_bash_answers_the_question_and_everything_is_persisted(
         # What the model saw: bash, delegate (and nothing else) offered natively, the result
         # delimited as untrusted data with the exit code, the secret scrubbed.
         first, second = llm.requests
-        assert {t["function"]["name"] for t in first["tools"]} == {"bash", "delegate"}
+        assert {t["function"]["name"] for t in first["tools"]} == {
+            "bash",
+            "delegate",
+            "jobs_list",
+            "job_results",
+            "job_save",
+            "job_delete",
+            "job_run",
+        }
         assert first["messages"][0]["role"] == "system"
         assert "read-only shell" in first["messages"][0]["content"]
         tool_message = second["messages"][-1]

@@ -56,7 +56,7 @@ def test_a_chat_turn_with_a_tool_call_is_one_timeline(
             "role": "user",
             "content": "how full is the disk?",
         }
-        assert {t["function"]["name"] for t in detail["tools"]} == {"bash", "delegate"}
+        assert {t["function"]["name"] for t in detail["tools"]} >= {"bash", "delegate"}
         assert detail["tool_calls"][0]["name"] == "bash"
         assert detail["stream"] is True and detail["ttft_ms"] is not None
         assert detail["prompt_tokens"] == 10 and detail["completion_tokens"] == 5

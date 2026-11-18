@@ -34,6 +34,7 @@ from ..agent.tools import (
     file_for_approval,
     mcp_agent_tools,
 )
+from ..jobs.tools import job_tools
 from ..llm.text import strip_reasoning
 from ..tracing import trace_scope
 from ..tracing.parse import empty_answer_message
@@ -178,10 +179,11 @@ class ChatEngine:
         ctx = ToolContext(app, session_id, source)
         shell = app_shell(app)
         mcp = build_mcp_tools(app.mcp)
-        kinds = {t.name: t.kind for t in mcp}
+        kinds = {t.name: t.kind for t in mcp} | {"job_save": "write", "job_delete": "write"}
         tools = [
             app_bash(app, session_id, shell),
             app_delegate(app, session_id, scrub, host, shell),
+            *job_tools(app, session_id),
             *mcp_agent_tools(mcp, ctx),
         ]
         instructions = chat_prompt(host, language)
