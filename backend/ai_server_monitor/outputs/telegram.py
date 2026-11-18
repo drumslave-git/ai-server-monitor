@@ -721,6 +721,7 @@ class TelegramBot:
             "approval.expired",
             "approval.progress",
             "job.finished",
+            "chat.message",
         )
         async for event in sub:
             self._spawn(self.on_event(event.type, event.data))
@@ -736,6 +737,21 @@ class TelegramBot:
             await self._reflect_decision(data)
         elif kind == "job.finished":
             await self._on_job_finished(data)
+        elif kind == "chat.message":
+            await self._on_chat_message(data)
+
+    async def _on_chat_message(self, data: dict[str, Any]) -> None:
+        """A chat that waited for an approval continued by itself: the answer goes to the
+        Telegram chat that asked (web sessions see it on the chat page)."""
+        source = str(data.get("source") or "")
+        if not source.startswith("telegram:"):
+            return
+        try:
+            chat_id = int(source.removeprefix("telegram:"))
+        except ValueError:
+            return
+        if chat_id in self.allowed and data.get("text"):
+            await self.send(chat_id, str(data["text"]))
 
     # ------------------------------------------------------------------ the summary
 

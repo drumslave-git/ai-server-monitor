@@ -17,6 +17,7 @@ import httpx
 
 from . import __version__
 from .actions import ActionService, Notifier
+from .agent.change_shell import ChangeShell
 from .agent.models import ModelHub
 from .agent.safety import Scrubber
 from .automation import KV_KEY as AUTOMATION_KEY
@@ -82,14 +83,18 @@ class AppContext:
         """The scheduled runs the last pause cancelled."""
         self.models = ModelHub(self.settings, tracing=self.tracing, transport=llm_transport)
         """The agents' models (main, worker), rebuilt with every settings change."""
+        self.change_shell = ChangeShell()
+        """A root shell on the host for approved changing commands (probed at start)."""
         self.mcp = McpManager(self.settings.mcp, audit=audit_hook(self.db, "mcp"))
         self.actions = ActionService(
             self.db,
             self.settings,
             notifiers=self.action_notifiers,
             mcp=self.mcp,
+            change_shell=self.change_shell,
         )
         self.chat = ChatEngine(self)
+        self.action_notifiers.append(self.chat.on_action)
         self.jobs = JobRunner(self)
         """Runs scheduled LLM jobs; lives as long as the app (runs survive settings changes)."""
 
@@ -106,6 +111,9 @@ class AppContext:
         self.automation = AutomationState.from_stored(await self.db.kv_get(AUTOMATION_KEY))
         if self.automation.paused:
             log.warning("automation is paused: nothing runs by itself until it is resumed")
+        status = await self.change_shell.probe()
+        if not status.available:
+            log.info("changing shell commands are off: %s", status.reason)
         await self.jobs.store.seed_builtins()
         if interrupted := await self.jobs.store.mark_interrupted():
             log.warning("%d job run(s) were interrupted by the last stop", interrupted)
@@ -165,6 +173,7 @@ class AppContext:
             s,
             notifiers=self.action_notifiers,
             mcp=self.mcp,
+            change_shell=self.change_shell,
         )
         self.schedule.add_housekeeping(
             "approvals:sweep", self.actions.sweep_expired, APPROVAL_SWEEP

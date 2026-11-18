@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -98,7 +99,9 @@ async def test_write_tool_becomes_a_pending_approval_then_runs_on_approve(
     async for app in start_app(tmp_path, llm, settings_for(fake.url)):
         events = await ask(app, "turn the bedroom heating off")
         result = next(e for e in events if e["type"] == "tool_result")
-        assert result["ok"] and '"status":"pending"' in result["preview"]
+        assert result["ok"] and "Waiting for approval #" in result["preview"]
+        assert events[-1]["text"].startswith("Waiting for approval #")  # the run stopped here
+        session_id = events[-1]["session_id"]
         assert not any(name == "set_heating" for name, _ in fake.calls)  # nothing sent yet
         pending = await app.actions.pending()
         assert len(pending) == 1
@@ -111,6 +114,16 @@ async def test_write_tool_becomes_a_pending_approval_then_runs_on_approve(
         assert done["status"] == "executed", done
         assert done["result"]["result"] == {"text": "heating in bedroom is now off"}
         assert ("set_heating", {"room": "bedroom", "on": False}) in fake.calls
+        # ... and the chat continues by itself with the result
+        history: list[dict[str, str]] = []
+        for _ in range(200):
+            await asyncio.gather(*list(app.chat._background))
+            history = await app.chat.store.history(session_id, 10)
+            if history[-1]["content"] == "I asked for approval.":
+                break
+            await asyncio.sleep(0.02)
+        assert history[-1]["content"] == "I asked for approval."
+        assert "heating in bedroom is now off" in json.dumps(llm.requests[-1]["messages"])
 
 
 async def test_mcp_dry_run_is_its_own_switch(tmp_path: Path, fake: FakeMcp) -> None:

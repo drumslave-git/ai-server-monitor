@@ -30,7 +30,7 @@ from ai_server_monitor.outputs.telegram import (
 
 from .actionfakes import NAME, FakeAction
 from .conftest import LLM_URL
-from .jobfakes import ScriptedModels, finish
+from .jobfakes import ScriptedModels, finish, tool
 from .test_chat import FakeLLM, say
 
 TOKEN = "123456:TESTTOKEN-abcdefghijklmnopqrstuvwxyz012"
@@ -1014,3 +1014,20 @@ def test_jobs_command_lists_origin_state_and_next_run(bootstrap: Bootstrap) -> N
     assert "Builtin, off" in next(ln for ln in lines if "<code>updates</code>" in ln)
     mine = next(ln for ln in lines if "<code>mine</code>" in ln)
     assert "<b>My check</b>" in mine and "Custom, by user" in mine and "in 30 min" in mine
+
+
+def test_a_command_approved_later_continues_in_the_telegram_chat(
+    bootstrap: Bootstrap, models: ScriptedModels, root_shell: list[str]
+) -> None:
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg, llm=FakeLLM())
+    with running(app, tg) as client:
+        models.script = [tool("bash_write", command="systemctl restart nginx", reason="hangs")]
+        tg.feed(message("restart nginx please"))
+        wait_for(lambda: any("Waiting for approval" in t for t in tg.texts()))
+        assert root_shell == []
+        [batch] = client.get("/api/approvals").json()["items"]
+        models.script = ["Restarted, nginx is up."]
+        client.post(f"/api/approvals/{batch['id']}", json={"decision": "approve"})
+        wait_for(lambda: "Restarted, nginx is up." in tg.texts())
+        assert root_shell == ["systemctl restart nginx"]

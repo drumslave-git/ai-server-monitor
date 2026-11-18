@@ -10,7 +10,13 @@ import httpx
 from pydantic import BaseModel
 
 from ai_server_monitor.agent.models import ModelHub
-from ai_server_monitor.agent.runtime import AgentConfig, AgentTool, run_agent
+from ai_server_monitor.agent.runtime import (
+    AgentConfig,
+    AgentTool,
+    Suspended,
+    resume_results,
+    run_agent,
+)
 from ai_server_monitor.agent.tools import file_for_approval
 from ai_server_monitor.config import Settings
 
@@ -27,14 +33,12 @@ async def collect(cfg: AgentConfig, prompt: str) -> list[dict[str, Any]]:
     return [event async for event in run_agent(cfg, prompt)]
 
 
-async def test_an_approval_required_call_is_filed_and_the_model_continues() -> None:
-    filed: list[dict[str, Any]] = []
-
+def heating_tool(answer: dict[str, Any], filed: list[dict[str, Any]]) -> AgentTool:
     async def file_request(args: dict[str, Any]) -> dict[str, Any]:
         filed.append(args)
-        return {"status": "pending", "note": "NOT DONE: waiting for the owner's approval"}
+        return answer
 
-    tool = AgentTool(
+    return AgentTool(
         name="set_heating",
         description="Set the heating (changes things).",
         parameters={
@@ -45,27 +49,61 @@ async def test_an_approval_required_call_is_filed_and_the_model_continues() -> N
         handler=file_request,
         requires_approval=True,
     )
-    llm = FakeLLM(call("set_heating", {"celsius": 21}, "h1"), say("It waits for your approval."))
+
+
+async def test_a_call_settled_at_once_goes_back_to_the_model_in_the_same_run() -> None:
+    filed: list[dict[str, Any]] = []
+    tool = heating_tool({"status": "rejected", "note": "policy off: NOT DONE"}, filed)
+    llm = FakeLLM(call("set_heating", {"celsius": 21}, "h1"), say("That is not allowed."))
     models = hub(llm)
     try:
-        events = await collect(
-            AgentConfig(
-                model=models.model("main"),
-                instructions="test",
-                tools=[tool],
-                on_approval=file_for_approval,
-            ),
-            "warmer please",
+        cfg = AgentConfig(
+            model=models.model("main"),
+            instructions="test",
+            tools=[tool],
+            on_approval=file_for_approval,
         )
+        events = await collect(cfg, "warmer please")
     finally:
         await models.aclose()
     assert filed == [{"celsius": 21}]  # filed once, by the approval bridge
     [result] = [e for e in events if e["type"] == "tool_result"]
-    assert result["name"] == "set_heating" and result["ok"] and "pending" in result["text"]
-    # The model read what happened to the call (as the deferred call's result) and went on.
-    second = llm.requests[1]
-    assert "NOT DONE" in json.dumps(second["messages"][-1])
-    assert events[-1]["type"] == "end" and events[-1]["output"] == "It waits for your approval."
+    assert result["name"] == "set_heating" and "rejected" in result["text"]
+    assert "policy off: NOT DONE" in json.dumps(llm.requests[1]["messages"][-1])
+    assert events[-1]["output"] == "That is not allowed."
+
+
+async def test_a_pending_call_stops_the_run_and_it_resumes_with_the_outcome() -> None:
+    filed: list[dict[str, Any]] = []
+    pending = {"status": "pending", "action_id": 7, "approval_id": 3, "target": "heating 21"}
+    tool = heating_tool(pending, filed)
+    llm = FakeLLM(call("set_heating", {"celsius": 21}, "h1"), say("Done: it is 21 now."))
+    models = hub(llm)
+    try:
+        cfg = AgentConfig(
+            model=models.model("main"),
+            instructions="test",
+            tools=[tool],
+            on_approval=file_for_approval,
+        )
+        events = await collect(cfg, "warmer please")
+        suspended = events[-1]["output"]
+        assert isinstance(suspended, Suspended) and len(llm.requests) == 1
+        assert suspended.pending["h1"].action_ids == [7]
+        assert "Waiting for approval #3: heating 21" in suspended.pending["h1"].message
+        # stored as JSON and read back (a restart in between)
+        stored = Suspended.from_json(json.loads(json.dumps(suspended.to_json())))
+        # approved and executed by the approval service: the model gets the output
+        results, resolved = resume_results(stored, {"h1": (True, "heating is 21 now")})
+        cfg.resolved = resolved
+        resumed = [e async for e in run_agent(cfg, None, history=stored.messages, deferred=results)]
+    finally:
+        await models.aclose()
+    assert filed == [{"celsius": 21}]  # not filed a second time
+    assert "heating is 21 now" in json.dumps(llm.requests[1]["messages"])
+    [result] = [e for e in resumed if e["type"] == "tool_result"]
+    assert result["ok"] and result["text"] == "heating is 21 now"
+    assert resumed[-1]["output"] == "Done: it is 21 now."
 
 
 class Finding(BaseModel):

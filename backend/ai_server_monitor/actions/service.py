@@ -106,6 +106,7 @@ class ActionService:
         registry: dict[str, ActionDef] | None = None,
         clock: Callable[[], float] = time.time,
         mcp: Any = None,
+        change_shell: Any = None,
     ):
         self.db = db
         self.settings = settings
@@ -114,6 +115,8 @@ class ActionService:
         self._clock = clock
         self.mcp = mcp
         """The MCP manager (None when unused); `ActionDef.run` hooks reach it from here."""
+        self.change_shell = change_shell
+        """The root shell on the host for `host_command` (agent/change_shell.py)."""
         self._lock = asyncio.Lock()
         self._batch_lock = asyncio.Lock()
 

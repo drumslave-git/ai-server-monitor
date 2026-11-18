@@ -180,6 +180,13 @@ class ApprovalsSettings(_Model):
 
     approval_ttl: Duration = timedelta(hours=24)
     """Pending approvals expire after this."""
+    shell_changes: Literal["off", "approve", "auto"] = "approve"
+    """Commands that change the host, which the chat proposes when you ask for a change
+    (restart a container, delete files): approve = each one waits for your approval (here or
+    in Telegram) and the chat continues with the result; auto = they run without asking;
+    off = the chat cannot change anything. They run as root on the host, which needs
+    `cap_add: [SYS_ADMIN, SYS_PTRACE]` in compose.yaml (commented out in the example);
+    without it the chat only reads, and the status says so."""
 
 
 ReasoningEffort = Literal["auto", "none", "low", "medium", "high"]

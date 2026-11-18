@@ -19,6 +19,7 @@ from . import __version__, api_models
 from .actions.api import router as actions_router
 from .agent.models import worker_config
 from .chat.api import router as chat_router
+from .chat.engine import change_shell_offered
 from .config import Bootstrap, LLMSettings, Settings, WorkerLLMSettings, settings_json_schema
 from .conntest import KINDS as TEST_KINDS
 from .conntest import run_test
@@ -183,6 +184,12 @@ def create_app(
             pending_approvals=await ctx.pending_approvals_count(),
             automation=await ctx.automation_status(),
             **await job_status(ctx),
+            change_shell=api_models.ChangeShellStatus(
+                policy=ctx.settings.approvals.shell_changes,
+                available=ctx.change_shell.status.available,
+                offered=change_shell_offered(ctx),
+                reason=ctx.change_shell.status.reason,
+            ),
         )
 
     @app.get("/api/stream")

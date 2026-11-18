@@ -42,6 +42,7 @@ What the compose file sets, and why:
 | `/:/host:ro,rslave` | A read-only view of the host's filesystem: what the chat's shell reads: disk usage of the real mounts, package state, logs. Nothing is ever written there. |
 | `security_opt: apparmor=unconfined` | On hosts with AppArmor (Ubuntu) Docker's default profile blocks reading other processes. The mounts stay read-only. Hosts without AppArmor do not need it. |
 | `cap_add: [DAC_READ_SEARCH]` | The chat's `bash` tool runs real bash on the host's files and programs (`chroot /host`, then the host's `setpriv`/`prlimit`/`ionice`) as a dedicated unprivileged uid that owns no host process, with no_new_privs and only this capability: it can read every file, write none, signal nothing, and cannot open the real Docker socket (`docker` goes through the read-only proxy). Without this line the shell still works as a plain unprivileged user and says when root-only paths were unreadable. Needs Docker's default `CHROOT`/`SETUID`/`SETGID` (no `cap_drop: ALL`). Every command is logged (`GET /api/chat/audit`). |
+| `cap_add: SYS_ADMIN, SYS_PTRACE` (commented out) | Only for **changing commands from the chat** (restart a container, delete files): after you approve one it runs as root on the host through `nsenter` into PID 1's namespaces, which needs both capabilities (measured: either alone fails). Without them the chat only reads: the `bash_write` tool is not offered and `/api/status` (`change_shell.reason`) says which lines enable it. The read-only `bash` is not affected: its sandbox keeps only `DAC_READ_SEARCH` whatever the container has. |
 | `DOCKER_HOST: tcp://docker-proxy:2375` | The Docker API goes through a socket proxy that only allows GET requests. The monitor can look at containers and images, not start, stop or delete anything. |
 | `docker-proxy` env `CONTAINERS`, `IMAGES`, `INFO`, `SYSTEM` | The API sections the proxy lets through: containers (state, stats, logs), images, engine info, and disk usage (`/system/df`). |
 | `# gpus: all` | Uncomment to make an NVIDIA GPU visible to the shell (needs the NVIDIA container runtime on the host). |
@@ -166,6 +167,13 @@ button that checks what you typed, before you save, and says what answered or wh
 
 - **The host is read-only**: read-only mounts, a GET-only Docker proxy, no write path to anything
   but the MCP servers you add.
+- **Changing commands** (`approvals.shell_changes`): when you ask the chat for a change, the main
+  model proposes a root command on the host with `bash_write` (never the scheduled jobs or the
+  worker model). `approve` (default): it waits on the Approvals page and in Telegram; once you
+  approve, reject or it expires, the chat continues by itself with the output (or the refusal),
+  on the web page and in the Telegram chat that asked. `auto`: it runs without asking. `off`:
+  the chat cannot change anything. Every command, its reason, exit code and output are in the
+  permanent action log. Needs the two commented-out capabilities in the compose file.
 - **Secrets**: API keys and tokens are stored in clear text in the SQLite file under `data/`
   (protect that directory like a credentials store) and are shown as `********` in the API and the
   UI. They are never sent to the LLM: tool results are scrubbed of configured secrets, secret-looking
@@ -327,6 +335,7 @@ a fresh install starts with.
 | Setting | Type | Default | What it does |
 |---|---|---|---|
 | `approvals.approval_ttl` | duration | `1d` | Pending approvals expire after this. |
+| `approvals.shell_changes` | off / approve / auto | `approve` | Commands that change the host, which the chat proposes when you ask for a change (restart a container, delete files): approve = each one waits for your approval (here or in Telegram) and the chat continues with the result; auto = they run without asking; off = the chat cannot change anything. They run as root on the host, which needs `cap_add: [SYS_ADMIN, SYS_PTRACE]` in compose.yaml (commented out in the example); without it the chat only reads, and the status says so. |
 
 <!-- settings-reference:end -->
 

@@ -32,6 +32,19 @@ class JobStatus(BaseModel):
     """The run in progress right now (None: not running)."""
 
 
+class ChangeShellStatus(BaseModel):
+    """Commands that change the host (the chat's `bash_write`)."""
+
+    policy: Literal["off", "approve", "auto"]
+    """Settings → Approvals → shell changes."""
+    available: bool
+    """The container can run them (it has SYS_ADMIN and SYS_PTRACE)."""
+    offered: bool
+    """The chat has the tool now: policy not off and available."""
+    reason: str | None
+    """Why it is not available, with the compose lines that enable it."""
+
+
 class StatusResponse(BaseModel):
     version: str
     uptime_s: float
@@ -47,6 +60,8 @@ class StatusResponse(BaseModel):
     overall: OverallStatus | None = None
     """From the newest summary run; None until the summary job has run."""
     jobs: list[JobStatus] = []
+    change_shell: ChangeShellStatus | None = None
+    """Whether the chat can run approved changing commands, and why not."""
     """The newest finished run of every job (GET /api/jobs has the details)."""
 
 

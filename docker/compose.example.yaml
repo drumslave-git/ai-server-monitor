@@ -10,6 +10,11 @@ services:
       - apparmor=unconfined              # else Ubuntu's AppArmor blocks reading other processes under /proc
     cap_add:
       - DAC_READ_SEARCH                  # the chat's read-only shell may read root-only files
+      # Changing commands you approve in chat (restart a container, delete files) run as root on
+      # the host via nsenter into PID 1's namespaces, which needs both of these; without them the
+      # chat only reads (Settings → Approvals → shell changes, and /api/status, say so).
+      # - SYS_ADMIN
+      # - SYS_PTRACE
     ports:
       - "8080:8080"
     environment:

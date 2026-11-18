@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
@@ -25,12 +26,20 @@ from pydantic_ai.models.openai import OpenAIChatModelSettings
 
 from ..agent.models import ModelHub
 from ..agent.prompts import chat_prompt, host_line
-from ..agent.runtime import AgentConfig, history_messages, run_agent
+from ..agent.runtime import (
+    AgentConfig,
+    Suspended,
+    history_messages,
+    resume_results,
+    run_agent,
+)
 from ..agent.safety import Scrubber
 from ..agent.tools import (
     app_bash,
     app_delegate,
     app_shell,
+    bash_write_tool,
+    command_outcome,
     file_for_approval,
     mcp_agent_tools,
 )
@@ -55,6 +64,8 @@ MCP_NOTE = (
 )
 Event = dict[str, Any]
 _MODEL_ERRORS = (AgentRunError, APIError, httpx.HTTPError)
+FINAL_STATUSES = ("executed", "failed", "dry_run", "rejected", "expired")
+"""Statuses of a decided action (queued or deferred ones still wait)."""
 
 
 class ChatEngine:
@@ -154,8 +165,6 @@ class ChatEngine:
             log.info("chat: no LLM title (%s: %s)", type(exc).__name__, exc)
             return None
 
-    # ------------------------------------------------------------------ tools
-
     # ------------------------------------------------------------------ one question
 
     async def _answer(
@@ -163,15 +172,25 @@ class ChatEngine:
     ) -> AsyncIterator[Event]:
         app = self.app
         settings = app.settings
-        hub: ModelHub = app.models
-        if not hub.configured("main"):
+        if not app.models.configured("main"):
             yield {"type": "error", "message": "The LLM is not configured (Settings → Main model)."}
             return
         history = await self.store.history(session_id, settings.chat.history_messages)
         await self.store.add_message(session_id, "user", message)
         trace_turn = uuid.uuid4().hex[:12]
+        cfg, kinds = await self._config(session_id, source, trace_turn)
+        async for event in self._drive(
+            session_id, source, cfg, kinds, trace_turn, message, history_messages(history)
+        ):
+            yield event
+
+    async def _config(
+        self, session_id: str, source: str | None, trace_turn: str
+    ) -> tuple[AgentConfig, dict[str, str]]:
+        """The main agent of this conversation: tools, instructions, limits, tracing."""
+        app = self.app
+        settings = app.settings
         host = host_line(app.host_env.root)
-        language = settings.general.language
         scrub = Scrubber(settings)
         await app.mcp.prepare()  # lazy connect; never blocks long, dead servers stay out
         from ..mcp_client import build_mcp_tools
@@ -179,14 +198,20 @@ class ChatEngine:
         ctx = ToolContext(app, session_id, source)
         shell = app_shell(app)
         mcp = build_mcp_tools(app.mcp)
-        kinds = {t.name: t.kind for t in mcp} | {"job_save": "write", "job_delete": "write"}
+        kinds = {t.name: t.kind for t in mcp} | {
+            "job_save": "write",
+            "job_delete": "write",
+            "bash_write": "write",
+        }
         tools = [
             app_bash(app, session_id, shell),
             app_delegate(app, session_id, scrub, host, shell),
             *job_tools(app, session_id),
             *mcp_agent_tools(mcp, ctx),
         ]
-        instructions = chat_prompt(host, language)
+        if change_shell_offered(app):
+            tools.append(bash_write_tool(app, source or f"chat:{session_id}", f"turn:{ctx.turn}"))
+        instructions = chat_prompt(host, settings.general.language)
         notes = list(app.mcp.unavailable())
         if mcp:
             from ..mcp_client.tools import overview_lines
@@ -195,7 +220,7 @@ class ChatEngine:
         if notes:
             instructions += "\n" + "\n".join(notes)
         cfg = AgentConfig(
-            model=hub.model("main"),
+            model=app.models.model("main"),
             instructions=instructions,
             tools=tools,
             max_steps=settings.chat.max_steps,
@@ -211,10 +236,27 @@ class ChatEngine:
             },
             on_approval=file_for_approval,
         )
+        return cfg, kinds
+
+    async def _drive(
+        self,
+        session_id: str,
+        source: str | None,
+        cfg: AgentConfig,
+        kinds: dict[str, str],
+        trace_turn: str,
+        prompt: str | None,
+        history: list[Any],
+        deferred: Any = None,
+        meta_extra: dict[str, Any] | None = None,
+    ) -> AsyncIterator[Event]:
+        """One agent run of the conversation: stores the tool traffic and the answer, yields
+        the stream events and finally `done`. A run that stops at calls waiting for approval
+        is stored to be resumed (`on_action`); its answer says what waits."""
         streamed = ""
         """Text of the current model turn already sent (reset by tool calls)."""
         end: Event = {}
-        async for event in run_agent(cfg, message, history=history_messages(history)):
+        async for event in run_agent(cfg, prompt, history=history, deferred=deferred):
             kind = event["type"]
             if kind == "token":
                 streamed += event["text"]
@@ -260,21 +302,30 @@ class ChatEngine:
                 yield event
             elif kind == "end":
                 end = event
-        final = strip_reasoning(str(end.get("output") or "")) or "(no answer)"
+        output = end.get("output")
+        waiting: list[int] = []
+        if isinstance(output, Suspended):
+            await self._suspend(session_id, source, output)
+            waiting = [i for p in output.pending.values() for i in p.action_ids]
+            final = "\n".join(p.message for p in output.pending.values())
+        else:
+            final = strip_reasoning(str(output or "")) or "(no answer)"
         # Whatever of the answer was not streamed already (the step-limit fallback text, an
-        # empty-answer placeholder) goes out now.
+        # empty-answer placeholder, the waiting note) goes out now.
         rest = final[len(streamed) :] if final.startswith(streamed) else ""
         for piece in _chunks(rest) if rest else []:
             yield {"type": "token", "text": piece, "step": end.get("steps", 0)}
         meta = {
             "steps": end.get("steps", 0),
-            "model": hub.name("main"),
+            "model": self.app.models.name("main"),
             "usage": {
                 "prompt_tokens": end.get("usage", {}).get("prompt_tokens", 0),
                 "completion_tokens": end.get("usage", {}).get("completion_tokens", 0),
             },
             "stopped": end.get("stopped"),
             "trace_turn": trace_turn,
+            **({"waiting_for": waiting} if waiting else {}),
+            **(meta_extra or {}),
         }
         message_id = await self.store.add_message(session_id, "assistant", final, meta=meta)
         yield {
@@ -284,6 +335,124 @@ class ChatEngine:
             **meta,
             "text": final,
         }
+
+    # ------------------------------------------------------------------ approvals
+
+    async def _suspend(self, session_id: str, source: str | None, run: Suspended) -> None:
+        async with self.app.db.transaction() as conn:
+            cur = await conn.execute(
+                "INSERT INTO chat_pending_runs (session_id, created, source, state) "
+                "VALUES (?, ?, ?, ?)",
+                (session_id, time.time(), source, json.dumps(run.to_json())),
+            )
+            run_id = cur.lastrowid
+            await conn.executemany(
+                "INSERT INTO chat_pending_actions (action_id, run_id, call_id) VALUES (?, ?, ?)",
+                [
+                    (action_id, run_id, call_id)
+                    for call_id, pending in run.pending.items()
+                    for action_id in pending.action_ids
+                ],
+            )
+
+    async def on_action(self, event: str, record: dict[str, Any]) -> None:
+        """Action notifier: when every action a stopped chat run waits for is decided (and run,
+        rejected or expired), the run continues in the background."""
+        if event != "action.result" or record.get("status") not in FINAL_STATUSES:
+            return
+        db = self.app.db
+        row = await db.fetchone(
+            "SELECT run_id FROM chat_pending_actions WHERE action_id = ?", (record["id"],)
+        )
+        if row is None:
+            return
+        run_id = int(row["run_id"])
+        items = await db.fetchall(
+            "SELECT p.action_id, p.call_id, a.status FROM chat_pending_actions p "
+            "JOIN actions a ON a.id = p.action_id WHERE p.run_id = ?",
+            (run_id,),
+        )
+        if any(item["status"] not in FINAL_STATUSES for item in items):
+            return
+        run = await db.fetchone("SELECT * FROM chat_pending_runs WHERE id = ?", (run_id,))
+        cursor = await db.conn.execute("DELETE FROM chat_pending_runs WHERE id = ?", (run_id,))
+        await db.conn.commit()
+        if run is None or cursor.rowcount == 0:
+            return  # resumed by a concurrent notification
+        task = asyncio.create_task(self._resume(dict(run), [dict(i) for i in items]))
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    async def _resume(self, run: dict[str, Any], items: list[dict[str, Any]]) -> None:
+        session_id, source = run["session_id"], run["source"]
+        suspended = Suspended.from_json(json.loads(run["state"]))
+        settled: dict[str, tuple[bool, str]] = {}
+        for item in items:
+            record = await self.app.actions.get(int(item["action_id"]))
+            settled[item["call_id"]] = settled_outcome(record)
+        results, resolved = resume_results(suspended, settled)
+        final, failed = "", None
+        lock = self._locks.setdefault(session_id, asyncio.Lock())
+        async with lock:
+            try:
+                trace_turn = uuid.uuid4().hex[:12]
+                cfg, kinds = await self._config(session_id, source, trace_turn)
+                cfg.resolved = resolved
+                async for event in self._drive(
+                    session_id,
+                    source,
+                    cfg,
+                    kinds,
+                    trace_turn,
+                    None,
+                    suspended.messages,
+                    deferred=results,
+                    meta_extra={"continued": True},
+                ):
+                    if event["type"] == "done":
+                        final, message_id = event["text"], event["message_id"]
+            except Exception as exc:
+                log.warning("chat: could not continue after the approval: %s", exc)
+                failed = f"⚠️ Could not continue after the approval: {exc}"
+                message_id = await self.store.add_message(
+                    session_id, "assistant", failed, meta={"continued": True, "error": True}
+                )
+        self.app.events.publish(
+            "chat.message",
+            {
+                "session_id": session_id,
+                "message_id": message_id,
+                "source": source,
+                "text": failed or final,
+            },
+        )
+
+
+def change_shell_offered(app: AppContext) -> bool:
+    """`bash_write` is offered when the policy allows it and the host shell works here."""
+    status = getattr(app, "change_shell", None)
+    return (
+        app.settings.approvals.shell_changes != "off"
+        and status is not None
+        and status.status.available
+    )
+
+
+def settled_outcome(record: dict[str, Any]) -> tuple[bool, str]:
+    """(ran, text for the model) of a decided action a stopped run waited for."""
+    status = record.get("status")
+    if record.get("action") == "host_command":
+        text = command_outcome(record)
+        return status == "executed", text if isinstance(text, str) else json.dumps(text)
+    if status == "executed":
+        return True, json.dumps(record.get("result") or {}, ensure_ascii=False, default=str)
+    texts = {
+        "rejected": "The owner rejected this request; nothing was done.",
+        "expired": "Nobody approved this request in time (it expired); nothing was done.",
+        "dry_run": "Dry run: nothing was done.",
+    }
+    detail = (record.get("result") or {}).get("error") or ""
+    return False, texts.get(str(status), f"Not done ({status}). {detail}".strip())
 
 
 def _chunks(text: str) -> list[str]:

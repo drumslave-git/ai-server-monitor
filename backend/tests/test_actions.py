@@ -232,7 +232,7 @@ async def test_failures_are_audited(db: Database, fake: FakeAction, clock: Clock
 
 
 async def test_every_registered_action_is_a_write_with_a_json_schema() -> None:
-    assert set(REGISTRY) == {"mcp_call"}
+    assert set(REGISTRY) == {"mcp_call", "host_command"}
     for definition in REGISTRY.values():
         assert definition.kind == "write"
         assert definition.schema()["type"] == "object"

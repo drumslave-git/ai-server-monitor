@@ -109,4 +109,25 @@ def shell(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return commands
 
 
+@pytest.fixture
+def root_shell(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """A change shell that works (as with SYS_ADMIN + SYS_PTRACE) and records the commands."""
+    from ai_server_monitor.agent.change_shell import ChangeShell, ChangeShellStatus
+    from ai_server_monitor.agent.shell import ShellResult
+
+    commands: list[str] = []
+
+    async def probe(self: ChangeShell) -> ChangeShellStatus:
+        self.status = ChangeShellStatus(True)
+        return self.status
+
+    async def run(self: ChangeShell, command: str, *, timeout_s: float, max_chars: int) -> Any:
+        commands.append(command)
+        return ShellResult(exit_code=0, output="nginx restarted\n", duration_s=0.4)
+
+    monkeypatch.setattr(ChangeShell, "probe", probe)
+    monkeypatch.setattr(ChangeShell, "run", run)
+    return commands
+
+
 from .jobfakes import models  # noqa: E402, F401  (the scripted-models fixture)

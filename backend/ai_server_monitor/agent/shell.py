@@ -234,46 +234,52 @@ class HostShell:
                 0.0,
                 stopped="error",
             )
-        started = time.monotonic()
-        sink = HeadTail(max_chars * 35 // 100, max_chars * 65 // 100)
         env = {"PATH": SEARCH_PATH} if self.isolated else self.environment()
-        proc = await asyncio.create_subprocess_exec(
-            *self.argv(command, timeout_s),
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            env=env,
-            process_group=0,
-        )
-        assert proc.stdout is not None
-        stopped: str | None = None
-        try:
-            async with asyncio.timeout(timeout_s):
-                while chunk := await proc.stdout.read(65536):
-                    sink.feed(chunk)
-                    if sink.total > MAX_STREAM_BYTES:
-                        stopped = "output limit"
-                        break
-                if stopped is None:
-                    await proc.wait()
-        except TimeoutError:
-            stopped = "timeout"
-        finally:
-            if proc.returncode is None:
-                with contextlib.suppress(ProcessLookupError, PermissionError):
-                    os.killpg(proc.pid, signal.SIGKILL)
-                with contextlib.suppress(Exception):
-                    await asyncio.wait_for(proc.wait(), 5)
-        output = sink.render()
-        note = None
-        if self.isolated and not self.read_all and read_denied(output):
-            note = CAP_NOTE
-        return ShellResult(
-            exit_code=None if stopped else proc.returncode,
-            output=output,
-            duration_s=round(time.monotonic() - started, 2),
-            stopped=stopped,
-            output_bytes=sink.total,
-            truncated=sink.truncated,
-            note=note,
-        )
+        result = await run_process(self.argv(command, timeout_s), env, timeout_s, max_chars)
+        if self.isolated and not self.read_all and read_denied(result.output):
+            result.note = CAP_NOTE
+        return result
+
+
+async def run_process(
+    argv: list[str], env: dict[str, str], timeout_s: float, max_chars: int
+) -> ShellResult:
+    """Run `argv` in its own process group, stdout and stderr merged and capped (head + tail),
+    at most `timeout_s` seconds; the whole group is killed on timeout or cancellation."""
+    started = time.monotonic()
+    sink = HeadTail(max_chars * 35 // 100, max_chars * 65 // 100)
+    proc = await asyncio.create_subprocess_exec(
+        *argv,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        env=env,
+        process_group=0,
+    )
+    assert proc.stdout is not None
+    stopped: str | None = None
+    try:
+        async with asyncio.timeout(timeout_s):
+            while chunk := await proc.stdout.read(65536):
+                sink.feed(chunk)
+                if sink.total > MAX_STREAM_BYTES:
+                    stopped = "output limit"
+                    break
+            if stopped is None:
+                await proc.wait()
+    except TimeoutError:
+        stopped = "timeout"
+    finally:
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(proc.wait(), 5)
+    return ShellResult(
+        exit_code=None if stopped else proc.returncode,
+        output=sink.render(),
+        duration_s=round(time.monotonic() - started, 2),
+        stopped=stopped,
+        output_bytes=sink.total,
+        truncated=sink.truncated,
+    )

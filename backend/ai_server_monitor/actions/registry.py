@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import Settings
 from ..mcp_client import actions as mcp_actions
+from . import host_command
 
 
 class ActionError(Exception):
@@ -86,6 +87,16 @@ _ACTIONS = (
         max_per_hour_of=lambda settings, args: 0,
         uses_dry_run=lambda settings: settings.mcp.dry_run,
         run=lambda service, args: mcp_actions.execute(service.mcp, args),
+        chat_tool=False,
+    ),
+    ActionDef(
+        name=host_command.ACTION_NAME,
+        description=host_command.DESCRIPTION,
+        args_model=host_command.HostCommandArgs,  # type: ignore[arg-type]
+        policy_key=lambda args: "shell",
+        target=host_command.target,
+        policy_of=host_command.policy_of,
+        run=host_command.execute,
         chat_tool=False,
     ),
 )

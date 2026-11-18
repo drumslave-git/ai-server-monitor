@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..llm.text import strip_reasoning
 from .output import scrub_output
-from .runtime import AgentConfig, AgentTool, ToolError, run_agent
+from .runtime import AgentConfig, AgentTool, PendingApproval, ToolError, run_agent
 from .safety import Scrubber
 from .shell import HostShell
 
@@ -130,13 +130,104 @@ def mcp_agent_tools(tools: list[Tool], ctx: ToolContext) -> list[AgentTool]:
     return [wrap(t) for t in tools]
 
 
-async def file_for_approval(tool: AgentTool, args: dict[str, Any]) -> str:
+async def file_for_approval(tool: AgentTool, args: dict[str, Any]) -> str | PendingApproval:
     """`on_approval` of the chat: the tool's own handler files the request with the approval
-    service (Approvals page, Telegram buttons) and says what policy decided."""
+    service (Approvals page, Telegram buttons). Waiting for a person: PendingApproval (the
+    run stops and is resumed when it is decided); anything else is the result right away."""
     result = await tool.handler(args)
     if isinstance(result, str):
         return result
+    if isinstance(result, dict) and result.get("status") == "pending" and result.get("action_id"):
+        return PendingApproval([int(result["action_id"])], waiting_text(result))
     return json.dumps(result, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def waiting_text(record: dict[str, Any]) -> str:
+    approval = record.get("approval_id") or record.get("batch_id")
+    what = record.get("target") or "the request"
+    return (
+        f"Waiting for approval #{approval}: {what}. Nothing has been done yet; it runs when "
+        "approved (Approvals page or Telegram), and the answer continues here."
+    )
+
+
+BASH_WRITE_DESCRIPTION = (
+    "Run a command that CHANGES the server (restart or stop a service or container, delete or "
+    "edit files, install packages), as root. Use it only when the owner asked for that "
+    "change; for looking at anything use `bash`. The owner approves each command first "
+    "unless they switched approval off; you get its output when it ran, or why it did not."
+)
+
+
+def bash_write_tool(app: AppContext, source: str, run_key: str) -> AgentTool:
+    """`bash_write`: files a `host_command` action (Settings -> Approvals -> changing shell
+    commands decides: approve / auto)."""
+    from ..actions import ActionError
+    from ..actions.host_command import ACTION_NAME
+
+    async def handler(args: dict[str, Any]) -> Any:
+        command = str(args.get("command") or "").strip()
+        reason = str(args.get("reason") or "").strip()
+        if not command:
+            raise ToolError("bash_write needs `command`")
+        try:
+            record = await app.actions.request(
+                ACTION_NAME,
+                {"command": command, "reason": reason[:500]},
+                source,
+                reason=reason[:500] or None,
+                run_key=run_key,
+                label="Chat",
+            )
+        except ActionError as exc:
+            raise ToolError(str(exc)) from None
+        return command_outcome(record)
+
+    return AgentTool(
+        name="bash_write",
+        description=BASH_WRITE_DESCRIPTION,
+        parameters={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The bash command to run as root."},
+                "reason": {
+                    "type": "string",
+                    "description": "One sentence for the owner: what it changes and why.",
+                },
+            },
+            "required": ["command", "reason"],
+        },
+        handler=handler,
+        requires_approval=True,
+    )
+
+
+def command_outcome(record: dict[str, Any]) -> dict[str, Any] | str:
+    """What the model reads about a filed or finished `host_command`."""
+    status = record.get("status")
+    result = record.get("result") or {}
+    if status == "executed":
+        output = str(result.get("output") or "").rstrip() or "(no output)"
+        how = f"exit code {result.get('exit_code')}, {result.get('duration_s')}s"
+        if result.get("stopped"):
+            how = f"stopped ({result['stopped']}) after {result.get('duration_s')}s"
+        return f"{output}\n[ran as root on the host: {how}]"
+    if status == "pending":
+        return {
+            "action_id": record["id"],
+            "approval_id": record.get("batch_id"),
+            "status": "pending",
+            "target": record.get("target"),
+        }
+    detail = result.get("error") or result.get("detail") or ""
+    texts = {
+        "rejected": "The owner rejected this command; it was not run.",
+        "expired": "Nobody approved this command in time (it expired); it was not run.",
+        "failed": f"The command could not be run: {detail}",
+        "dry_run": "Dry run: the command was not run.",
+        "suggested": "Only suggested: the command was not run.",
+    }
+    return texts.get(str(status), f"Not run ({status}). {detail}".strip())
 
 
 # --------------------------------------------------------------------------- built for the app

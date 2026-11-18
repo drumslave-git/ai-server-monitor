@@ -148,6 +148,7 @@ def test_status_shape(bootstrap: Bootstrap, settings: Settings) -> None:
         "automation",
         "overall",
         "jobs",
+        "change_shell",
     }
     assert status["llm_configured"] is True and status["main_model"] == "test-model"
     assert status["worker_model"] == "test-model" and status["pending_approvals"] == 0

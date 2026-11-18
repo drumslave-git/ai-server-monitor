@@ -30,6 +30,7 @@ from pydantic_ai import (
     DeferredToolResults,
     RunContext,
     Tool,
+    ToolApproved,
     ToolDenied,
     UsageLimits,
 )
@@ -39,6 +40,7 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
@@ -85,6 +87,67 @@ class AgentTool:
 
 
 @dataclass
+class PendingApproval:
+    """What `on_approval` returns for a call that waits for a person: the run stops there and
+    is resumed (`resume_results`) when the approval is decided."""
+
+    action_ids: list[int]
+    message: str
+    """What the user is told meanwhile (and the tool result shown for the call)."""
+
+
+@dataclass
+class Suspended:
+    """The `output` of a run that stopped at calls waiting for approval."""
+
+    messages: list[ModelMessage]
+    resolved: dict[str, str]
+    """Call id -> result text of the deferred calls that were settled at once."""
+    pending: dict[str, PendingApproval]
+    names: dict[str, str]
+    """Call id -> tool name of every deferred call."""
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "messages": ModelMessagesTypeAdapter.dump_python(self.messages, mode="json"),
+            "resolved": self.resolved,
+            "pending": {
+                cid: {"action_ids": p.action_ids, "message": p.message}
+                for cid, p in self.pending.items()
+            },
+            "names": self.names,
+        }
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> Suspended:
+        return cls(
+            messages=ModelMessagesTypeAdapter.validate_python(data["messages"]),
+            resolved=dict(data["resolved"]),
+            pending={cid: PendingApproval(**p) for cid, p in data["pending"].items()},
+            names=dict(data["names"]),
+        )
+
+
+def resume_results(
+    suspended: Suspended, settled: dict[str, tuple[bool, str]]
+) -> tuple[DeferredToolResults, dict[str, str]]:
+    """The deferred results to resume `suspended` with: `settled` maps each pending call id to
+    (ran, text): ran = the model gets `text` as the tool's result, else as the reason it was
+    not run. Returns the results and the `AgentConfig.resolved` texts."""
+    results = DeferredToolResults()
+    resolved = dict(suspended.resolved)
+    for call_id in suspended.resolved:
+        results.approvals[call_id] = ToolApproved()
+    for call_id, (ran, text) in settled.items():
+        if ran:
+            resolved[call_id] = text
+            results.approvals[call_id] = ToolApproved()
+        else:
+            results.approvals[call_id] = ToolDenied(text)
+    return results, resolved
+
+
+@dataclass
 class AgentConfig:
     model: Model
     instructions: str
@@ -102,7 +165,14 @@ class AgentConfig:
     trace_tool_prefix: str = ""
     """Prefix of the tool names in the trace (sub-agent calls: 'worker:')."""
     output_type: Any = str
-    on_approval: Callable[[AgentTool, dict[str, Any]], Awaitable[str]] | None = None
+    on_approval: Callable[[AgentTool, dict[str, Any]], Awaitable[str | PendingApproval]] | None = (
+        None
+    )
+    """Files an approval-required call: returns the result text when it was settled at once
+    (policy auto, rejected, ...), or PendingApproval when a person has to decide."""
+    resolved: dict[str, str] = field(default_factory=dict)
+    """Call id -> result of an approval-required call that already ran (settled at once, or
+    approved and executed before a resume): the tool returns it instead of running."""
 
 
 @dataclass
@@ -141,6 +211,8 @@ class _Run:
         self.outcomes: dict[str, _ToolOutcome] = {}
         self.queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         self.by_name = {t.name: t for t in cfg.tools}
+        self.pending: dict[str, PendingApproval] = {}
+        self.round_resolved: dict[str, str] = {}
 
     # ------------------------------------------------------------------ tools
 
@@ -158,6 +230,12 @@ class _Run:
         if self.cfg.tracing is not None:
             timer = self.cfg.tracing.start_tool(self.cfg.trace_tool_prefix + tool.name, args)
         ok, truncated = True, False
+        if call_id in self.cfg.resolved:  # approved and run already (by the approval service)
+            text = self.cfg.resolved[call_id]
+            if timer is not None:
+                timer.finish(ok=True, result=text, result_size=len(text))
+            self.outcomes[call_id] = _ToolOutcome(True, False, text)
+            return wrap_untrusted(tool.name, text)
         try:
             async with asyncio.timeout(self.cfg.tool_timeout_s):
                 result = await tool.handler(args)
@@ -218,7 +296,12 @@ class _Run:
 
     # ------------------------------------------------------------------ the run
 
-    async def pump(self, prompt: str | None, history: list[ModelMessage] | None) -> None:
+    async def pump(
+        self,
+        prompt: str | None,
+        history: list[ModelMessage] | None,
+        deferred: DeferredToolResults | None = None,
+    ) -> None:
         cfg = self.cfg
         agent: Agent[None, Any] = Agent(
             cfg.model,
@@ -231,7 +314,6 @@ class _Run:
             capabilities=[PrepareTools(self.prepare)],
         )
         limits = UsageLimits(request_limit=cfg.max_steps + 3)
-        deferred: DeferredToolResults | None = None
         messages = history
         usage = None
         try:
@@ -257,6 +339,15 @@ class _Run:
                         return
                     deferred = await self.approve(result.output)
                     messages = result.all_messages()
+                    if self.pending:
+                        suspended = Suspended(
+                            messages=messages,
+                            resolved=self.round_resolved,
+                            pending=self.pending,
+                            names={p.tool_call_id: p.tool_name for p in result.output.approvals},
+                        )
+                        await self.queue.put(("end", (suspended, usage)))
+                        return
                 await self.queue.put(("end", ("(stopped: too many approval rounds)", usage)))
         except UsageLimitExceeded:
             self.stopped = "step_limit"
@@ -266,8 +357,11 @@ class _Run:
             await self.queue.put(("error", exc))
 
     async def approve(self, requests: DeferredToolRequests) -> DeferredToolResults:
-        """File each approval-required call; the model reads what happened to it."""
+        """File each approval-required call. Settled at once: the model reads what happened.
+        Waiting for a person: collected in `self.pending` (the run stops after this round)."""
         results = DeferredToolResults()
+        self.pending = {}
+        self.round_resolved = {}
         for part in requests.approvals:
             tool = self.by_name.get(part.tool_name)
             args = _args_dict(part)
@@ -281,16 +375,25 @@ class _Run:
                     timer = self.cfg.tracing.start_tool(
                         self.cfg.trace_tool_prefix + tool.name, args
                     )
+                outcome: str | PendingApproval
                 try:
-                    message = await self.cfg.on_approval(tool, args)
+                    outcome = await self.cfg.on_approval(tool, args)
                     ok = True
                 except Exception as exc:
-                    message, ok = f"{tool.name} could not be filed for approval: {exc}", False
+                    outcome, ok = f"{tool.name} could not be filed for approval: {exc}", False
+                message = outcome.message if isinstance(outcome, PendingApproval) else outcome
                 if timer is not None:
                     timer.finish(ok=ok, result=message, error=None if ok else message)
                 self.outcomes[call_id] = _ToolOutcome(ok, False, message)
+                if isinstance(outcome, PendingApproval):
+                    self.pending[call_id] = outcome
+                elif ok:
+                    self.cfg.resolved[call_id] = message
+                    self.round_resolved[call_id] = message
             await self.queue.put(("approval", (call_id, part.tool_name)))
-            results.approvals[call_id] = ToolDenied(message)
+            if call_id not in self.pending:
+                approved = call_id in self.cfg.resolved
+                results.approvals[call_id] = ToolApproved() if approved else ToolDenied(message)
         return results
 
 
@@ -299,12 +402,15 @@ async def run_agent(
     prompt: str | None,
     *,
     history: list[ModelMessage] | None = None,
+    deferred: DeferredToolResults | None = None,
 ) -> AsyncIterator[Event]:
     """Run one agent to its answer, yielding events. The last event is
     `{"type": "end", "output", "usage", "steps", "stopped"}`; errors of the model are raised.
+    `output` is a `Suspended` when calls wait for approval: resume with its messages as
+    `history`, `deferred` from `resume_results` and those texts as `cfg.resolved`.
     Closing the iterator early cancels the run (and the tool that is running)."""
     run = _Run(cfg)
-    task = asyncio.create_task(run.pump(prompt, history))
+    task = asyncio.create_task(run.pump(prompt, history, deferred))
     running: dict[str, tuple[str, float]] = {}
     reported: set[str] = set()
     scrub = cfg.scrub
