@@ -260,9 +260,7 @@ class TraceStore:
         )
 
     async def _rowcount(self, sql: str, params: Any) -> int:
-        cur = await self.db.conn.execute(sql, params)
-        await self.db.conn.commit()
-        return cur.rowcount
+        return await self.db.write(sql, params)
 
     # ------------------------------------------------------------------ reading
 
@@ -528,10 +526,10 @@ class TraceStore:
         now = now if now is not None else time.time()
         cutoff = now - cfg.retention_days * 86400
         deleted = {"llm_calls": 0, "llm_tool_calls": 0, "app_log": 0}
-        for table in deleted:
-            cur = await self.db.conn.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff,))
-            deleted[table] = cur.rowcount
-        await self.db.conn.commit()
+        async with self.db.transaction() as conn:
+            for table in deleted:
+                cur = await conn.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff,))
+                deleted[table] = cur.rowcount
 
         limit = int(cfg.max_total_mb * 1024 * 1024)
         total = await self._total_bytes()
@@ -539,22 +537,18 @@ class TraceStore:
             deleted["llm_calls"] += await self._shed("llm_calls", total - limit)
             floor = await self.db.fetchone("SELECT MIN(ts) FROM llm_calls")
             # Tool calls older than every remaining LLM call belong to deleted calls.
-            cur = await self.db.conn.execute(
+            deleted["llm_tool_calls"] += await self.db.write(
                 "DELETE FROM llm_tool_calls WHERE ts < ?",
                 (floor[0] if floor and floor[0] else now,),
             )
-            deleted["llm_tool_calls"] += cur.rowcount
-            await self.db.conn.commit()
 
         extra = await self.db.fetchone("SELECT COUNT(*) FROM app_log")
         if extra and extra[0] > cfg.app_log_max_rows:
-            cur = await self.db.conn.execute(
+            deleted["app_log"] += await self.db.write(
                 "DELETE FROM app_log WHERE id <= (SELECT id FROM app_log ORDER BY id DESC"
                 " LIMIT 1 OFFSET ?)",
                 (cfg.app_log_max_rows,),
             )
-            deleted["app_log"] += cur.rowcount
-            await self.db.conn.commit()
         return deleted
 
     async def _total_bytes(self) -> int:

@@ -513,9 +513,7 @@ class ActionService:
 
         (`Database.execute` returns the connection's last inserted id when that is
         non-zero, which is useless as a row count for UPDATEs.)"""
-        cursor = await self.db.conn.execute(sql, params)
-        await self.db.conn.commit()
-        return cursor.rowcount
+        return await self.db.write(sql, params)
 
     async def _insert(
         self,

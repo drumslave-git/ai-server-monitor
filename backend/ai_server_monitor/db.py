@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -50,6 +51,12 @@ class Database:
     def __init__(self, path: str | Path):
         self.path = str(path)
         self._conn: aiosqlite.Connection | None = None
+        # One connection serves every task on the event loop, and a transaction is a state of
+        # the connection: without this, a second task's BEGIN fails ("cannot start a
+        # transaction within a transaction") and its COMMIT or ROLLBACK ends the other task's
+        # half-done transaction. Every write (`execute`, `executemany`, `transaction`) holds
+        # it from its first statement to its COMMIT/ROLLBACK; reads do not take it.
+        self._write_lock = asyncio.Lock()
 
     @property
     def conn(self) -> aiosqlite.Connection:
@@ -100,13 +107,22 @@ class Database:
 
     async def execute(self, sql: str, params: Sequence[Any] = ()) -> int:
         """Execute a write statement and commit. Returns lastrowid (or rowcount if none)."""
-        cur = await self.conn.execute(sql, params)
-        await self.conn.commit()
+        async with self._write_lock:
+            cur = await self.conn.execute(sql, params)
+            await self.conn.commit()
         return cur.lastrowid if cur.lastrowid else cur.rowcount
 
+    async def write(self, sql: str, params: Sequence[Any] = ()) -> int:
+        """Execute a write statement and commit. Returns the number of rows it changed."""
+        async with self._write_lock:
+            cur = await self.conn.execute(sql, params)
+            await self.conn.commit()
+        return cur.rowcount
+
     async def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> None:
-        await self.conn.executemany(sql, rows)
-        await self.conn.commit()
+        async with self._write_lock:
+            await self.conn.executemany(sql, rows)
+            await self.conn.commit()
 
     async def fetchone(self, sql: str, params: Sequence[Any] = ()) -> aiosqlite.Row | None:
         async with self.conn.execute(sql, params) as cur:
@@ -118,14 +134,16 @@ class Database:
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[aiosqlite.Connection]:
-        """Group several statements; commits on success, rolls back on error."""
-        await self.conn.execute("BEGIN")
-        try:
-            yield self.conn
-        except BaseException:
-            await self.conn.rollback()
-            raise
-        await self.conn.commit()
+        """Group several statements; commits on success, rolls back on error. Use only the
+        yielded connection inside: the Database write helpers would wait for this block."""
+        async with self._write_lock:
+            await self.conn.execute("BEGIN")
+            try:
+                yield self.conn
+            except BaseException:
+                await self.conn.rollback()
+                raise
+            await self.conn.commit()
 
     async def ping(self) -> bool:
         try:

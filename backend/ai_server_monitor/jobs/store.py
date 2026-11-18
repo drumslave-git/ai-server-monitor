@@ -232,10 +232,8 @@ class JobStore:
     async def mark_interrupted(self) -> int:
         """Runs still 'running' from before a restart: stored as error, never left dangling.
         Returns how many (a row count: `Database.execute` returns the last inserted id)."""
-        cursor = await self.db.conn.execute(
+        return await self.db.write(
             "UPDATE job_runs SET status = 'error', error = ?, finished = ? "
             "WHERE status = 'running'",
             (INTERRUPTED, time.time()),
         )
-        await self.db.conn.commit()
-        return cursor.rowcount

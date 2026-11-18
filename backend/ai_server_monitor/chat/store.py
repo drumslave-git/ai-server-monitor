@@ -162,6 +162,5 @@ class ChatStore:
         return {**dict(row), "messages": [_message(m) for m in messages]}
 
     async def delete_session(self, session_id: str) -> bool:
-        cursor = await self.db.conn.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
-        await self.db.conn.commit()  # messages go with it (ON DELETE CASCADE)
-        return cursor.rowcount > 0
+        # Messages go with it (ON DELETE CASCADE).
+        return await self.db.write("DELETE FROM chat_sessions WHERE id = ?", (session_id,)) > 0

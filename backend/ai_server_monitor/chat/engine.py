@@ -518,9 +518,8 @@ class ChatEngine:
         if any(item["status"] not in FINAL_STATUSES for item in items):
             return
         run = await db.fetchone("SELECT * FROM chat_pending_runs WHERE id = ?", (run_id,))
-        cursor = await db.conn.execute("DELETE FROM chat_pending_runs WHERE id = ?", (run_id,))
-        await db.conn.commit()
-        if run is None or cursor.rowcount == 0:
+        deleted = await db.write("DELETE FROM chat_pending_runs WHERE id = ?", (run_id,))
+        if run is None or deleted == 0:
             return  # resumed by a concurrent notification
         task = asyncio.create_task(self._resume(dict(run), [dict(i) for i in items]))
         self._background.add(task)
