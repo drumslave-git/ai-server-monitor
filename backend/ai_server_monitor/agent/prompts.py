@@ -17,19 +17,48 @@ _LANGUAGES = {
     "pt": "Portuguese",
 }
 
-SHELL_FACTS = """\
+# Host recipes: commands measured on a real host in this shell. The builtin jobs quote the same
+# constants (jobs/builtins.py), so the chat, the worker and the jobs use one set of commands.
+VARLINK_STATE = (
+    "varlinkctl call /run/systemd/io.systemd.Manager io.systemd.Manager.Describe '{}' "
+    "| grep -oE '\"(SystemState|NFailedUnits)\":[^,}]*'"
+)
+VARLINK_FAILED = (
+    "varlinkctl call --more /run/systemd/io.systemd.Manager io.systemd.Unit.List '{}' "
+    '| grep \'"ActiveState":"failed"\' | grep -oE \'"ID":"[^"]*"\''
+)
+UNIT_LOG = "journalctl -u UNIT -n 15 --no-pager -o short-iso"
+DOCKER_PS = "docker ps -a --format '{{.Names}}\\t{{.Status}}\\t{{.Image}}'"
+DOCKER_STATS = (
+    "docker stats --no-stream --format '{{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.MemPerc}}'"
+)
+DU = "du -xh --max-depth=1 DIR 2>/dev/null | sort -h | tail -8"
+LOADAVG = "cat /proc/loadavg"
+LOADAVG_FIELDS = "1-minute load, 5-minute load, 15-minute load, running/total tasks, last PID"
+THERMAL = 'for z in /sys/class/thermal/thermal_zone*; do echo "$(cat $z/type) $(cat $z/temp)"; done'
+
+HOST_RECIPES = f"""\
+Commands that work in this shell (use them as written):
+- systemd: `systemctl` does NOT work here (no D-Bus). State and failed count: `{VARLINK_STATE}`; \
+failed units: `{VARLINK_FAILED}`; why one failed: `{UNIT_LOG}`.
+- docker, all containers in one call: `{DOCKER_PS}`; usage: `{DOCKER_STATS}`. Copy the status \
+as printed: "Created" (never started) is not "Exited".
+- biggest directories: `{DU}` (pass timeout_s=600; the last line is the total).
+- `{LOADAVG}` prints: {LOADAVG_FIELDS}.
+- temperatures: `sensors`, else `{THERMAL}` (thousandths of °C: 54000 is 54 °C)."""
+
+SHELL_FACTS = f"""\
 `bash` runs a bash script on that server and returns its output and exit code. It is a \
 read-only shell: the host's own files and programs (journalctl, ps, ss, ip, df, du, find, \
 grep, nvidia-smi, docker, varlinkctl, ...) as a sandboxed user that cannot change, delete, \
 stop or signal anything. Pipes, redirects to /dev/null, loops and subshells work; there is no \
 writable scratch space. `docker` reaches the Docker API read-only (ps, logs, inspect, \
-stats --no-stream, system df, images). `systemctl` does NOT work here (no D-Bus access): for \
-unit states use `varlinkctl` on /run/systemd/io.systemd.Manager, for history `journalctl`. The \
+stats --no-stream, system df, images). The \
 monitor runs in a container: when `ss` shows only a few sockets of the monitor itself, the \
 host's are in /proc/1/net/tcp and tcp6 (hex) and the published container ports in \
-`docker ps`. Prefer one command with a format or sort option (`docker ps --format`, \
-`docker stats --no-stream --format`, `ps -eo ... --sort`, `du ... | sort -h | tail`) over loops \
-and awk/grep unit conversions. Pass timeout_s for long commands (a du over a big disk)."""
+`docker ps`. Prefer one command with a format or sort option over loops and awk/grep unit \
+conversions. Pass timeout_s for long commands (a du over a big disk).
+{HOST_RECIPES}"""
 
 CHAT_PROMPT = """\
 You are the assistant of an AI server monitor, talking to the owner of ONE Linux server: \
@@ -44,7 +73,10 @@ the one message, it cannot ask back, and include the command to start with when 
 three"). Do quick single checks yourself.
 The monitor checks the server on a schedule (storage, journal, resources, docker, systemd, \
 updates, and a summary). `job_results` gives their latest findings: a good start for "how is \
-the server". `jobs_list`, `job_save`, `job_delete` and `job_run` manage those checks; change \
+the server". For a question on a topic a job covers, first read that job's latest result with \
+`job_results` (slug storage, journal, resources, docker, systemd or updates), then re-check \
+with the same commands (above) instead of starting from nothing. `jobs_list`, `job_save`, \
+`job_delete` and `job_run` manage those checks; change \
 them only when the owner asks.
 
 Rules:

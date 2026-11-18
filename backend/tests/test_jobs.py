@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import timedelta
 from typing import Any
@@ -373,3 +374,27 @@ def test_findings_must_quote_command_output(
         # an info finding needs no evidence
         models.script = [finish("ok", "Fine.", [{"severity": "info", "title": "note"}])]
         assert run(client, "storage")["findings"][0]["verified"] is True
+
+
+def test_lists_sent_as_json_strings_are_accepted(
+    bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
+) -> None:
+    """Small models send `findings` (and `evidence`) as a JSON string instead of an array:
+    the result is taken as that list, not rejected and lost."""
+    as_string = {**FINDING, "evidence": json.dumps(FINDING["evidence"])}
+    one_line = {**FINDING, "title": "one line", "evidence": FINDING["evidence"][0]}
+    models.script = [
+        tool("bash", command="df -h /"),
+        tool(
+            "final_result",
+            status="warn",
+            summary="Root is 40% full.",
+            findings=json.dumps([as_string, one_line]),
+        ),
+    ]
+    with TestClient(make_app(bootstrap)) as client:
+        result = run(client, "storage")
+    assert result["status"] == "warn" and result["error"] is None
+    assert result["steps"] == 2  # accepted on the first try: no validation retry
+    assert [f["evidence"] for f in result["findings"]] == [FINDING["evidence"]] * 2
+    assert all(f["verified"] for f in result["findings"])

@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..agent.prompts import host_line
 from ..agent.runtime import NOT_FINISHED, AgentConfig, AgentTool, run_agent
@@ -47,6 +48,25 @@ class Finding(BaseModel):
         "unchanged. Required for warn and crit.",
     )
 
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def _evidence_list(cls, value: Any) -> Any:
+        value = json_list(value)
+        return [value] if isinstance(value, str) and value.strip() else value
+
+
+def json_list(value: Any) -> Any:
+    """A list a model sent as a JSON string ("[{...}]") is taken as that list; small models
+    do this. Anything else is left for the normal validation (and its error message)."""
+    if isinstance(value, str) and value.strip().startswith("["):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return value
+        if isinstance(parsed, list):
+            return parsed
+    return value
+
 
 class JobResult(BaseModel):
     """The result of the check."""
@@ -54,6 +74,11 @@ class JobResult(BaseModel):
     status: Literal["ok", "warn", "crit"]
     summary: str = Field(description="1 to 3 short sentences with the key numbers (markdown).")
     findings: list[Finding] = Field(default_factory=list, description="Only what is not ok.")
+
+    @field_validator("findings", mode="before")
+    @classmethod
+    def _findings_list(cls, value: Any) -> Any:
+        return json_list(value)
 
 
 class JobRunner:

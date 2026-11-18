@@ -10,6 +10,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..agent.prompts import (
+    DOCKER_PS,
+    DOCKER_STATS,
+    DU,
+    LOADAVG,
+    LOADAVG_FIELDS,
+    THERMAL,
+    UNIT_LOG,
+    VARLINK_FAILED,
+    VARLINK_STATE,
+)
+
 
 @dataclass(frozen=True)
 class JobDef:
@@ -32,13 +44,13 @@ BUILTINS: tuple[JobDef, ...] = (
         kind="topic",
         model="worker",
         interval_s=4 * HOUR,
-        prompt="""\
+        prompt=f"""\
 Disk space and inodes of the host's real filesystems.
 Commands:
 - `df -hT -x tmpfs -x devtmpfs -x overlay -x squashfs -x efivarfs`
 - `df -i -x tmpfs -x devtmpfs -x overlay -x squashfs -x efivarfs`
 - only for a filesystem at 85 % or more, its biggest directories (short output):
-  `du -xh --max-depth=1 MOUNT 2>/dev/null | sort -h | tail -8` (pass timeout_s=600)
+  `{DU.replace("DIR", "MOUNT")}` (pass timeout_s=600)
 ok: every filesystem below 85 % of space and of inodes.
 warn: a filesystem at 85-95 %.
 crit: a filesystem at 95 % or more, or less than 5 GB free on `/`.
@@ -56,17 +68,19 @@ size and use are only in df: never mix them.""",
         interval_s=HOUR,
         prompt="""\
 Errors in the system journal of the last hour.
-Commands:
-- `journalctl -p err -S -1h --no-pager -o cat | sort | uniq -c | sort -rn | head -20`
-- `journalctl -p err -S -1h --no-pager -o short-iso | tail -40` (which units, when)
-- `journalctl -k -p warning -S -1h --no-pager -o cat | sort | uniq -c | sort -rn | head -20` (kernel)
+Run this ONE command first; it prints every section you need:
+`echo '== errors by message =='; journalctl -p err -S -1h --no-pager -o cat | sort | uniq -c | sort -rn | head -20; echo '== latest errors (unit, time) =='; journalctl -p err -S -1h --no-pager -o short-iso | tail -25; echo '== kernel warnings =='; journalctl -k -p warning -S -1h --no-pager -o cat | sort | uniq -c | sort -rn | head -15; echo '== rate-limited messages =='; journalctl -S -1h --no-pager -o cat | grep -E 'callbacks suppressed|rate.?limit|Suppressed [0-9]+ messages' | sed -E 's/[0-9]+/N/g' | sort | uniq -c | sort -rn | head -5`
+A second command only to follow up on something it showed (e.g. `journalctl -u UNIT -n 30`);
+never run variants of the same journalctl again.
 ok: no errors, or only a few one-off messages.
 warn: one service logging the same error again and again, or errors that point to a failing
 component or a broken configuration.
 crit: out-of-memory kills, disk or filesystem I/O errors, hardware errors (MCE, EDAC, ata
 errors), segfaults of system services.
-Repeated or rate-limited messages ("callbacks suppressed", "rate limit", the same line many
-times) are never just normal: report them as an info finding with the count from uniq -c.
+Every line of the "rate-limited messages" section is a finding (info, or warn above 100),
+never "normal". Example: the line `    238 kauditd_printk_skb: N callbacks suppressed` gives the
+info finding "Kernel audit messages rate-limited (238 times in the last hour)" with that line
+as evidence. The same holds for one message repeated many times.
 Quote the important lines short, with the unit name and how often they occurred.""",
     ),
     JobDef(
@@ -75,15 +89,15 @@ Quote the important lines short, with the unit name and how often they occurred.
         kind="topic",
         model="worker",
         interval_s=30 * 60,
-        prompt="""\
+        prompt=f"""\
 CPU, memory, load, GPU and temperatures right now.
 Commands:
-- `nproc; cat /proc/loadavg; free -m` — /proc/loadavg is: 1-minute load, 5-minute load,
-  15-minute load, running/total tasks, last PID. Name each load by its own position.
+- `nproc; {LOADAVG}; free -m` — /proc/loadavg is: {LOADAVG_FIELDS}.
+  Name each load by its own position.
 - `ps -eo pid,user,comm,%cpu,%mem --sort=-%cpu | head -6; ps -eo pid,user,comm,%cpu,%mem --sort=-%mem | head -6`
 - GPU (skip when missing): `nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv`
 - temperatures: `sensors` when it exists; otherwise
-  `for z in /sys/class/thermal/thermal_zone*; do echo "$(cat $z/type) $(cat $z/temp)"; done`
+  `{THERMAL}`
   (the number is thousandths of °C: 54000 means 54 °C; name the zone type)
 ok: 15-minute load below the number of cores, more than 10 % memory available, swap mostly
 unused, temperatures below 85 °C.
@@ -99,19 +113,21 @@ Name the processes that use the most CPU and memory.""",
         kind="topic",
         model="worker",
         interval_s=30 * 60,
-        prompt="""\
+        prompt=f"""\
 Health of the Docker containers.
 Commands (one call each; do not inspect containers one by one):
-- `docker ps -a --format '{{.Names}}\\t{{.Status}}\\t{{.Image}}'` (Status shows "Restarting",
-  "(unhealthy)" and "Exited (code)")
-- `docker stats --no-stream --format '{{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.MemPerc}}'`
+- `{DOCKER_PS}`
+  (Status shows "Up", "Restarting", "(unhealthy)", "Exited (code)" and "Created")
+- `{DOCKER_STATS}`
 - only for a container with a problem, at most two: `docker logs --tail 30 NAME 2>&1`
 ok: the running containers are up, and healthy where they have a healthcheck.
 warn: a container that restarts again and again, is unhealthy, or exited with a non-zero
 code recently; a container above 90 % of its memory limit.
 crit: an important container (database, reverse proxy, the main services) down, in a
 restart loop or unhealthy.
-Containers that exited with code 0 are one-off tasks: ignore them.""",
+Copy the Status column exactly as printed. "Created" means the container was created but never
+started: it is not "Exited" and has no exit code; mention such containers only as one info
+finding. Containers that exited with code 0 are one-off tasks: ignore them.""",
     ),
     JobDef(
         slug="systemd",
@@ -119,14 +135,14 @@ Containers that exited with code 0 are one-off tasks: ignore them.""",
         kind="topic",
         model="worker",
         interval_s=HOUR,
-        prompt="""\
+        prompt=f"""\
 State of the systemd services. `systemctl` does not work in this shell: do not try it.
 Commands (systemd's Varlink socket answers read-only):
 - system state and number of failed units:
-  `varlinkctl call /run/systemd/io.systemd.Manager io.systemd.Manager.Describe '{}' | grep -oE '"(SystemState|NFailedUnits)":[^,}]*'`
+  `{VARLINK_STATE}`
 - the failed units:
-  `varlinkctl call --more /run/systemd/io.systemd.Manager io.systemd.Unit.List '{}' | grep '"ActiveState":"failed"' | grep -oE '"ID":"[^"]*"'`
-- why one failed (at most three units): `journalctl -u UNIT -n 15 --no-pager -o short-iso`
+  `{VARLINK_FAILED}`
+- why one failed (at most three units): `{UNIT_LOG}`
 If varlinkctl is missing or fails (systemd older than 257), use instead:
   `journalctl _PID=1 -p warning -S -24h --no-pager -o cat | grep -i 'failed' | sort | uniq -c | sort -rn | head -15`
 ok: no failed units, the system is "running".
@@ -145,13 +161,10 @@ words copied from its journal error line (for example the "error:" text), not ju
         cron="0 6 * * *",
         prompt="""\
 Pending package updates and whether a reboot is needed.
-Commands (Debian/Ubuntu):
-- `apt list --upgradable 2>/dev/null | tail -n +2 | wc -l` (put this count in the summary)
-- `apt list --upgradable 2>/dev/null | grep -i security | head -30`
-- `cat /run/reboot-required.pkgs 2>/dev/null; ls -l /run/reboot-required 2>/dev/null`
-- `uptime -p`
-- how old the package lists are: `stat -c %y /var/cache/apt/pkgcache.bin`
-Other distributions: `dnf check-update -q`, `checkupdates`.
+Run this ONE command (Debian/Ubuntu); it prints every fact you need in labelled sections:
+`echo '== upgradable (count) =='; apt list --upgradable 2>/dev/null | tail -n +2 | wc -l; echo '== security updates =='; apt list --upgradable 2>/dev/null | grep -i security | head -30; echo '== reboot required =='; cat /run/reboot-required.pkgs 2>/dev/null; ls -l /run/reboot-required 2>/dev/null || echo 'no'; echo '== uptime =='; uptime -p; echo '== package lists updated =='; stat -c %y /var/cache/apt/pkgcache.bin`
+A second command only to follow up on something it showed. Put the upgradable count in the
+summary. Other distributions: `dnf check-update -q`, `checkupdates`.
 The shell cannot refresh the package lists: say how old they are.
 ok: no security updates pending and no reboot required.
 warn: security updates pending, or a reboot required.
@@ -175,7 +188,12 @@ Write the overall picture of the server from the latest results of the topic che
   copied as they are. Compare with the previous summary: what is new, what got better.
 - Before you repeat a crit finding, re-run the one command that proves it (with `bash`) and
   quote its line as evidence. Otherwise do not redo the checks; at most 4 commands in all.
-- summary: one headline sentence, then at most 5 short lines.
+- Only facts from the topic results or your commands: no words they do not contain (no
+  "unchanged" unless you compared with the previous summary, no thresholds they do not state).
+  Call a thing by the word its topic used: failed units are "failed".
+- summary: one headline sentence of facts from the topics, then one short clause per enabled
+  topic, the fine ones too, each with its key number (e.g. "updates: 12 pending, 3 security",
+  "journal: no errors, kernel audit messages rate-limited 238 times").
 - findings: only what needs the owner's attention, merged across topics, most severe first,
   each with the evidence line copied from the topic result or your command.""",
     ),
