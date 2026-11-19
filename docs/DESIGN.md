@@ -1,4 +1,4 @@
-# AI Server Monitor — Design (0.7)
+# AI Server Monitor — Design (0.8)
 
 One container on the monitored host: a FastAPI backend (`backend/ai_server_monitor/`) and a
 React/Vite SPA (`frontend/`, served by the backend). The rule since 0.7: **nothing is collected
@@ -14,7 +14,8 @@ instead of our own code.
 | Models: main and worker on any OpenAI-compatible endpoint | `agent/models.py` (`ModelHub`) | Pydantic AI `OpenAIChatModel`, `openai`, `httpx` |
 | Read-only shell sandbox | `agent/shell.py` | the host's util-linux (`setpriv`, `prlimit`), `chroot` |
 | Root shell for approved changes | `agent/change_shell.py` | util-linux `nsenter` |
-| Tools: `bash`, `delegate`, `bash_write`, MCP tools | `agent/tools.py`, `mcp_client/` | `mcp` SDK |
+| Tools: `bash`, `delegate`, `bash_write` | `agent/tools.py` | Pydantic AI |
+| MCP servers: toolsets, domains, classification, the MCP tools page's API | `mcp_client/` | Pydantic AI `MCPToolset` (FastMCP 4, `mcp` SDK 2, `httpx2`) |
 | Jobs: store, builtins, prompts, runner, API, chat tools | `jobs/` | — |
 | Schedule: jobs + housekeeping, pause | `schedule.py`, `automation.py` | APScheduler 3 |
 | Chat engine and sessions | `chat/` | — |
@@ -43,7 +44,7 @@ context and an optional structured `output_type`.
 - Every model request goes through our `httpx` transport into `llm_calls` (Logs page), and every
   tool call into `llm_tool_calls`; sub-agent calls are tagged `worker:…` in the same turn.
 - Tool sets: **chat** (main model) gets `bash`, `delegate`, the job tools, `bash_write` (when
-  offered) and the MCP tools. **`delegate`** runs the worker model with `bash` only
+  offered) and the MCP tools of its domains (see MCP client). **`delegate`** runs the worker model with `bash` only
   (`chat.worker_max_steps`). **Topic jobs** get `bash`; **the summary** gets `bash` and
   `delegate`. Jobs and the worker never get a writing tool.
 - Ollama URLs get Pydantic AI's Ollama profile; reasoning effort is sent as
@@ -112,7 +113,7 @@ run when every action of it is executed, failed, dry-run, rejected or expired: a
 the action's stored result (they are not run again), the others a `ToolDenied` with the reason.
 Before that, the stored waiting note is rewritten to the outcome ("Approval #3: … approved and
 run, exit code 0.", `meta.outcome`) and published as `chat.message.updated`. The new answer is
-stored and published as `chat.message`; Telegram sends it to the chat that asked. The generic `mcp_call` is deferred the same way when it reaches a write tool.
+stored and published as `chat.message`; Telegram sends it to the chat that asked.
 
 `host_command` (`bash_write`) runs `nsenter --target 1 --mount --uts --ipc --net --pid -- bash
 -c CMD` as root; `ChangeShell.probe()` checks at start whether that works, and
@@ -121,15 +122,96 @@ returns at once; the result arrives as `action.result` / `approval.progress`.
 
 ## MCP client
 
-`mcp_client/` uses the official `mcp` SDK (`<2`: 2.x moved to a new client API): Streamable
-HTTP and the older HTTP+SSE (`auto` tries the first and falls back on protocol failures, not
-on network errors or 401/403); no stdio; tools only (no prompts, resources or sampling). One
-runner task per server owns the SDK's context managers, and calls race against it, because
-the SDK leaves a request hanging when a Streamable HTTP server dies. Connect failures back off
-2, 4, … 60 s; a timed-out call drops the connection. A tool is read only when the server marks
-it `readOnlyHint` and the owner did not override it; the manager enforces the tool allow-list
-itself. Results are capped and scrubbed of the server's own token and header values. Above
-`mcp.max_inline_tool_tokens` the chat gets the generic `mcp_list_tools` / `mcp_call` pair.
+**Servers** (Settings → MCP servers): remote servers only, Streamable HTTP or the older
+HTTP+SSE; no stdio programs; tools only (no prompts, resources or sampling). The client is
+Pydantic AI's `MCPToolset` on FastMCP 4 (`mcp` SDK 2, `httpx2`); `mcp_client/toolsets.py`
+builds one per server from its settings (`server_toolset`). `auto` takes the transport FastMCP
+infers from the URL (`infer_transport_type_from_url`: a path ending in `/sse` is HTTP+SSE,
+anything else Streamable HTTP); nothing is tried first and there is no fallback. Token and
+extra headers go on the transport; `timeout` is the connect and per-call timeout.
+
+Nothing is long-lived: every agent run (chat turn, job run) and every approved call connects
+the servers it needs when it starts and closes them when it ends; all servers of a run are
+entered in parallel (`mcp_client/turn.py`), so a server that does not answer costs its timeout
+once per run (a chat turn connects every enabled server, also those whose domains stay
+deferred; a job run only the servers of its domains). `Reachable` (the one wrapper the library has no equivalent for) turns a server
+that cannot be reached, or dies during the run, into no tools plus a note for the model and the
+turn log, instead of a failed run. `HttpSeen` is the HTTP client FastMCP uses for each server
+(through the transport's `httpx_client_factory`): the MCP SDK reduces an error status to
+"Server returned an error response" and a failed connection loses its cause on the way up, so
+this client records the last thing that went wrong (the status with method and path, refused /
+DNS / TLS / timeout, or a request left unanswered; a 405 to the optional GET stream or to
+DELETE is the spec's "not offered" and is not recorded). The Settings **Test**, the notes and
+the listings say that ("the server answered HTTP 401 Unauthorized to POST /mcp").
+
+**Tools**: the model sees a tool as `<server>_<tool>` (server names have no `_`), with the
+server's whole description (nothing is cut; there is no token budget and no generic
+list/call pair). Only the tools the owner switched on (`tool_filter`, also switched on the MCP
+tools page) are offered. A tool is *read* when the server marks it `readOnlyHint` and the owner
+did not override its kind; everything else is a *write*: its description starts with a WRITE
+note, and in the chat it is approval-required (Pydantic AI defers it, the chat files it as an
+`mcp_call` action under the server's policy, see Approvals); in a job a write call is filed as
+an action and the model is told so (nobody waits on a scheduled run). Results are scrubbed of
+the server's own token and header values; every call goes to the chat audit list, the Logs page
+and the untrusted-data wrapping like any other tool result. `mcp.dry_run` records approved
+writes without sending them.
+
+**Domains** (`mcp_client/domains.py`): a domain is an area a person asks about (an
+application, a device), not a server; none is predefined, every domain can be renamed,
+described or deleted (not while a job uses it). Every tool of a configured server is recorded
+as last listed (`mcp_tools`, `mcp_listings`). Tools without a domain are sorted by one
+structured call of the main model (Logs purpose `mcp_sort`): after a Settings Test, after a
+Settings save (in the background; a run that starts meanwhile waits for it), at the start of a
+run when a listing shows new tools, and when the owner presses *Sort into domains…* on the MCP
+tools page (`POST /api/mcp/sort`; the owner's own placements and domain texts, `set_by='owner'`,
+stay unless the owner asks to redo them). A tool whose sorting failed keeps no domain and the reason
+("Not sorted" on the page) and is not offered. Deleting a domain sends its tools back to
+sorting. A server removed in Settings loses its rows; a server renamed is a new server, so its
+tools are sorted afresh and the owner's placements of the old name are gone. `GET
+/api/mcp/tools` says `sorting: true` while a sort runs.
+
+**Chat turns**: the worker model picks the request's domains (one structured call, Logs purpose
+`mcp_classify`, with the domain descriptions, their tool names and the date line). Each domain is
+one Pydantic AI `Toolset` capability: the picked ones and the ones loaded earlier in the session
+(read from the stored answers' `meta.mcp_domains.loaded`) are given directly, every other domain
+is deferred, so the library lists it in the instructions and adds `load_capability`, with which
+the model loads it during the turn (capability id `domain-<name>`; a renamed domain is not kept
+as loaded by the session, since the stored name no longer matches). A failed classification gives every domain as loadable. A
+run resumed after an approval gets the same domains it had (`Suspended.domains`). The turn log
+(`meta.mcp_domains`: picked, offered, loaded, unsorted, unreachable, classify_error) is the quiet
+"Domains: …" line under the answer. Which capabilities a run loaded is read with
+`pydantic_ai._deferred_capabilities.parse_loaded_capabilities`, a **private** import
+(`agent/runtime.py`): a Pydantic AI upgrade can move it; `tests/test_mcp_turns.py` fails then.
+
+**Jobs**: a job has a domain list (`job_domains`; Jobs → Domains, with a *Classify* button that
+asks the worker model). A run gets exactly the enabled tools of those domains, all given
+directly, nothing classified or loadable; builtin jobs start with none. If the tools are not
+enough the model returns `missing_tools` and the run ends as `error` with "missing tools: …"
+(the instructions tell it not to work around it through `bash`). `job_runs.mcp` keeps the run's
+domains, unsorted tools and unreachable servers.
+
+**The MCP tools page** (`frontend/src/pages/McpTools.tsx`): one card per domain with its tools
+(on/off, read/write, server, the whole description, *Move to…* another or a new domain),
+rename/describe/delete per domain, "Not sorted" on top when a sorting failed, a note per server
+that could not be listed, search and filters (server, read/write, on/off), *Select all* /
+*Deselect all* per card and for the page (under a search or filter they act on the tools shown
+and say "shown"). Cards start open; the ones the owner collapses are remembered in that browser
+by domain name (localStorage, `asm.mcp-tools.collapsed`); a search or filter opens every card
+with matches without changing what is remembered.
+
+**Changes since 0.7** (when the client was our own runner on the `mcp` 1.x SDK): transport by
+URL instead of probing; one connection per run instead of a kept connection with backoff; names
+`server_tool` instead of `server__tool`; whole descriptions instead of 400 characters; the
+token budget (`mcp.max_inline_tool_tokens`) and the generic `mcp_list_tools` / `mcp_call` pair
+are gone, so is the Tokens column in Settings; domains, classification, job domains and the
+page are new. Own code in `mcp_client/` (all lines of its `.py` files): 1,391 at `8e70ddb`
+(0.7.3, before the rework), 1,484 after 0.8.4, of which `domains.py`, `turn.py` and `api.py`
+are new functions the old client did not have.
+
+**Every run knows the date** (`agent/prompts.py` `now_line`): chat turns, job runs, the domain
+classification and the model connection test get "Now: <weekday date time>, time zone …" in
+the owner's zone (Settings → General, the host's by default) as a dynamic instruction, so every
+model request has the time it runs at.
 
 ## Storage (SQLite, `data/monitor.db`)
 
@@ -143,6 +225,8 @@ itself. Results are capped and scrubbed of the server's own token and header val
 | `telegram_batch_messages` | which Telegram message shows which approval |
 | `llm_calls`, `llm_tool_calls` | model requests and tool calls (Logs page) |
 | `app_log` | saved warnings and errors of the app log |
+| `mcp_domains`, `mcp_tools`, `mcp_listings` | MCP domains; every listed tool with its domain, who placed it and a sorting error; the last listing of each server |
+| `job_domains` | the MCP domains of each job (`job_runs.mcp`: what a run had) |
 
 Retention: `storage.retention` for chats and runs, `logs.*` for traces; actions are never pruned.
 
@@ -179,12 +263,13 @@ chose `auto`.
   namespaces.
 - **JSON-in-text tool calls** for models without native tool calling: Pydantic AI has none, and
   a wrapper model would be ~250 lines of our own. Such models are not supported.
-- **Pydantic AI's MCP toolset**: its `mcp` extra needs `mcp>=2`; we stay on the `mcp` SDK
-  through `mcp_client/` (connection, discovery, tool picking, the `mcp_call` action).
+- **A kept MCP connection, reconnects, backoff or a cache of failed servers**: one connection
+  per run is what Pydantic AI's toolset does; a dead server costs its timeout per run.
 - **Our own scheduler, metrics registry or Telegram client**: APScheduler, prometheus_client and
   python-telegram-bot replaced them.
 - **Collectors, reports, charts, health scores, the Prometheus query planner**: removed in 0.7;
   the jobs do this with the shell.
-- Small gaps kept: tool names the model invents are answered by Pydantic AI itself (no
+- Small gaps kept: over HTTP+SSE an MCP call cut off by its timeout sometimes ends as
+  "Connection closed" instead of "timed out" (a race in the transport); tool names the model invents are answered by Pydantic AI itself (no
   `llm_tool_calls` row); an endpoint that rejects `reasoning_effort` fails until the setting is
   `auto`.

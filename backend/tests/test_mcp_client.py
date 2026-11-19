@@ -256,7 +256,9 @@ async def test_a_refused_token_is_named_in_the_run(fake: FakeMcp) -> None:
     servers = McpServers(McpSettings(servers=[cfg_for(fake.url, token="wrong-token-000")]))
     script = Script()
     await run(servers, script)
-    assert "answered HTTP 401 Unauthorized" in script.instructions[0]
+    to = "POST /mcp" if fake.transport == "streamable_http" else "GET /sse"
+    # failed at once: no "(after 0.0 s)" behind the reason
+    assert f"answered HTTP 401 Unauthorized to {to})." in script.instructions[0]
     assert "wrong-token-000" not in script.instructions[0]
 
 

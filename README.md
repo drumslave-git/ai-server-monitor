@@ -30,7 +30,7 @@ the chat's instructions and tools; worker: a topic job's) and asks it to run `ec
 It passes only on a real tool call; a model that writes the call as text fails the test.
 
 - [Quick start](#quick-start) · [The compose file](#the-compose-file) · [Models](#models)
-- [Jobs](#jobs) · [Using it](#using-it) · [Security model](#security-model)
+- [Jobs](#jobs) · [MCP servers](#mcp-servers) · [Using it](#using-it) · [Security model](#security-model)
 - [Settings reference](#settings-reference) · [Upgrading from 0.6.x](#upgrading-from-06x)
 - [Troubleshooting](#troubleshooting) · [Development](#development) · [Design notes](docs/DESIGN.md)
 
@@ -154,6 +154,44 @@ be disabled but not deleted.
 sweeps) and cancels scheduled runs in flight. *Run now*, the chat, approvals and Telegram keep
 working. It survives a restart. `GET /api/automation`, `POST /api/automation/pause|resume`.
 
+## MCP servers
+
+Settings → **MCP servers** adds remote MCP servers (Streamable HTTP or the older HTTP+SSE; no
+stdio programs; tools only). `transport: auto` is chosen by the URL: a path ending in `/sse` is
+HTTP+SSE, anything else Streamable HTTP; nothing is tried first. **Test** connects with the form
+as it is, lists the tools with their whole descriptions and sorts new ones into domains; when it
+fails it says what the server answered (`HTTP 401 Unauthorized to POST /mcp`, `HTTP 404 Not
+Found …` with the path tried, connection refused, DNS lookup failed, TLS failed, no answer
+before the timeout).
+
+- **On / off and read / write**: only the tools you switch on are offered (in Settings or on
+  the MCP tools page). A tool is *read* when the server marks it `readOnlyHint` and you did not
+  override its kind; reads run at once. Everything else is a *write* under the server's policy
+  (`suggest`, `approve`, `auto`; per-tool overrides; `mcp.dry_run`), see
+  [Security model](#security-model).
+- **Domains**: the main model sorts the tools into domains, areas you ask about (an app, a
+  device), not servers. It sorts new tools after a Test, after a save, at the start of a run
+  when a server lists new ones, and when you press **Sort into domains…** on the MCP tools page.
+  Your own moves and domain texts stay unless you ask to redo them. Deleting a domain sends its
+  tools back to sorting; a server renamed in Settings is sorted afresh (your placements under
+  the old name are gone). A tool whose sorting failed is listed under *Not sorted* with the
+  reason and is not offered.
+- **Chat**: the worker model picks the domains each question needs; their tools are given to
+  the main model, which can load any other domain during the answer (`load_capability`);
+  domains loaded earlier in the conversation stay. The line under the answer says which
+  domains it had, and which servers could not be reached.
+- **Jobs**: Jobs → **Domains** (with a **Classify** button) sets the domains a job gets; a run
+  gets exactly their enabled tools. When those are not enough the run ends as `error` with
+  "missing tools: …". Builtin jobs have none.
+- **MCP tools page**: one card per domain with its tools (on/off, read/write, server, the whole
+  description, *Move to…*), rename, describe or delete a domain, search and filters,
+  **Select all** / **Deselect all** (under a search or filter: **Select shown** / **Deselect
+  shown**, only the tools shown). Collapsed cards are remembered in your browser; a search or
+  filter opens every card with matches.
+- The model sees a tool as `<server>_<tool>` with its whole description; there is no token
+  budget. A server that does not answer costs its timeout once per chat turn or job run (all
+  servers are connected in parallel) and gives no tools for that run.
+
 ## Using it
 
 - **Dashboard** — the overall status and headline from the newest summary run, and one tile per
@@ -250,13 +288,12 @@ it runs without asking; `off` removes the tool. An approved command runs **as ro
 The approve button answers at once; the command runs (up to `chat.command_timeout`), its exit
 code and output go into the permanent audit log, and the chat continues with them.
 
-**MCP servers** (Settings → MCP servers): remote servers only (Streamable HTTP or HTTP+SSE, no
-stdio programs), tools only. You pick which tools the chat gets; above
-`mcp.max_inline_tool_tokens` it gets a generic `mcp_list_tools` / `mcp_call` pair instead. A tool
+**MCP tools** ([MCP servers](#mcp-servers)): a tool
 is *read* only if the server marks it `readOnlyHint` and you did not override it; reads run at
-once. Everything else is a *write* under the server's policy: `off` (never), `suggest` (recorded,
-never run), `approve` (default: waits for you) or `auto`, with per-tool overrides and its own
-`mcp.dry_run` switch. The calls of one chat answer wait as one approval: one card in the chat
+once. Everything else is a *write* under the server's policy: `suggest` (recorded, never run),
+`approve` (default: waits for you) or `auto`, with per-tool overrides and the
+`mcp.dry_run` switch. In a job a write call is only filed under that policy; the job does not
+wait for it. The calls of one chat answer wait as one approval: one card in the chat
 with **Approve all** / **Deny all**, a checklist on the Approvals page. **Approve for this whole
 answer** also approves every later call of the same tool the model makes until that answer is
 finished (a model usually asks for a few at a time, so 180 removals are one click, not 180);
@@ -377,7 +414,7 @@ values a fresh install starts with.
 | `mcp.servers[].name` | string | required | Short name shown in chat and in tool names, e.g. home-assistant. |
 | `mcp.servers[].enabled` | boolean | on | Off = never connected, its tools are not offered. |
 | `mcp.servers[].url` | string | required | MCP endpoint, e.g. http://homeassistant.local:8123/mcp_server/sse or https://grafana.example/mcp. Remote servers only (Streamable HTTP or the older HTTP+SSE); servers that run as a local program (stdio) are not supported. |
-| `mcp.servers[].transport` | auto / streamable_http / sse | `auto` | auto = try Streamable HTTP, fall back to the older HTTP+SSE. |
+| `mcp.servers[].transport` | auto / streamable_http / sse | `auto` | auto = chosen by the URL: a path ending in /sse is the older HTTP+SSE, anything else Streamable HTTP (nothing is tried first). |
 | `mcp.servers[].token` | secret | empty | Bearer token sent as `Authorization: Bearer ...`, if the server needs one. |
 | **mcp.servers[].headers** | list of groups | empty | Extra HTTP headers (for servers that want an API key header instead of a token). |
 | `mcp.servers[].headers[].name` | string | required | Header name, e.g. X-Api-Key. |
@@ -542,6 +579,23 @@ log and the model call logs are kept; the rest of the old data is deleted by the
   audited. Not offered for root commands.
 - An answer is no longer stopped after 5 rounds of approved or `auto` write calls; the chat
   step limit ends it.
+
+### 0.8.4
+
+- Settings → MCP servers → **Test** (and the notes of a chat turn or job run) say what the
+  server answered: `HTTP 401 Unauthorized to POST /mcp`, `HTTP 404 Not Found` with the path
+  tried, connection refused, DNS lookup failed, TLS failed, or no answer before the timeout,
+  instead of "Server returned an error response". A server that failed at once no longer reads
+  "(after 0.0 s)".
+- MCP tools page: the cards you collapse are remembered in your browser (new or renamed domains
+  start open); **Collapse all** / **Expand all** is one toggle; under a search or filter every
+  card with matches is open and your collapsed cards stay as they were. A filtered card reads
+  "1 shown · 1 of 2 on in this domain" and its buttons say **Select shown** / **Deselect
+  shown**.
+- When the model does not mark the commands of an answer read-only or write (the extra
+  labelling call fails), a line under the answer says so: those commands run with change rights.
+- The model connection test gets the same date line as a real run.
+- Approval cards show an empty argument as `""`.
 
 ## Troubleshooting
 

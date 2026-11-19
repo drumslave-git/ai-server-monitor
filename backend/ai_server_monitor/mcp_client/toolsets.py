@@ -245,8 +245,9 @@ class Reachable(WrapperToolset[Any]):
                 self._up, self.down = True, None
             except Exception as exc:
                 assert self.cfg is not None
-                took = time.monotonic() - started
-                self.down = f"{failure_text(exc, self.cfg, self.seen)} (after {took:.1f} s)"
+                took = f"{time.monotonic() - started:.1f}"
+                after = "" if took == "0.0" else f" (after {took} s)"  # (failed at once: no time)
+                self.down = f"{failure_text(exc, self.cfg, self.seen)}{after}"
                 log.warning("MCP server %r is unavailable: %s", self.cfg.name, self.down)
         return self
 

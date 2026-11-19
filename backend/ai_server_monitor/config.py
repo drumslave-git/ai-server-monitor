@@ -387,7 +387,8 @@ class McpServerSettings(_Model):
     https://grafana.example/mcp. Remote servers only (Streamable HTTP or the older HTTP+SSE);
     servers that run as a local program (stdio) are not supported."""
     transport: McpTransport = "auto"
-    """auto = try Streamable HTTP, fall back to the older HTTP+SSE."""
+    """auto = chosen by the URL: a path ending in /sse is the older HTTP+SSE, anything else
+    Streamable HTTP (nothing is tried first)."""
     token: Secret = SecretStr("")
     """Bearer token sent as `Authorization: Bearer ...`, if the server needs one."""
     headers: list[McpHeader] = Field(default_factory=list)
