@@ -24,7 +24,7 @@ from pydantic_ai.models import Model
 from ..db import Database
 from ..tracing import trace_scope
 from .settings import McpServerSettings
-from .toolsets import SEPARATOR, failure_text, server_toolset
+from .toolsets import SEPARATOR, HttpSeen, failure_text, server_toolset
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
 NAME_RULE = "a domain name is lowercase letters, digits and '-' (up to 24)"
@@ -71,12 +71,13 @@ def listed(tools: Iterable[Any]) -> list[ListedTool]:
 
 async def list_server(cfg: McpServerSettings) -> list[ListedTool]:
     """Connect one server and list its tools (raises with a text safe to show)."""
-    toolset = server_toolset(cfg)
+    seen = HttpSeen()
+    toolset = server_toolset(cfg, seen=seen)
     try:
         async with toolset:
             return listed(await toolset.list_tools())
     except Exception as exc:
-        raise RuntimeError(failure_text(exc, cfg)) from None
+        raise RuntimeError(failure_text(exc, cfg, seen)) from None
 
 
 class DomainStore:

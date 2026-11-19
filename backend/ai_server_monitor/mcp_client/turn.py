@@ -103,7 +103,7 @@ async def connect(
             try:
                 tools = listed(await reach.wrapped.list_tools())  # type: ignore[attr-defined]
             except Exception as exc:
-                reach.down = failure_text(exc, reach.cfg)
+                reach.down = failure_text(exc, reach.cfg, reach.seen)
         if reach.down is not None:
             await store.record_failure(reach.cfg.name, reach.down)
             continue

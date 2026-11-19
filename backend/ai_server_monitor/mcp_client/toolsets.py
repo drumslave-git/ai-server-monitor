@@ -14,19 +14,28 @@ and Pydantic AI connects the servers when the run starts and closes them when it
 - Results are scrubbed of the server's own token and header values, and every call goes to
   the audit hook (the chat's audit list); the agent runtime caps them, records them in the
   Logs page and wraps them as untrusted data like any other tool result.
+- `HttpSeen` is the HTTP client FastMCP uses for a server (through the transport's
+  `httpx_client_factory`); it keeps what the server last answered wrong, because the MCP SDK
+  turns an error status into "Server returned an error response" and a connection failure
+  loses its cause on the way up.
 """
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
+import socket
+import ssl
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
+import httpx2
 from fastmcp.client.transports import SSETransport, StreamableHttpTransport
+from fastmcp.mcp_config import infer_transport_type_from_url
 from pydantic_ai import RunContext
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.tools import ToolDefinition
@@ -66,35 +75,134 @@ def def_kind(cfg: McpServerSettings, tool_def: ToolDefinition) -> Kind:
     return kind_of(cfg, tool_def.name, (tool_def.metadata or {}).get("annotations"))
 
 
-def server_toolset(cfg: McpServerSettings, process: Any = None) -> MCPToolset[Any]:
-    """The library's toolset for one server, from its settings. `auto` lets FastMCP choose the
-    transport from the URL (`…/sse` → HTTP+SSE, else Streamable HTTP)."""
+class HttpSeen:
+    """What the server's HTTP side last did wrong, as the HTTP client saw it: an error status
+    (with the method and path), a failed connection (with its cause: refused, DNS, TLS,
+    timeout), or a request still unanswered when the MCP client gave up. A good answer clears
+    it. `client` is FastMCP's `httpx_client_factory`."""
+
+    def __init__(self) -> None:
+        self.last: str | None = None
+
+    def client(
+        self,
+        headers: dict[str, str] | None = None,
+        timeout: httpx2.Timeout | None = None,
+        auth: httpx2.Auth | None = None,
+        follow_redirects: bool = False,
+    ) -> httpx2.AsyncClient:
+        # the same client the MCP SDK builds by default (`create_mcp_http_client`)
+        return _SeenClient(
+            self,
+            headers=headers,
+            timeout=timeout or httpx2.Timeout(30.0, read=300.0),
+            auth=auth,
+            follow_redirects=follow_redirects,
+        )
+
+
+class _SeenClient(httpx2.AsyncClient):
+    def __init__(self, seen: HttpSeen, **kwargs: Any):
+        super().__init__(**kwargs)
+        self.seen = seen
+
+    async def send(self, request: httpx2.Request, **kwargs: Any) -> httpx2.Response:
+        to = f"{request.method} {request.url.path}"
+        try:
+            response = await super().send(request, **kwargs)
+        except httpx2.TransportError as exc:
+            self.seen.last = _transport_failure(exc, request)
+            raise
+        except asyncio.CancelledError:
+            self.seen.last = f"no answer from {_host(request)} to {to} before the timeout"
+            raise
+        code = response.status_code
+        # (the MCP spec lets a server answer 405 to the optional GET stream and to DELETE)
+        if code >= 400 and not (code == 405 and request.method in ("GET", "DELETE")):
+            self.seen.last = f"the server answered HTTP {code} {response.reason_phrase} to {to}"
+        elif code < 400:
+            self.seen.last = None
+        return response
+
+
+def _host(request: httpx2.Request) -> str:
+    port = request.url.port
+    return f"{request.url.host}:{port}" if port else request.url.host
+
+
+def _causes(exc: BaseException) -> Iterator[BaseException]:
+    todo, seen = [exc], set()
+    while todo:
+        e = todo.pop(0)
+        if id(e) in seen:
+            continue
+        seen.add(id(e))
+        yield e
+        if isinstance(e, BaseExceptionGroup):
+            todo.extend(e.exceptions)
+        todo.extend(x for x in (e.__cause__, e.__context__) if x is not None)
+
+
+def _transport_failure(exc: httpx2.TransportError, request: httpx2.Request) -> str:
+    host = _host(request)
+    for cause in _causes(exc):
+        if isinstance(cause, ssl.SSLError):
+            return f"TLS with {host} failed: {cause}"
+        if isinstance(cause, socket.gaierror):
+            return f"DNS lookup of {request.url.host} failed: {cause}"
+        if isinstance(cause, ConnectionRefusedError):
+            return f"connection to {host} refused"
+        if isinstance(cause, httpx2.TimeoutException | TimeoutError):
+            return f"{host} timed out ({type(cause).__name__})"
+    return f"{host}: {exc}"
+
+
+def server_toolset(
+    cfg: McpServerSettings, process: Any = None, seen: HttpSeen | None = None
+) -> MCPToolset[Any]:
+    """The library's toolset for one server, from its settings. `auto` takes the transport
+    FastMCP infers from the URL (`…/sse` → HTTP+SSE, else Streamable HTTP); `seen` gets what
+    the server answered wrong."""
     url = str(cfg.url)
     token = cfg.token.get_secret_value().strip() or None
     headers = {h.name: h.value.get_secret_value() for h in cfg.headers} or None
     timeout = cfg.timeout.total_seconds()
-    common: dict[str, Any] = {
-        "id": f"mcp-{cfg.name}",
-        "init_timeout": timeout,
-        "read_timeout": timeout,
-        "tool_error_behavior": "failed",
-        "process_tool_call": process,
-    }
+    factory = (seen or HttpSeen()).client
+    if _transport(cfg) == "sse":
+        # `auto`: as Pydantic AI builds it from a URL (the stream's read timeout = the timeout)
+        extra = {"sse_read_timeout": timeout} if cfg.transport == "auto" else {}
+        transport: Any = SSETransport(
+            url, headers=headers, auth=token, httpx_client_factory=factory, **extra
+        )
+    else:
+        transport = StreamableHttpTransport(
+            url, headers=headers, auth=token, httpx_client_factory=factory
+        )
+    return MCPToolset(
+        transport,
+        id=f"mcp-{cfg.name}",
+        init_timeout=timeout,
+        read_timeout=timeout,
+        tool_error_behavior="failed",
+        process_tool_call=process,
+    )
+
+
+def _transport(cfg: McpServerSettings) -> str:
     if cfg.transport == "auto":
-        return MCPToolset(url, auth=token, headers=headers, **common)
-    transport_cls = SSETransport if cfg.transport == "sse" else StreamableHttpTransport
-    return MCPToolset(transport_cls(url, headers=headers, auth=token), **common)
+        return infer_transport_type_from_url(str(cfg.url))
+    return cfg.transport
 
 
 def transport_label(cfg: McpServerSettings) -> str:
-    sse = cfg.transport == "sse" or (
-        cfg.transport == "auto" and str(cfg.url).rstrip("/").endswith("/sse")
-    )
-    return "HTTP+SSE" if sse else "Streamable HTTP"
+    return "HTTP+SSE" if _transport(cfg) == "sse" else "Streamable HTTP"
 
 
-def failure_text(exc: BaseException, cfg: McpServerSettings) -> str:
-    """A connect or call failure in words, without the server's secrets."""
+def failure_text(exc: BaseException, cfg: McpServerSettings, seen: HttpSeen | None = None) -> str:
+    """A connect or call failure in words, without the server's secrets: what the HTTP client
+    saw if it saw something wrong, else the library's own text."""
+    if seen is not None and seen.last is not None:
+        return scrub(seen.last, cfg.secret_values())
     leaves: list[BaseException] = [exc]
     while isinstance(leaves[0], BaseExceptionGroup) and leaves[0].exceptions:
         leaves = list(leaves[0].exceptions)
@@ -120,6 +228,7 @@ class Reachable(WrapperToolset[Any]):
     while the run closes it) gives no tools and keeps the reason in `down`."""
 
     cfg: McpServerSettings | None = None
+    seen: HttpSeen = field(default_factory=HttpSeen)
     down: str | None = None
     seen: dict[str, ToolDefinition] = field(default_factory=dict)
     view: Any = None
@@ -137,7 +246,7 @@ class Reachable(WrapperToolset[Any]):
             except Exception as exc:
                 assert self.cfg is not None
                 took = time.monotonic() - started
-                self.down = f"{failure_text(exc, self.cfg)} (after {took:.1f} s)"
+                self.down = f"{failure_text(exc, self.cfg, self.seen)} (after {took:.1f} s)"
                 log.warning("MCP server %r is unavailable: %s", self.cfg.name, self.down)
         return self
 
@@ -158,7 +267,7 @@ class Reachable(WrapperToolset[Any]):
             tools = await self.wrapped.get_tools(ctx)
         except Exception as exc:
             assert self.cfg is not None
-            self.down = failure_text(exc, self.cfg)
+            self.down = failure_text(exc, self.cfg, self.seen)
             return {}
         self.seen = {name: tool.tool_def for name, tool in tools.items()}
         return tools
@@ -219,7 +328,9 @@ class McpServers:
         for cfg in self._enabled():
             if only is not None and cfg.name not in only:
                 continue
-            reach = Reachable(server_toolset(cfg, self._process(cfg, source, sink)), cfg=cfg)
+            seen = HttpSeen()
+            toolset = server_toolset(cfg, self._process(cfg, source, sink, seen), seen)
+            reach = Reachable(toolset, cfg=cfg, seen=seen)
             chosen = set(cfg.tool_filter)
             view: AbstractToolset[Any] = reach.filtered(
                 lambda ctx, td, chosen=chosen: td.name in chosen
@@ -235,7 +346,11 @@ class McpServers:
         return McpRun(servers)
 
     def _process(
-        self, cfg: McpServerSettings, source: str, sink: Callable[[str], None] | None = None
+        self,
+        cfg: McpServerSettings,
+        source: str,
+        sink: Callable[[str], None] | None,
+        seen: HttpSeen,
     ) -> Any:
         secrets = cfg.secret_values()
 
@@ -249,7 +364,7 @@ class McpServers:
                     sink(result if isinstance(result, str) else json.dumps(result, default=str))
                 return result
             except Exception as exc:
-                error = failure_text(exc, cfg)
+                error = failure_text(exc, cfg, seen)
                 raise
             finally:
                 await self.record(cfg, name, args, error, started, source)
@@ -289,13 +404,14 @@ class McpServers:
         cfg = self.settings.server(server)
         if cfg is None:
             raise RuntimeError(f"no MCP server named {server!r}")
-        started, error = time.monotonic(), None
+        started, error, seen = time.monotonic(), None, HttpSeen()
         try:  # (`direct_call_tool` does not go through `process_tool_call`)
             return scrub(
-                await server_toolset(cfg).direct_call_tool(tool, args), cfg.secret_values()
+                await server_toolset(cfg, seen=seen).direct_call_tool(tool, args),
+                cfg.secret_values(),
             )
         except Exception as exc:
-            error = failure_text(exc, cfg)
+            error = failure_text(exc, cfg, seen)
             raise RuntimeError(error) from None
         finally:
             await self.record(cfg, tool, args, error, started, source)

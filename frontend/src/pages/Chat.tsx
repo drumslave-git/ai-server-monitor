@@ -54,8 +54,18 @@ type Turn =
       session?: string;
       /** The MCP part of the turn (meta `mcp_domains`); absent when no MCP tool was enabled. */
       domains?: McpDomainsLog;
+      /** Commands the marking call could not label (meta `unmarked`): they run with change rights. */
+      unmarked?: Unmarked;
       trace?: string;
     };
+
+type Unmarked = { commands: number; error?: string };
+
+/** "The model did not state read-only or write for 2 commands: they run with change rights." */
+function unmarkedText(u: Unmarked): string {
+  const n = u.commands === 1 ? "1 command: it runs" : `${u.commands} commands: they run`;
+  return `The model did not state read-only or write for ${n} with change rights`;
+}
 
 type McpDomainsLog = {
   picked?: string[];
@@ -128,6 +138,8 @@ function toTurns(doc: SessionDoc): Turn[] {
         if (outcome && typeof outcome === "object") turn.outcome = outcome;
         const domains = (m.meta as any)?.mcp_domains;
         if (domains && typeof domains === "object") turn.domains = domains;
+        const unmarked = (m.meta as any)?.unmarked;
+        if (unmarked && typeof unmarked.commands === "number") turn.unmarked = unmarked;
         const traceTurn = (m.meta as any)?.trace_turn;
         if (typeof traceTurn === "string") {
           turn.trace = traceTurn;
@@ -312,6 +324,7 @@ export function ChatPage() {
               t.trace = data.trace_turn;
               t.session = data.session_id;
               if (data.mcp_domains) t.domains = data.mcp_domains;
+              if (data.unmarked) t.unmarked = data.unmarked;
               if (Array.isArray(data.waiting_for) && data.waiting_for.length) t.waiting = data.waiting_for;
             });
             setBusy(false); // the title event may still follow: the composer need not wait for it
@@ -555,6 +568,11 @@ function AssistantBubble({
             Trace
           </a>
           {turn.domains && <span className="domain-line">{domainsText(turn.domains)}</span>}
+          {turn.unmarked && (
+            <span className="domain-line" title={turn.unmarked.error ? `Labelling failed: ${turn.unmarked.error}` : undefined}>
+              {unmarkedText(turn.unmarked)}
+            </span>
+          )}
         </p>
       )}
       {turn.stopped && <p className="muted small">Stopped.</p>}

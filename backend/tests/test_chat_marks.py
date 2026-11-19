@@ -122,10 +122,15 @@ def test_a_failed_extra_call_leaves_the_commands_unmarked_and_logs_it(
     models.script = [text, *reply]
     with caplog.at_level(logging.WARNING), TestClient(make_app(bootstrap)) as client:
         response = client.post("/api/chat", json={"message": "are they gone?"})
-        session_id = frames(response.text)[0]["session_id"]
+        events = frames(response.text)
+        session_id = events[0]["session_id"]
         stored = client.get(f"/api/chat/sessions/{session_id}").json()["messages"][-1]
     assert stored["content"] == text
     assert any("left unmarked" in r.getMessage() for r in caplog.records)
+    # stored with the answer (and sent with `done`) for the line under it
+    assert stored["meta"]["unmarked"]["commands"] == 1
+    assert stored["meta"]["unmarked"]["error"]
+    assert events[-1]["type"] == "done" and events[-1]["unmarked"] == stored["meta"]["unmarked"]
 
 
 def test_an_answer_with_marked_commands_makes_no_extra_call(

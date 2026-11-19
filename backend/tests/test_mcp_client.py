@@ -23,7 +23,7 @@ from ai_server_monitor.mcp_client import (
     kind_of,
 )
 
-from .mcp_fake import LONG_DESCRIPTION, SECRET_IN_RESULT, FakeMcp
+from .mcp_fake import LONG_DESCRIPTION, SECRET_IN_RESULT, FakeMcp, free_port
 
 TRANSPORTS = ["streamable_http", "sse"]
 TOKEN = "tok-9f8e7d6c5b4a"
@@ -134,11 +134,26 @@ async def test_check_keeps_long_descriptions_whole() -> None:
         await server.stop()
 
 
-async def test_check_reports_a_dead_server_and_bad_credentials(fake: FakeMcp) -> None:
-    dead = await check_mcp_server(cfg_for("http://127.0.0.1:1/mcp", timeout="2s"))
-    assert not dead.ok and dead.message.startswith("The server could not be used")
+async def test_check_says_what_the_server_answered(fake: FakeMcp) -> None:
+    """The MCP SDK reduces an error status to "Server returned an error response"; the Test
+    names the status and the path tried, or why no connection was made."""
+    port = free_port()
+    dead = await check_mcp_server(cfg_for(f"http://127.0.0.1:{port}/mcp", timeout="5s"))
+    assert not dead.ok
+    assert dead.message == f"The server could not be used: connection to 127.0.0.1:{port} refused"
+
     wrong = await check_mcp_server(cfg_for(fake.url, token="wrong-token-000"))
+    method, path = ("POST", "/mcp") if fake.transport == "streamable_http" else ("GET", "/sse")
     assert not wrong.ok and "wrong-token-000" not in wrong.message
+    assert wrong.message == (
+        "The server could not be used: "
+        f"the server answered HTTP 401 Unauthorized to {method} {path}"
+    )
+
+    lost = "/nope" if fake.transport == "streamable_http" else "/nope/sse"
+    gone = await check_mcp_server(cfg_for(fake.url.replace(path, lost)))
+    assert not gone.ok
+    assert gone.message.endswith(f"the server answered HTTP 404 Not Found to {method} {lost}")
 
 
 # --------------------------------------------------------------------------- agent runs
@@ -228,12 +243,21 @@ async def test_job_writes_go_to_the_write_call(fake: FakeMcp) -> None:
 
 
 async def test_a_dead_server_gives_no_tools_and_says_so() -> None:
-    servers = McpServers(McpSettings(servers=[cfg_for("http://127.0.0.1:1/mcp", timeout="2s")]))
+    servers = McpServers(McpSettings(servers=[cfg_for("http://127.0.0.1:1/mcp", timeout="5s")]))
     script = Script()
     events = await run(servers, script)
     assert events[-1]["type"] == "end"
     assert script.offered[0] == []
     assert "MCP server 'home' is unavailable this run" in script.instructions[0]
+    assert "connection to 127.0.0.1:1 refused" in script.instructions[0]
+
+
+async def test_a_refused_token_is_named_in_the_run(fake: FakeMcp) -> None:
+    servers = McpServers(McpSettings(servers=[cfg_for(fake.url, token="wrong-token-000")]))
+    script = Script()
+    await run(servers, script)
+    assert "answered HTTP 401 Unauthorized" in script.instructions[0]
+    assert "wrong-token-000" not in script.instructions[0]
 
 
 async def test_a_server_dying_during_the_run_does_not_end_it() -> None:

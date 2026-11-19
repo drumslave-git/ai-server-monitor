@@ -9,7 +9,10 @@ import { Empty, PageHead } from "../ui";
 
 /* All tools of the configured MCP servers, organised by domain (the area a person asks about).
    One collapsible card per domain; "Not sorted" on top when a sorting failed; on/off goes to
-   the server's tool_filter (the same value as the Settings table). */
+   the server's tool_filter (the same value as the Settings table). Cards start open; the ones
+   the owner collapsed are remembered in this browser by domain name (a new or renamed domain
+   starts open). While a search or filter is on, every card with matches is open and what is
+   remembered stays as it was. */
 
 type Page = components["schemas"]["McpToolsPage"];
 type Tool = components["schemas"]["McpTool"];
@@ -18,6 +21,26 @@ type Kind = "all" | "read" | "write";
 type OnOff = "all" | "on" | "off";
 
 const NEW_DOMAIN = "__new__";
+/** The "Not sorted" card's key among the collapsed names (no domain can be called this). */
+const UNSORTED = "(not sorted)";
+const CLOSED_KEY = "asm.mcp-tools.collapsed";
+
+function readClosed(): Set<string> {
+  try {
+    const stored = JSON.parse(localStorage.getItem(CLOSED_KEY) ?? "[]");
+    return new Set(Array.isArray(stored) ? stored.filter((n) => typeof n === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeClosed(names: Set<string>) {
+  try {
+    localStorage.setItem(CLOSED_KEY, JSON.stringify([...names]));
+  } catch {
+    /* no storage (private window, blocked): the state lasts until the page is left */
+  }
+}
 
 export function McpToolsPage() {
   const [page, setPage] = useState<Page | null>(null);
@@ -26,7 +49,8 @@ export function McpToolsPage() {
   const [server, setServer] = useState("all");
   const [kind, setKind] = useState<Kind>("all");
   const [onOff, setOnOff] = useState<OnOff>("all");
-  const [closed, setClosed] = useState<Set<string>>(new Set());
+  const [closed, setClosedState] = useState<Set<string>>(readClosed);
+  const setClosed = (next: Set<string>) => { setClosedState(next); writeClosed(next); };
   const [sortOpen, setSortOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -73,7 +97,14 @@ export function McpToolsPage() {
   const writes = tools.filter((t) => t.kind === "write").length;
   const nServers = new Set(tools.map((t) => t.server)).size;
   const down = servers.filter((s) => s.error);
-  const allNames = ["unsorted", ...page.domains.map((d) => d.name)];
+  const allNames = [UNSORTED, ...page.domains.map((d) => d.name)];
+  const anyClosed = allNames.some((n) => closed.has(n));
+  /** A card's open state: open with matches under a filter, else what the owner left it at. */
+  const isOpen = (name: string) => filtering || !closed.has(name);
+  /** The owner opened or closed a card: remembered, except under a filter (forced open). */
+  const toggled = (name: string, open: boolean) => {
+    if (!filtering && open === closed.has(name)) setClosed(toggle(closed, name, open));
+  };
   const toOn = shown.filter((t) => !t.enabled);
   const toOff = shown.filter((t) => t.enabled);
 
@@ -123,17 +154,19 @@ export function McpToolsPage() {
               <option value="on">On</option>
               <option value="off">Off</option>
             </select>
-            <button type="button" className="btn btn-quiet btn-sm" onClick={() => setClosed(closed.size ? new Set() : new Set(allNames))}>
-              {closed.size ? "Expand all" : "Collapse all"}
+            <button type="button" className="btn btn-quiet btn-sm" disabled={filtering}
+              title={filtering ? "While searching or filtering, every card with matches is open" : undefined}
+              onClick={() => setClosed(anyClosed ? new Set() : new Set(allNames))}>
+              {anyClosed ? "Expand all" : "Collapse all"}
             </button>
             <span className="mt-bulk">
               <button type="button" className="btn btn-sm" disabled={toOn.length === 0} onClick={() => switchAll(toOn, true)}
                 title={filtering ? "Switches on every tool the search and filters show" : "Switches on every tool"}>
-                Select all ({toOn.length})
+                {filtering ? "Select shown" : "Select all"} ({toOn.length})
               </button>
               <button type="button" className="btn btn-sm" disabled={toOff.length === 0} onClick={() => switchAll(toOff, false)}
                 title={filtering ? "Switches off every tool the search and filters show" : "Switches off every tool"}>
-                Deselect all ({toOff.length})
+                {filtering ? "Deselect shown" : "Deselect all"} ({toOff.length})
               </button>
             </span>
           </div>
@@ -145,8 +178,8 @@ export function McpToolsPage() {
               description="These tools have no domain: they are not offered to the chat or to jobs."
               count={unsorted}
               total={tools.filter((t) => t.domain_id == null)}
-              open={!closed.has("unsorted")}
-              onToggle={(o) => setClosed(toggle(closed, "unsorted", o))}
+              open={isOpen(UNSORTED)}
+              onToggle={(o) => toggled(UNSORTED, o)}
               onSwitch={(on) => switchAll(unsorted, on)}
               warn
             >
@@ -166,8 +199,8 @@ export function McpToolsPage() {
                 description={d.description}
                 count={rows}
                 total={all}
-                open={filtering || !closed.has(d.name)}
-                onToggle={(o) => setClosed(toggle(closed, d.name, o))}
+                open={isOpen(d.name)}
+                onToggle={(o) => toggled(d.name, o)}
                 onSwitch={(on) => switchAll(rows, on)}
                 domain={d}
                 act={act}
@@ -206,6 +239,8 @@ function Section({
 }) {
   const [editing, setEditing] = useState(false);
   const on = total.filter((t) => t.enabled).length;
+  // Under a search or filter the buttons act on the tools shown; the "on" count is the domain's.
+  const part = count.length !== total.length;
   return (
     <>
     <details className={`mt-domain${warn ? " mt-unsorted" : ""}`} open={open} onToggle={(e) => onToggle((e.target as HTMLDetailsElement).open)} id={`domain-${id}`}>
@@ -216,13 +251,12 @@ function Section({
           {description && <span className="mt-ddesc"> · {description}</span>}
         </span>
         <span className="mt-dmeta">
-          {count.length !== total.length && <span>{count.length} shown · </span>}
-          {on} of {total.length} on
+          {part ? <span>{count.length} shown · {on} of {total.length} on in this {domain ? "domain" : "group"}</span> : <span>{on} of {total.length} on</span>}
           <button type="button" className="link-btn mt-dswitch" disabled={count.every((t) => t.enabled)} onClick={(e) => { e.preventDefault(); onSwitch(true); }}>
-            Select all
+            {part ? "Select shown" : "Select all"}
           </button>
           <button type="button" className="link-btn mt-dswitch" disabled={!count.some((t) => t.enabled)} onClick={(e) => { e.preventDefault(); onSwitch(false); }}>
-            Deselect all
+            {part ? "Deselect shown" : "Deselect all"}
           </button>
           {domain && domain.used_by.length > 0 && <span title={domain.used_by.join(", ")}> · {domain.used_by.length} job{domain.used_by.length === 1 ? "" : "s"}</span>}
           {domain && (

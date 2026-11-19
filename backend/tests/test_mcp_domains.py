@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from ai_server_monitor.config import Bootstrap
 from ai_server_monitor.context import AppContext
 from ai_server_monitor.mcp_client.api import router, sort_tested
 from ai_server_monitor.mcp_client.discovery import check_mcp_server
@@ -311,3 +312,33 @@ async def test_the_settings_test_sorts_and_a_dead_server_is_shown(
             r = await http.post("/api/mcp/sort", json={"server": "nope"})
             assert r.status_code == 404
         await fake46.start()
+
+
+async def test_the_page_says_sorting_while_a_sort_runs(tmp_path: Path, fake46: FakeMcp) -> None:
+    """`sorting` is true from the moment a sort asks the model until it has the answer."""
+    llm = FakeLLM(sort_reply)
+    asked, release = asyncio.Event(), asyncio.Event()
+
+    async def held(request: httpx.Request) -> httpx.Response:
+        asked.set()
+        await release.wait()
+        return llm.handler(request)
+
+    app = AppContext(
+        Bootstrap(data_dir=tmp_path / "data", host_root=tmp_path / "no-host"),
+        llm_transport=httpx.MockTransport(held),
+        seed_settings=settings_for(fake46.url),
+    )
+    await app.start()
+    try:
+        async with client(app) as http:
+            assert (await http.get("/api/mcp/tools")).json()["sorting"] is False
+            sort = asyncio.create_task(http.post("/api/mcp/sort", json={}))
+            await asyncio.wait_for(asked.wait(), 10)
+            assert (await http.get("/api/mcp/tools")).json()["sorting"] is True
+            release.set()
+            assert (await sort).json()["sorted"] == 46
+            assert (await http.get("/api/mcp/tools")).json()["sorting"] is False
+    finally:
+        release.set()
+        await app.stop()

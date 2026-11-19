@@ -74,6 +74,7 @@ def _test_config(
     """The agent configuration and prompt of a real run of `profile`, asking for the echo."""
     from ..agent.prompts import chat_prompt, host_line
     from ..agent.safety import Scrubber
+    from ..chat.explain import host_zone
 
     settings = app.settings
     host = host_line(app.host_env.root)
@@ -87,6 +88,7 @@ def _test_config(
         "scrub": Scrubber(settings),
         "tracing": app.tracing,
         "trace": {"purpose": "test"},
+        "zone": host_zone(app),  # the date line every real run gets
     }
     if profile == "worker":
         from ..jobs.prompts import topic_instructions

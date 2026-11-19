@@ -116,6 +116,10 @@ def test_the_settings_llm_test_is_recorded_as_a_test(
         assert client.post("/api/settings/test-llm", json=body).json()["ok"] is True
         flush(client, app)
         assert [c["purpose"] for c in calls(client)] == ["test", "test"]  # tool call, answer
+    # it runs like a real run: the same date line in its instructions
+    messages = json.loads(seen[0].content)["messages"]
+    system = "\n".join(str(m["content"]) for m in messages if m["role"] == "system")
+    assert "Now: " in system and "time zone" in system
 
 
 def test_llm_trace_can_be_switched_off_and_bodies_dropped(bootstrap: Bootstrap) -> None:

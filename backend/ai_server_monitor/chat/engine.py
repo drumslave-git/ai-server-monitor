@@ -318,14 +318,17 @@ class ChatEngine:
 
     # ------------------------------------------------------------------ command marks
 
-    async def _mark_commands(self, answer: str, session_id: str, trace_turn: str) -> str:
+    async def _mark_commands(
+        self, answer: str, session_id: str, trace_turn: str
+    ) -> tuple[str, dict[str, Any] | None]:
         """The answer with a mark on every command of its shell blocks (see `chat.marks`).
         Commands without a valid one are labelled by one structured call of the main model
-        (Logs: purpose `chat_marks`); if it fails they stay unmarked, and the log says so."""
+        (Logs: purpose `chat_marks`); if it fails they stay unmarked, the log says so and the
+        second value (stored as the answer's meta `unmarked`) says how many and why."""
         answer = clean_stray_marks(answer)
         commands = unmarked_commands(answer)
         if not commands:
-            return answer
+            return answer, None
         try:
             agent: Agent[None, Marks] = Agent(
                 self.app.models.model("main"), instructions=MARKS_SYSTEM, output_type=Marks
@@ -350,8 +353,8 @@ class ChatEngine:
                 type(exc).__name__,
                 exc,
             )
-            return answer
-        return add_marks(answer, commands, kinds)
+            return answer, {"commands": len(commands), "error": f"{type(exc).__name__}: {exc}"}
+        return add_marks(answer, commands, kinds), None
 
     # ------------------------------------------------------------------ one question
 
@@ -544,6 +547,7 @@ class ChatEngine:
                 end = event
         output = end.get("output")
         waiting: list[int] = []
+        unmarked: dict[str, Any] | None = None
         domains = turn.log(end.get("loaded", [])) if turn is not None and turn.used else None
         if isinstance(output, Suspended):
             if domains is not None:  # the resumed run gets the same domains
@@ -554,7 +558,7 @@ class ChatEngine:
             final = "\n".join(dict.fromkeys(p.message for p in output.pending.values()))
         else:
             final = strip_reasoning(str(output or "")) or "(no answer)"
-            final = await self._mark_commands(final, session_id, trace_turn)
+            final, unmarked = await self._mark_commands(final, session_id, trace_turn)
         # Whatever of the answer was not streamed already (the step-limit fallback text, an
         # empty-answer placeholder, the waiting note) goes out now.
         rest = final[len(streamed) :] if final.startswith(streamed) else ""
@@ -571,6 +575,7 @@ class ChatEngine:
             "trace_turn": trace_turn,
             **({"waiting_for": waiting} if waiting else {}),
             **({"mcp_domains": domains} if domains is not None else {}),
+            **({"unmarked": unmarked} if unmarked is not None else {}),
             **(meta_extra or {}),
         }
         message_id = await self.store.add_message(session_id, "assistant", final, meta=meta)

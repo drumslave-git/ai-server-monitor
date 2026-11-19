@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .settings import McpServerSettings
-from .toolsets import failure_text, kind_of, server_toolset, transport_label
+from .toolsets import HttpSeen, failure_text, kind_of, server_toolset, transport_label
 
 
 @dataclass
@@ -23,13 +23,14 @@ class McpCheck:
 
 
 async def check_mcp_server(cfg: McpServerSettings) -> McpCheck:
-    toolset = server_toolset(cfg)
+    seen = HttpSeen()
+    toolset = server_toolset(cfg, seen=seen)
     try:
         async with toolset:
             tools = await toolset.list_tools()
             info = toolset.server_info
     except Exception as exc:
-        return McpCheck(False, f"The server could not be used: {failure_text(exc, cfg)}")
+        return McpCheck(False, f"The server could not be used: {failure_text(exc, cfg, seen)}")
     rows = []
     for tool in tools:
         annotations = tool.annotations.model_dump(by_alias=True) if tool.annotations else {}
