@@ -1895,7 +1895,8 @@ export interface components {
             tool_overrides?: components["schemas"]["McpToolOverride"][];
             /**
              * Transport
-             * @description auto = try Streamable HTTP, fall back to the older HTTP+SSE.
+             * @description auto = chosen by the URL: a path ending in /sse is the older HTTP+SSE, anything else
+             *     Streamable HTTP (nothing is tried first).
              * @default auto
              * @enum {string}
              */
