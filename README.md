@@ -532,6 +532,17 @@ log and the model call logs are kept; the rest of the old data is deleted by the
   needed) instead of answering from memory, and to say so when nothing can look it up.
 - The domain classification sees the names of each domain's tools next to its description.
 
+### 0.8.3
+
+- The write calls of one chat answer wait as one card (**Approve all** / **Deny all**) instead
+  of one card per call. The card lists each call's arguments, and a failed call shows the
+  server's reason (failed calls first).
+- **Approve for this whole answer** (chat card and Approvals page) also approves the later
+  calls of the same MCP tool until that answer is finished; each one is still listed and
+  audited. Not offered for root commands.
+- An answer is no longer stopped after 5 rounds of approved or `auto` write calls; the chat
+  step limit ends it.
+
 ## Troubleshooting
 
 - **A job or the summary shows `error`** — open the run on the Jobs page: its error says why
