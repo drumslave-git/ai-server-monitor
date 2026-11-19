@@ -41,7 +41,8 @@ const given = (item: Item): Record<string, unknown> => {
 export function callArguments(item: Item, skip: string[] = []): string {
   return Object.entries(given(item))
     .filter(([key]) => !skip.includes(key))
-    .map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`)
+    // (an empty text is shown as "", so it does not look like a value that went missing)
+    .map(([key, value]) => `${key}: ${typeof value === "string" && value ? value : JSON.stringify(value)}`)
     .join(" · ");
 }
 
