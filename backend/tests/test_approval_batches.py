@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from ai_server_monitor.actions import ActionService, Conflict, NotFound
+from ai_server_monitor.actions import ActionError, ActionService, Conflict, NotFound
 from ai_server_monitor.config import Bootstrap
 from ai_server_monitor.db import Database, load_migrations
 from ai_server_monitor.main import create_app
@@ -298,6 +298,84 @@ async def test_batches_hold_only_what_needs_approval(db: Database, fake: FakeAct
     assert item["status"] == "suggested" and item["batch_id"] is None
 
 
+# --------------------------------------------------------------------------- the rest of a run
+
+
+async def ask_for(
+    service: ActionService, target: str, note: str, run_key: str | None = "turn:a"
+) -> dict[str, Any]:
+    return await service.request(
+        NAME, {"target": target, "note": note}, "chat:s1", run_key=run_key, label="Chat"
+    )
+
+
+async def test_an_approval_can_cover_the_rest_of_the_run(db: Database, fake: FakeAction) -> None:
+    fake.kinds = True
+    service, events = make_service(db, fake)
+    first = [await ask_for(service, f"t{i}", "remove") for i in (1, 2)]
+    batch_id = first[0]["batch_id"]
+    view = await service.get_batch(batch_id)
+    assert view["rest"] == ["fake remove"] and view["covered"] == []
+
+    decided = await service.decide_batch(batch_id, "approve", rest=True)
+    assert decided["counts"] == {"executed": 2} and decided["covered"] == ["fake remove"]
+    assert decided["rest"] == []  # nothing is waiting any more
+
+    events.clear()
+    later = await ask_for(service, "t3", "remove")  # the same kind, the same run: no question
+    assert later["status"] == "executed" and later["batch_id"] == batch_id
+    assert later["decided_by"] == "ui: rest of the run"
+    assert names(events) == ["action.result", "approval.progress"]
+    assert events[-1][1]["counts"] == {"executed": 3}
+    assert fake.calls == ["t1", "t2", "t3"]
+
+    other_kind = await ask_for(service, "t4", "pause")
+    other_run = await ask_for(service, "t5", "remove", run_key="turn:b")
+    no_run = await ask_for(service, "t6", "remove", run_key=None)
+    assert [r["status"] for r in (other_kind, other_run, no_run)] == ["pending"] * 3
+    assert len({other_kind["batch_id"], other_run["batch_id"], no_run["batch_id"], batch_id}) == 4
+
+    # a failure is the item's own outcome; the run is still covered
+    fake.fail_targets.add("t7")
+    failed = await ask_for(service, "t7", "remove")
+    assert failed["status"] == "failed" and failed["result"]["error"] == "fake failure for t7"
+    assert (await ask_for(service, "t8", "remove"))["status"] == "executed"
+
+    found = await service.batches_of([first[0]["id"], later["id"], other_kind["id"]])
+    assert [b["id"] for b in found] == [batch_id, other_kind["batch_id"]]
+
+
+async def test_only_the_approved_kinds_are_covered(db: Database, fake: FakeAction) -> None:
+    fake.kinds = True
+    service, _ = make_service(db, fake)
+    remove = await ask_for(service, "t1", "remove")
+    pause = await ask_for(service, "t2", "pause")
+    assert pause["batch_id"] == remove["batch_id"]
+    assert (await service.get_batch(remove["batch_id"]))["rest"] == ["fake pause", "fake remove"]
+    await service.decide_batch(remove["batch_id"], "approve", [remove["id"]], rest=True)
+    assert (await ask_for(service, "t3", "remove"))["status"] == "executed"
+    assert (await ask_for(service, "t4", "pause"))["status"] == "pending"
+
+
+async def test_the_rest_needs_an_approval_a_run_and_an_action_with_kinds(
+    db: Database, fake: FakeAction
+) -> None:
+    service, _ = make_service(db, fake)  # the action has no kinds
+    record = await ask_for(service, "t1", "remove")
+    assert (await service.get_batch(record["batch_id"]))["rest"] == []
+    with pytest.raises(ActionError, match="cannot cover later requests"):
+        await service.decide_batch(record["batch_id"], "approve", rest=True)
+
+    fake.kinds = True
+    service, _ = make_service(db, fake)
+    with pytest.raises(ActionError, match="only an approval"):
+        await service.decide_batch(record["batch_id"], "reject", rest=True)
+    alone = await ask_for(service, "t2", "remove", run_key=None)
+    with pytest.raises(ActionError, match="cannot cover later requests"):
+        await service.decide_batch(alone["batch_id"], "approve", rest=True)
+    assert (await service.get(record["id"]))["status"] == "pending"  # nothing was decided
+
+
 # --------------------------------------------------------------------------- HTTP API
 
 
@@ -347,6 +425,28 @@ def test_http_api_decides_batches_and_subsets(
         audit = client.get("/api/actions", params={"batch": batch["id"]}).json()
         assert audit["total"] == 5 and {i["batch_id"] for i in audit["items"]} == {batch["id"]}
         assert client.get("/api/actions", params={"batch": 424242}).json()["total"] == 0
+
+        # ?of= finds the approval of an item whatever its state
+        of = client.get("/api/approvals", params={"of": [ids[0], ids[4]]}).json()
+        assert [b["id"] for b in of["batches"]] == [batch["id"]] and of["items"] == []
+        assert client.get("/api/approvals", params={"of": [424242]}).json()["batches"] == []
+
+
+def test_http_api_approves_the_rest_of_a_run(bootstrap: Bootstrap, fake_action: FakeAction) -> None:
+    fake_action.kinds = True
+    app = create_app(bootstrap, seed_settings=settings_with("1h"))
+    with TestClient(app) as client:
+        ctx = app.state.ctx
+        ctx.actions.registry = fake_action.registry()
+        first = client.portal.call(ask_for, ctx.actions, "t1", "remove")  # type: ignore[union-attr]
+        url = f"/api/approvals/{first['batch_id']}"
+        assert client.get(url).json()["rest"] == ["fake remove"]
+        assert client.post(url, json={"decision": "reject", "rest": True}).status_code == 422
+        done = client.post(url, json={"decision": "approve", "rest": True}).json()
+        assert done["counts"] == {"executed": 1} and done["covered"] == ["fake remove"]
+        later = client.portal.call(ask_for, ctx.actions, "t2", "remove")  # type: ignore[union-attr]
+        assert later["status"] == "executed" and later["batch_id"] == first["batch_id"]
+        assert client.get(url).json()["counts"] == {"executed": 2}
 
 
 # --------------------------------------------------------------------------- upgrade

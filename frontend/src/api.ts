@@ -136,5 +136,10 @@ export type ApprovalBatch = {
   queue_note: string;
   counts: Record<string, number>;
   outcome: string;
+  /** Kinds of its waiting items ("server · tool") that an approval "for the rest of the run"
+   *  would cover; empty when it cannot cover later requests. */
+  rest: string[];
+  /** Kinds an approval of this batch covers for the rest of its run. */
+  covered: string[];
   items: ActionRecord[];
 };

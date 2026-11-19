@@ -15,6 +15,7 @@ import logging
 import re
 import time
 import uuid
+from collections import Counter
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -402,8 +403,12 @@ class ChatEngine:
         request: str | None,
         keep: list[str],
         require_look: bool = False,
+        run_key: str | None = None,
     ) -> tuple[AgentConfig, Callable[[str], str], mcp_turn.McpTurn]:
         """The main agent of this conversation: tools, instructions, limits, tracing.
+        `run_key`: the key the write requests of this answer are filed under (None: a new
+        one; a run resumed after an approval keeps the one it had, so an approval "and the
+        rest of this answer" covers what it asks for next).
         MCP: the servers are connected (closed by `stack`), new tools sorted, `request`
         classified (None: a resumed run) and the domains given as capabilities, `keep` ones
         directly (see `mcp_client.turn`).
@@ -434,7 +439,8 @@ class ChatEngine:
         def kinds(name: str) -> str:
             return fixed.get(name) or mcp.kind(name) or "read"
 
-        tools = chat_tools(app, session_id, who, f"turn:{ctx.turn}", shell, scrub, host)
+        run_key = run_key or f"turn:{ctx.turn}"
+        tools = chat_tools(app, session_id, who, run_key, shell, scrub, host)
         instructions = chat_prompt(host, settings.general.language)
         if mcp.servers:
             instructions += "\n" + MCP_NOTE
@@ -458,7 +464,7 @@ class ChatEngine:
             },
             on_approval=file_for_approval,
             capabilities=turn.capabilities,
-            approval_tool=mcp_approval_tool(app, who, f"turn:{ctx.turn}"),
+            approval_tool=mcp_approval_tool(app, who, run_key),
             notes=lambda: "\n".join([*mcp.unavailable(), *turn.notes()]),
             zone=zone,
         )
@@ -544,7 +550,8 @@ class ChatEngine:
                 output.domains = sorted({*domains["offered"], *domains["loaded"]})
             await self._suspend(session_id, source, output)
             waiting = [i for p in output.pending.values() for i in p.action_ids]
-            final = "\n".join(p.message for p in output.pending.values())
+            # (calls of one tool wait under the same approval with the same words: said once)
+            final = "\n".join(dict.fromkeys(p.message for p in output.pending.values()))
         else:
             final = strip_reasoning(str(output or "")) or "(no answer)"
             final = await self._mark_commands(final, session_id, trace_turn)
@@ -629,7 +636,9 @@ class ChatEngine:
             note = await self.store.waiting_note(session_id, {int(r["id"]) for r in records})
             if note is None:
                 return
-            text = "\n".join(outcome_line(r) for r in records)
+            # (many calls of one tool with the same outcome: one line, "7 × Approval #3: ...")
+            lines = Counter(outcome_line(r) for r in records)
+            text = "\n".join(line if n == 1 else f"{n} × {line}" for line, n in lines.items())
             meta = {**(note["meta"] or {}), "outcome": {str(r["id"]): r["status"] for r in records}}
             await self.store.update_message(int(note["id"]), text, meta)
             self.app.events.publish(
@@ -638,6 +647,16 @@ class ChatEngine:
             )
         except Exception:
             log.exception("chat: could not update the waiting note in %s", session_id)
+
+    async def _run_key(self, records: list[dict[str, Any]]) -> str | None:
+        """The key the decided actions of a stopped run were filed under."""
+        batch = next((r["batch_id"] for r in records if r.get("batch_id")), None)
+        if batch is None:
+            return None
+        row = await self.app.db.fetchone(
+            "SELECT run_key FROM approval_batches WHERE id = ?", (batch,)
+        )
+        return row["run_key"] if row is not None else None
 
     async def _resume(self, run: dict[str, Any], items: list[dict[str, Any]]) -> None:
         session_id, source = run["session_id"], run["source"]
@@ -664,6 +683,7 @@ class ChatEngine:
                         stack,
                         request=None,
                         keep=sorted({*keep, *suspended.domains}),
+                        run_key=await self._run_key(records),
                     )
                     cfg.resolved = resolved
                     async for event in self._drive(

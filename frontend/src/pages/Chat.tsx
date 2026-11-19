@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError, type ActionRecord, type Schemas } from "../api";
+import { api, type Schemas } from "../api";
+import { ApprovalCards } from "../components/ApprovalCards";
 import { HostCommand } from "../components/HostCommand";
 import { RunnableMarkdown } from "../components/RunnableMarkdown";
 import { ago } from "../fmt";
@@ -537,9 +538,7 @@ function AssistantBubble({
           </ul>
         </details>
       )}
-      {approvals.map((id) => (
-        <ApprovalCard key={id} id={id} />
-      ))}
+      {approvals.length > 0 && <ApprovalCards key={approvals.join(",")} items={approvals} />}
       {turn.waiting && turn.text ? (
         <p className="waiting-note muted small">
           <Dot level={outcomeLevel(turn.outcome)} /> <span className="waiting-text">{turn.text.trim()}</span>
@@ -571,70 +570,4 @@ function outcomeLevel(outcome: Record<string, string> | undefined): Level {
   if (all.some((s) => s === "failed")) return "crit";
   if (all.length && all.every((s) => s === "executed")) return "ok";
   return "off";
-}
-
-const STATUS_TEXT: Record<string, string> = {
-  pending: "Waiting for your approval",
-  queued: "Approved; queued",
-  approved: "Approved; running",
-  executed: "Approved and run",
-  failed: "Approved; failed",
-  rejected: "Denied",
-  expired: "Expired",
-  dry_run: "Dry run",
-};
-
-/** One action a chat answer filed: what it is, Approve / Deny while pending, the outcome after. */
-function ApprovalCard({ id }: { id: number }) {
-  const action = usePoll(() => api.get<ActionRecord>(`/api/actions/${id}`), 60_000);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  useStream(["approval", "action"], (event) => {
-    // events carry the action id (actions) or the batch (approvals): reload on ours or any batch
-    if (event.data.id === id || event.type.startsWith("approval")) action.reload();
-  });
-  const row = action.data;
-  if (action.error && !row) return <div className="approval-card muted small">Approval item #{id}: {action.error}</div>;
-  if (!row) return null;
-  const pending = row.status === "pending";
-  const decide = async (decision: "approve" | "reject") => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.post(`/api/approvals/${row.batch_id ?? id}`, { decision, items: [id] });
-    } catch (e) {
-      setError(e instanceof ApiError ? String(e.detail) : (e as Error).message);
-    }
-    setBusy(false);
-    action.reload();
-  };
-  const level = pending || row.status === "queued" ? "warn" : row.status === "approved" ? "info" : row.status === "executed" ? "ok" : row.status === "failed" ? "crit" : "off";
-  return (
-    <div className={`approval-card${pending ? "" : " settled"}`}>
-      <div className="approval-card-body">
-        <p className="approval-title">
-          {row.action === "host_command" ? (
-            <span>Command to run as root on the host</span>
-          ) : (
-            <>
-              <span className="mono">{row.action}</span>
-              <span>{row.target}</span>
-            </>
-          )}
-        </p>
-        {row.action === "host_command" ? <HostCommand item={row} /> : row.reason && <p className="small">{row.reason}</p>}
-        <p className="muted small">
-          <Dot level={level} /> {STATUS_TEXT[row.status] ?? row.status} ·{" "}
-          <a href={`#/approvals/${row.batch_id ?? ""}`}>open in Approvals</a>
-        </p>
-        {error && <p className="error small">{error}</p>}
-      </div>
-      {pending && (
-        <div className="approval-buttons">
-          <button className="btn" disabled={busy} onClick={() => decide("reject")}>Deny</button>
-          <button className="btn btn-primary" disabled={busy} onClick={() => decide("approve")}>Approve</button>
-        </div>
-      )}
-    </div>
-  );
 }

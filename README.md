@@ -256,7 +256,12 @@ stdio programs), tools only. You pick which tools the chat gets; above
 is *read* only if the server marks it `readOnlyHint` and you did not override it; reads run at
 once. Everything else is a *write* under the server's policy: `off` (never), `suggest` (recorded,
 never run), `approve` (default: waits for you) or `auto`, with per-tool overrides and its own
-`mcp.dry_run` switch. Approvals of one chat turn are grouped into one card with a checklist.
+`mcp.dry_run` switch. The calls of one chat answer wait as one approval: one card in the chat
+with **Approve all** / **Deny all**, a checklist on the Approvals page. **Approve for this whole
+answer** also approves every later call of the same tool the model makes until that answer is
+finished (a model usually asks for a few at a time, so 180 removals are one click, not 180);
+each call is still listed in the card and the audit log, and the next question asks again. A
+call that failed shows the server's reason in the card.
 
 **Untrusted text and secrets**: log lines, command output and tool results are passed to the
 model as delimited data; a model can only *request* an action, and your settings decide what

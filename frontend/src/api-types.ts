@@ -55,6 +55,8 @@ export interface paths {
          * List Approvals
          * @description Approvals waiting for a decision (expired ones are swept first): `batches` has one
          *     entry per approval with its items; `items` is the flat list of pending items.
+         *     With ?of=<item id> (repeatable): the approvals those items belong to instead, decided
+         *     or not.
          */
         get: operations["list_approvals_api_approvals_get"];
         put?: never;
@@ -1131,6 +1133,11 @@ export interface components {
             decision: "approve" | "reject";
             /** Items */
             items?: number[] | null;
+            /**
+             * Rest
+             * @default false
+             */
+            rest: boolean;
         };
         /** DomainEdit */
         DomainEdit: {
@@ -2708,7 +2715,9 @@ export interface operations {
     };
     list_approvals_api_approvals_get: {
         parameters: {
-            query?: never;
+            query?: {
+                of?: number[] | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2724,6 +2733,15 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

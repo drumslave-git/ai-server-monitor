@@ -73,6 +73,43 @@ async def test_a_call_settled_at_once_goes_back_to_the_model_in_the_same_run() -
     assert events[-1]["output"] == "That is not allowed."
 
 
+async def test_calls_settled_at_once_go_on_until_the_step_limit() -> None:
+    """No own limit on rounds of approval-required calls: the step limit ends the run."""
+    filed: list[dict[str, Any]] = []
+    tool = heating_tool({"status": "executed", "note": "Done."}, filed)
+    models = hub(
+        FakeLLM(*[call("set_heating", {"celsius": n}, f"h{n}") for n in range(8)], say("8"))
+    )
+    try:
+        cfg = AgentConfig(
+            model=models.model("main"),
+            instructions="t",
+            tools=[tool],
+            on_approval=file_for_approval,
+        )
+        events = await collect(cfg, "step by step")
+        assert len(filed) == 8 and events[-1]["output"] == "8" and events[-1]["stopped"] is None
+    finally:
+        await models.aclose()
+
+    filed.clear()
+    endless = FakeLLM(*[call("set_heating", {"celsius": n}, f"e{n}") for n in range(60)])
+    models = hub(endless)
+    try:
+        cfg = AgentConfig(
+            model=models.model("main"),
+            instructions="t",
+            tools=[tool],
+            on_approval=file_for_approval,
+            max_steps=4,
+        )
+        events = await collect(cfg, "never stop")
+    finally:
+        await models.aclose()
+    assert events[-1]["stopped"] == "step_limit"
+    assert len(filed) < 12 and len(endless.requests) < 12
+
+
 async def test_a_pending_call_stops_the_run_and_it_resumes_with_the_outcome() -> None:
     filed: list[dict[str, Any]] = []
     pending = {"status": "pending", "action_id": 7, "approval_id": 3, "target": "heating 21"}

@@ -9,6 +9,12 @@ card, one Telegram message — for them, and can approve or reject all of it or 
 item stays its own audit row (`actions.batch_id`) with its own status. A single request is
 just a batch of one.
 
+An approval can also cover *the rest of the run*: `decide_batch(..., rest=True)` approves the
+items and remembers their kinds (`ActionDef.covers`: for an MCP call the server and tool);
+later requests of those kinds from the same source and `run_key` run without asking and are
+added to that batch, each its own audit row. This is kept in memory only: it ends with the
+run, and a restart ends it too.
+
 Only structured arguments and the configured policy decide anything. Text that came from
 logs, service data or an LLM can fill in `args`, but it cannot change the policy, skip the
 approval or turn off dry-run — those are read from settings here, never from the request.
@@ -122,6 +128,9 @@ class ActionService:
         self._batch_lock = asyncio.Lock()
         self._background: set[asyncio.Task[None]] = set()
         """Approved items of `background` actions that are running now."""
+        self._rest: dict[tuple[str, str, str, str], tuple[int, str]] = {}
+        """(action, source, run_key, kind) -> (batch, who approved): the requests that an
+        approval "and the rest of this run" covers."""
 
     # ------------------------------------------------------------------ requests
 
@@ -178,6 +187,7 @@ class ActionService:
         parsed_items = [(self._parse(definition, action, args), reason) for args, reason in items]
         records: list[dict[str, Any]] = []
         touched: dict[int, list[Any]] = {}  # batch id -> [created by this call, items added]
+        progressed: dict[int, str] = {}  # batch id -> who approved the rest of its run
         for parsed, reason in parsed_items:
             key = definition.policy_key(parsed)
             policy = definition.policy_of(self.settings, parsed)
@@ -207,6 +217,15 @@ class ActionService:
                 record = await self._insert(fields, "suggested")
                 await self._notify(EVENT_SUGGESTED, record)
                 records.append(record)
+            elif policy == "approve" and (
+                covered := self._covered(definition, parsed, source, run_key)
+            ):
+                batch_id, who = covered
+                record = await self._insert(
+                    fields, "approved", decided_by=f"{who}: rest of the run", batch_id=batch_id
+                )
+                records.append(await self._run(record["id"]))
+                progressed[batch_id] = who
             elif policy == "approve":
                 batch_id, created = await self._batch_for(action, source, run_key, label)
                 entry = touched.setdefault(batch_id, [False, 0])
@@ -223,7 +242,21 @@ class ActionService:
             view = await self.get_batch(batch_id)
             view["added"] = added
             await self._notify(EVENT_PENDING if created else EVENT_UPDATED, view)
+        for batch_id, who in progressed.items():
+            view = await self.get_batch(batch_id)
+            view["decision"] = "approve"
+            view["decided_by"] = who
+            await self._notify(EVENT_PROGRESS, view)
         return records
+
+    def _covered(
+        self, definition: ActionDef, parsed: Any, source: str, run_key: str | None
+    ) -> tuple[int, str] | None:
+        """(batch, who approved) when an approval "and the rest of this run" covers this
+        request."""
+        if definition.covers is None or run_key is None:
+            return None
+        return self._rest.get((definition.name, source, run_key, definition.covers(parsed)))
 
     def _parse(self, definition: ActionDef, action: str, args: dict[str, Any]) -> Any:
         try:
@@ -241,17 +274,26 @@ class ActionService:
         decision: str,
         items: list[int] | None = None,
         decided_by: str = "ui",
+        *,
+        rest: bool = False,
     ) -> dict[str, Any]:
         """Approve (→ executes the items now; a `background` action's items run after this
         returns and stay "approved" until then) or reject the pending items of a batch: all of
         them, or only the item ids in `items`. Returns the batch view plus `decided` (how many
         items this call decided) and `skipped` (selected items that were no longer pending).
+        `rest` (approve only): later requests of the same kinds from the same run are approved
+        by this decision too; they run when they are made and join this batch.
         Raises NotFound / Conflict / ActionError."""
         if decision not in ("approve", "reject"):
             raise ActionError("decision must be 'approve' or 'reject'")
         if items is not None and not items:
             raise ActionError("no items selected")
-        await self._batch_row(batch_id)  # NotFound
+        batch = await self._batch_row(batch_id)  # NotFound
+        definition = self.registry.get(batch["action"])
+        if rest and decision != "approve":
+            raise ActionError("only an approval can cover the rest of the run")
+        if rest and (definition is None or definition.covers is None or batch["run_key"] is None):
+            raise ActionError("this approval cannot cover later requests")
         if await self._expire_batch(batch_id):
             raise Conflict("this approval has expired")
         rows = await self.db.fetchall(
@@ -284,7 +326,14 @@ class ActionService:
                 won.append(item_id)
         if not won:
             raise Conflict("this approval was decided meanwhile")
-        definition = self.registry.get((await self._batch_row(batch_id))["action"])
+        if rest and definition is not None:
+            # Before the items run: the run that waits for them continues as soon as the last
+            # one has, and its next requests must find this.
+            for item_id in won:
+                kind = self._kind(definition, (await self.get(item_id))["args"])
+                if kind is not None:
+                    key = (batch["action"], batch["source"], batch["run_key"], kind)
+                    self._rest[key] = (batch_id, decided_by)
         later = decision == "approve" and definition is not None and definition.background
         for item_id in won:
             if decision == "reject":
@@ -399,6 +448,17 @@ class ActionService:
         )
         return [await self.get_batch(int(r["batch_id"])) for r in rows]
 
+    async def batches_of(self, item_ids: list[int]) -> list[dict[str, Any]]:
+        """The batches these items belong to, oldest first, whatever their state."""
+        await self.sweep_expired()
+        marks = ",".join("?" * len(item_ids))
+        rows = await self.db.fetchall(
+            f"SELECT DISTINCT batch_id FROM actions WHERE id IN ({marks}) "
+            "AND batch_id IS NOT NULL ORDER BY batch_id",
+            item_ids,
+        )
+        return [await self.get_batch(int(r["batch_id"])) for r in rows]
+
     async def get_batch(self, batch_id: int) -> dict[str, Any]:
         """A batch with its items (the audit rows) and a summary of where they stand."""
         row = await self._batch_row(batch_id)
@@ -415,6 +475,11 @@ class ActionService:
         queued = counts.get("queued", 0)
         next_in = await self._next_in(items) if queued else None
         note = queue_note(queued, next_in)
+        kinds = (
+            {i["id"]: self._kind(definition, i["args"]) for i in items}
+            if definition is not None and row["run_key"] is not None
+            else {}
+        )
         return {
             "id": row["id"],
             "ts": row["ts"],
@@ -433,8 +498,22 @@ class ActionService:
             "next_in_s": next_in,
             "queue_note": note,
             "outcome": outcome_text(counts) + note,
+            "rest": sorted(
+                {k for i in items if i["status"] == "pending" and (k := kinds.get(i["id"]))}
+            ),
+            "covered": sorted(kind for (*_, kind), (b, _) in self._rest.items() if b == batch_id),
             "items": items,
         }
+
+    @staticmethod
+    def _kind(definition: ActionDef, args: Any) -> str | None:
+        """The kind of an item (`ActionDef.covers`) from its stored arguments."""
+        if definition.covers is None:
+            return None
+        try:
+            return definition.covers(definition.args_model.model_validate(args))
+        except ValidationError:  # an argument model changed since the row was written
+            return None
 
     @staticmethod
     def _summary(definition: ActionDef | None, items: list[dict[str, Any]]) -> str:

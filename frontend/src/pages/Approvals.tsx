@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type ActionRecord, type ApprovalBatch, type StatusResponse } from "../api";
+import { callArguments } from "../components/ApprovalCards";
 import { HostCommand } from "../components/HostCommand";
 import { ago, clock, until } from "../fmt";
 import { useAutomation } from "../automation";
@@ -39,7 +40,7 @@ type CardProps = {
   now: number;
   focused: boolean;
   busy: boolean;
-  onDecide: (batch: ApprovalBatch, decision: "approve" | "reject", items?: number[]) => void;
+  onDecide: (batch: ApprovalBatch, decision: "approve" | "reject", items?: number[], rest?: boolean) => void;
   onAudit: (batch: ApprovalBatch) => void;
 };
 
@@ -77,6 +78,11 @@ function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) 
             #{batch.id} · from {batch.source} · requested {ago(batch.ts, now)}
             {waiting.length > 0 && <> · expires {until(batch.expires_at, now)}</>}
           </p>
+          {batch.covered.length > 0 && (
+            <p className="muted small">
+              Approved for the whole run: later requests of {batch.covered.join(", ")} run without asking and are listed here.
+            </p>
+          )}
           {done.length > 0 && (
             <p className="batch-outcome">
               {done.map(([status, n]) => (
@@ -100,6 +106,16 @@ function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) 
             <button className="btn" disabled={busy} onClick={() => onDecide(batch, "reject")}>
               Reject all{waiting.length > 1 ? ` (${waiting.length})` : ""}
             </button>
+            {batch.rest.length > 0 && (
+              <button
+                className="btn"
+                disabled={busy}
+                title={`Approves everything waiting here, and every later request of ${batch.rest.join(", ")} from the same run (a chat answer until it is finished). Each one is still recorded in the audit log.`}
+                onClick={() => onDecide(batch, "approve", undefined, true)}
+              >
+                Approve for the whole run
+              </button>
+            )}
             <button className="btn btn-primary" disabled={busy} onClick={() => onDecide(batch, "approve")}>
               Approve all{waiting.length > 1 ? ` (${waiting.length})` : ""}
             </button>
@@ -164,6 +180,7 @@ function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) 
               ) : (
                 <>
                   <span className="item-target">{item.target}</span>
+                  {callArguments(item) && <span className="mono small block">{callArguments(item)}</span>}
                   {item.reason && item.status === "pending" && <span className="muted small block">{item.reason}</span>}
                   {item.status !== "pending" && <span className="muted small block">{describe(item)}</span>}
                 </>
@@ -221,11 +238,11 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
   };
   useStream(["approval", "action"], refresh);
 
-  const decide = async (b: ApprovalBatch, decision: "approve" | "reject", items?: number[]) => {
+  const decide = async (b: ApprovalBatch, decision: "approve" | "reject", items?: number[], rest?: boolean) => {
     setBusy(b.id);
     setError(null);
     try {
-      await api.post(`/api/approvals/${b.id}`, items ? { decision, items } : { decision });
+      await api.post(`/api/approvals/${b.id}`, { decision, ...(items ? { items } : {}), ...(rest ? { rest } : {}) });
     } catch (e) {
       setError(e instanceof ApiError ? String(e.detail) : (e as Error).message);
     } finally {

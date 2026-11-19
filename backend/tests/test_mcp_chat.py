@@ -172,6 +172,54 @@ async def test_write_tool_becomes_a_pending_approval_then_runs_on_approve(
         assert "heating in bedroom is now off" in json.dumps(llm.requests[-1]["messages"])
 
 
+async def test_one_approval_covers_the_rest_of_the_answer(tmp_path: Path, fake: FakeMcp) -> None:
+    """Many calls of one tool: the first ones are approved "and the rest of this answer", the
+    ones the model makes after that run without a new question, in the same approval, for more
+    rounds than the old limit of five."""
+    rooms = [f"room{i}" for i in range(1, 10)]
+    llm = McpLLM(
+        {  # two calls in one step: one approval with two items
+            "content": None,
+            "tool_calls": [
+                call("home_set_heating", {"room": room, "on": False}, f"c{n}")["tool_calls"][0]
+                for n, room in enumerate(rooms[:2])
+            ],
+        },
+        *[call("home_set_heating", {"room": room, "on": False}, room) for room in rooms[2:]],
+        say("All nine are off."),
+    )
+    async for app in start_app(tmp_path, llm, settings_for(fake.url)):
+        events = await ask(app, "turn the heating off everywhere")
+        session_id = events[-1]["session_id"]
+        [batch] = await app.actions.pending_batches()
+        assert batch["pending"] == 2 and batch["title"] == "Chat: home · set_heating × 2"
+        assert batch["rest"] == ["home · set_heating"]
+        assert [b["id"] for b in await app.actions.batches_of(events[-1]["waiting_for"])] == [
+            batch["id"]
+        ]
+
+        await app.actions.decide_batch(batch["id"], "approve", rest=True)
+        history: list[dict[str, str]] = []
+        for _ in range(400):
+            await asyncio.gather(*list(app.chat._background))
+            history = await app.chat.store.history(session_id, 10)
+            if history[-1]["content"] == "All nine are off.":
+                break
+            await asyncio.sleep(0.02)
+        assert history[-1]["content"] == "All nine are off."
+        assert [args["room"] for name, args in fake.calls if name == "set_heating"] == rooms
+        assert await app.actions.pending() == []  # nobody was asked again
+        done = await app.actions.get_batch(batch["id"])
+        assert done["counts"] == {"executed": 9} and done["covered"] == ["home · set_heating"]
+        assert {i["decided_by"] for i in done["items"]} == {"ui", "ui: rest of the run"}
+
+        # the next question is a new answer: the same tool asks again
+        llm.script = [call("home_set_heating", {"room": "attic", "on": True}), say("ok")]
+        again = await ask(app, "and the attic on")
+        assert again[-1]["text"].startswith("Waiting for approval #")
+        assert (await app.actions.pending())[0]["batch_id"] != batch["id"]
+
+
 async def test_mcp_dry_run_is_its_own_switch(tmp_path: Path, fake: FakeMcp) -> None:
     llm = McpLLM()
     settings = settings_for(fake.url, dry_run=True)

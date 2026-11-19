@@ -22,6 +22,10 @@ class Decision(BaseModel):
     decision: Literal["approve", "reject"]
     items: list[int] | None = None
     """Item (audit row) ids to decide; omitted = every item of the batch that is still pending."""
+    rest: bool = False
+    """With "approve": later requests of the same kinds from the same run (for a chat: the
+    same tool of the same MCP server, until that answer is finished) run without asking. The
+    approval's `rest` names those kinds; it is empty when it cannot cover later requests."""
 
 
 @router.get("/api/actions")
@@ -49,10 +53,16 @@ async def get_action(action_id: int, request: Request) -> dict[str, Any]:
 
 
 @router.get("/api/approvals")
-async def list_approvals(request: Request) -> dict[str, Any]:
+async def list_approvals(
+    request: Request, of: Annotated[list[int] | None, Query()] = None
+) -> dict[str, Any]:
     """Approvals waiting for a decision (expired ones are swept first): `batches` has one
-    entry per approval with its items; `items` is the flat list of pending items."""
+    entry per approval with its items; `items` is the flat list of pending items.
+    With ?of=<item id> (repeatable): the approvals those items belong to instead, decided
+    or not."""
     service = _ctx(request).actions
+    if of:
+        return {"batches": await service.batches_of(of), "items": []}
     return {"batches": await service.pending_batches(), "items": await service.pending()}
 
 
@@ -72,7 +82,7 @@ async def decide(batch_id: int, body: Decision, request: Request) -> dict[str, A
     commands answer "approved" at once and report their outcome by event when they finish."""
     try:
         return await _ctx(request).actions.decide_batch(
-            batch_id, body.decision, body.items, decided_by="ui"
+            batch_id, body.decision, body.items, decided_by="ui", rest=body.rest
         )
     except NotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -358,7 +358,16 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .explain-source { margin-top: 4px; color: var(--muted); font-size: 13px; }
 .explain-source summary { cursor: pointer; }
 .explain-source pre { margin-top: 4px; max-height: 320px; overflow: auto; white-space: pre-wrap; font-size: 12px; }
-.approval-card { display: flex; justify-content: space-between; align-items: center; gap: 16px; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; background: var(--surface); }
+.approval-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; background: var(--surface); }
+.approval-card .approval-buttons { justify-content: flex-end; flex-wrap: wrap; }
+.approval-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.approval-items.scroll { max-height: 50vh; overflow: auto; }
+.approval-items li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.approval-items li > .dot { flex: none; position: relative; top: -1px; }
+.approval-items li > .host-command { flex: 1; }
+.approval-item { min-width: 0; overflow-wrap: anywhere; }
+.approval-item .error { margin: 2px 0 0; }
+.approval-card .btn-quiet { justify-self: start; }
 .cursor { display: inline-block; width: 8px; height: 16px; background: var(--muted); }
 .composer { position: sticky; bottom: 0; display: flex; gap: 8px; align-items: flex-end; padding: 12px 0; background: var(--bg); }
 .composer textarea { resize: none; flex: 1; }
@@ -368,7 +377,6 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .chat:not(.has-thread) .thread { display: none; }
   .composer { bottom: 64px; }
   .session-delete { opacity: 1; }
-  .approval-card { flex-direction: column; align-items: stretch; }
 }
 
 /* ---- approval batches */

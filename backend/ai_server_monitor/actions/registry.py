@@ -71,6 +71,10 @@ class ActionDef:
     background: bool = False
     """True = an approved item runs after the approve call has returned (long commands); its
     outcome arrives as `action.result` and `approval.progress` events."""
+    covers: Callable[[Any], str] | None = None
+    """The name of the kind of request an item is ("arr · remove_queue_item"). With it, an
+    approval can also cover the later requests of that kind from the same run (`decide_batch`
+    with `rest`). None = every request of this action is approved by itself."""
 
     def schema(self) -> dict[str, Any]:
         return self.args_model.model_json_schema()
@@ -91,6 +95,8 @@ _ACTIONS = (
         uses_dry_run=lambda settings: settings.mcp.dry_run,
         run=lambda service, args: mcp_actions.execute(service.mcp, args),
         chat_tool=False,
+        summary=mcp_actions.summary,
+        covers=mcp_actions.kind,
     ),
     ActionDef(
         name=host_command.ACTION_NAME,

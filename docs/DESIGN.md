@@ -95,6 +95,15 @@ execute (hourly cap, dry-run) → a permanent `actions` row. Items of one chat t
 one `approval_batches` row (one card, one Telegram message). Policy and dry-run come only from
 settings, never from the request.
 
+An approval can cover the rest of the run (`decide_batch(..., rest=True)`, `POST
+/api/approvals/{id}` with `rest`): the kinds of the approved items (`ActionDef.covers`; for
+`mcp_call` the server and tool, none for `host_command`) are remembered for their source and
+`run_key`, and later requests of those kinds run when they are made and join that batch, each
+its own audit row decided by "<who>: rest of the run". This is held in memory by
+`ActionService`: it ends with the run, and with a restart. A chat run resumed after an approval
+keeps the `run_key` of its batch, so "the run" is one answer; the next question asks again.
+The agent loop has no own limit on rounds of calls settled at once: the step limit ends them.
+
 In the chat, an approval-required call is deferred by Pydantic AI (`DeferredToolRequests`).
 `on_approval` files it; when a person has to decide, the run ends with a `Suspended` output
 (messages and settled/pending calls, JSON) stored in `chat_pending_runs` /

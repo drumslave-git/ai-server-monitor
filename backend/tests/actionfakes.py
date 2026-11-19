@@ -48,6 +48,8 @@ class FakeAction:
         """The hourly cap (0 = none)."""
         self.dry_run = dry_run
         self.chat_tool = chat_tool
+        self.kinds = False
+        """True = the action has kinds (`ActionDef.covers`): the `note` of an item."""
         self.calls: list[str] = []
         """The `target` of every real execution, in order."""
         self.fail_targets: set[str] = set()
@@ -80,6 +82,7 @@ class FakeAction:
             uses_dry_run=lambda settings: self.dry_run,
             run=self._run,
             chat_tool=self.chat_tool,
+            covers=(lambda args: f"fake {args.note}") if self.kinds else None,
         )
 
     def registry(self) -> dict[str, ActionDef]:

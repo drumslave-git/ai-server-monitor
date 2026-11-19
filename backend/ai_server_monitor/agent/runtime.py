@@ -78,7 +78,6 @@ log = logging.getLogger(__name__)
 
 PROGRESS_EVERY_S = 5.0
 PREVIEW = 400
-MAX_APPROVAL_ROUNDS = 5
 RETRIES = 3
 """Retries of a tool call or a final result before the model is given up on (Pydantic AI)."""
 NOT_FINISHED = "The model did not finish within {steps} steps (the limit is {limit})."
@@ -424,7 +423,10 @@ class _Run:
         await asyncio.gather(*(stack.enter_async_context(t) for t in cfg.toolsets))
         try:
             with trace_scope(**cfg.trace):
-                for _ in range(MAX_APPROVAL_ROUNDS + 1):
+                # A round ends at approval-required calls; settled at once (policy auto, an
+                # approval that covers the rest of the run), the run goes on. `limits` counts
+                # the model requests of all rounds, so the step limit ends this loop.
+                while True:
                     result = None
                     async with agent.run_stream_events(
                         prompt if deferred is None else None,
@@ -455,7 +457,6 @@ class _Run:
                         )
                         await self.queue.put(("end", (suspended, usage)))
                         return
-                await self.queue.put(("end", ("(stopped: too many approval rounds)", usage)))
         except UsageLimitExceeded:
             self.stopped = "step_limit"
             await self.queue.put(("end", (self.not_finished(), usage)))

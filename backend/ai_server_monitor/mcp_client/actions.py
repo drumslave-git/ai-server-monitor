@@ -46,6 +46,22 @@ def target(args: McpCallArgs) -> str:
     return f"{args.server} · {args.title or args.tool}"
 
 
+def kind(args: McpCallArgs) -> str:
+    """The calls one "approve the rest of this answer" covers: this tool of this server,
+    whatever its arguments."""
+    return f"{args.server} · {args.tool}"
+
+
+def summary(items: list[McpCallArgs]) -> str:
+    """ "arr · remove_queue_item × 5" / "arr · pause × 2, arr · remove_queue_item × 3"."""
+    if len(items) == 1:
+        return target(items[0])
+    counts: dict[str, int] = {}
+    for item in items:
+        counts[kind(item)] = counts.get(kind(item), 0) + 1
+    return ", ".join(f"{name} × {n}" if n > 1 else name for name, n in counts.items())
+
+
 def check(settings: McpSettings, args: McpCallArgs) -> str | None:
     """Why the call cannot be carried out now (None = fine). Checked on request and again
     on approval, so a tool removed from the list in between is not run."""
