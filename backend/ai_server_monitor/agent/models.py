@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from openai import AsyncOpenAI
+from pydantic_ai import NativeOutput
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
@@ -50,13 +51,33 @@ def _is_ollama(base_url: str) -> bool:
 
 def model_profile(cfg: LLMSettings) -> ModelProfile:
     """Local OpenAI-compatible servers: `max_tokens` (not `max_completion_tokens`), no strict
-    tool schemas; Ollama's own profile (reasoning field, schema quirks) when it is Ollama."""
+    tool schemas; Ollama's own profile (reasoning field, schema quirks) when it is Ollama.
+    `supports_json_schema_output` lets `NativeOutput` through (Pydantic AI refuses it on a
+    profile without the flag; Ollama's profile already has it). It changes nothing else: an
+    agent without `NativeOutput` still gets its result through the output tool."""
     base = OllamaProvider.model_profile(cfg.model) if _is_ollama(cfg.base_url) else None
     local = OpenAIModelProfile(
         openai_chat_supports_max_completion_tokens=False,
         openai_supports_strict_tool_definition=False,
+        supports_json_schema_output=True,
     )
     return merge_profile(base, local)
+
+
+class HubModel(OpenAIChatModel):
+    """A model of the hub, knowing its profile's Settings "Structured output"."""
+
+    structured_output: str = "tool_call"
+
+
+def helper_output(model: Any, output_type: Any) -> Any:
+    """The `output_type` of a helper call (domain classification, command marks, tool sorting)
+    on `model`: `NativeOutput` (the request carries `response_format` with the JSON schema, so
+    the model cannot answer in prose) when the model's "Structured output" is json_schema, else
+    `output_type` itself (the `final_result` tool). Models not built by the hub: the tool."""
+    if getattr(model, "structured_output", None) == "json_schema":
+        return NativeOutput(output_type)
+    return output_type
 
 
 def model_settings(cfg: LLMSettings) -> ModelSettings:
@@ -180,7 +201,9 @@ class ModelHub:
         provider = OpenAICompatibleProvider(
             f"asm-{profile}", openai_client=openai_client, profile=model_profile(cfg)
         )
-        return OpenAIChatModel(cfg.model, provider=provider, settings=model_settings(cfg))
+        model = HubModel(cfg.model, provider=provider, settings=model_settings(cfg))
+        model.structured_output = cfg.structured_output
+        return model
 
     async def aclose(self) -> None:
         for client in self._clients:

@@ -28,7 +28,7 @@ from pydantic_ai.messages import TextPart
 from pydantic_ai.models.openai import OpenAIChatModelSettings
 from pydantic_ai.run import AgentRunResultEvent
 
-from ..agent.models import ModelHub
+from ..agent.models import ModelHub, helper_output
 from ..agent.output import scrub_output
 from ..agent.prompts import chat_prompt, host_line
 from ..agent.runtime import (
@@ -330,8 +330,9 @@ class ChatEngine:
         if not commands:
             return answer, None
         try:
+            model = self.app.models.model("main")
             agent: Agent[None, Marks] = Agent(
-                self.app.models.model("main"), instructions=MARKS_SYSTEM, output_type=Marks
+                model, instructions=MARKS_SYSTEM, output_type=helper_output(model, Marks)
             )
             result = None
             with trace_scope("chat_marks", link_kind="chat", link_id=session_id, turn=trace_turn):

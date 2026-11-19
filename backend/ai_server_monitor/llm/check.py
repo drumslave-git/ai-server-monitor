@@ -6,7 +6,11 @@ the saved model settings, nothing forced): main = the chat's instructions and it
 worker = a topic job's instructions and tools. The model is asked to run `echo check-<word>`
 with `bash` (the read-only shell). Only a real `bash` tool call passes; a model that writes
 the call as text, or answers without it, fails with that said plainly. Of the chat's other
-tools only the definitions are offered: they do nothing here."""
+tools only the definitions are offered: they do nothing here.
+
+Then one small structured call the way the helper calls make it (domain classification, command
+marks, tool sorting: `agent.models.helper_output`), with the tested settings' "Structured
+output": the result's `structured_output` says whether it worked."""
 
 from __future__ import annotations
 
@@ -17,11 +21,14 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 import openai
+from pydantic import BaseModel
+from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
 
-from ..agent.models import ModelHub
+from ..agent.models import ModelHub, helper_output
 from ..agent.runtime import AgentConfig, AgentTool, run_agent
 from ..config import LLMSettings, Settings
+from ..tracing import trace_scope
 from .text import strip_reasoning
 
 if TYPE_CHECKING:
@@ -33,6 +40,13 @@ NO_TOOLS = (
 )
 TEXT_INSTEAD = "tool call failed: the model answered with text instead of calling the tool"
 TEST_ID = "settings:test"
+MODES = {"json_schema": "JSON schema", "tool_call": "tool call"}
+
+
+class Echo(BaseModel):
+    """The structured part of the connection test."""
+
+    word: str
 
 
 def _request(word: str) -> str:
@@ -174,16 +188,37 @@ async def check_model(
             lines = (printed or "").strip().splitlines()
             detail = lines[0][:120] if lines else "no output"
             reply = f"bash was called; the shell could not run it here ({detail})"
+        latency = round(time.monotonic() - started, 2)
         return {
             "ok": True,
             "reply": reply,
-            "latency_s": round(time.monotonic() - started, 2),
+            "latency_s": latency,
             "models": models[:100] if models else None,
             "model_listed": listed,
             "tool_call": True,
+            "structured_output": await _structured(model, cfg, word),
         }
     finally:
         await hub.aclose()
+
+
+async def _structured(model: Any, cfg: LLMSettings, word: str) -> dict[str, Any]:
+    """{ok, text}: one structured answer (`Echo`) asked for the way the helper calls ask."""
+    mode = MODES[cfg.structured_output]
+    agent: Agent[None, Echo] = Agent(
+        model,
+        instructions="This is a connection test. Answer with the word you are given.",
+        output_type=helper_output(model, Echo),
+    )
+    try:
+        with trace_scope("test"):
+            await agent.run(f"The word is {word}.")
+    except Exception as exc:
+        text = f"structured output failed ({mode}): {type(exc).__name__}: {str(exc)[:300]}"
+        if cfg.structured_output == "json_schema":
+            text += '. Set "Structured output" to tool_call if this endpoint does not support it.'
+        return {"ok": False, "text": text}
+    return {"ok": True, "text": f"structured output OK ({mode})"}
 
 
 def _base(models: list[str] | None, listed: bool | None) -> dict[str, Any]:

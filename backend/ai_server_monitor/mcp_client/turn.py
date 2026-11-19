@@ -22,6 +22,7 @@ from pydantic_ai.capabilities import AbstractCapability, Toolset
 from pydantic_ai.models import Model
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
 
+from ..agent.models import helper_output
 from ..agent.prompts import now_line
 from ..tracing import trace_scope
 from .domains import DomainStore, full_name, listed
@@ -42,8 +43,8 @@ LOOKUP_NOTE = (
 )
 CLASSIFY_PROMPT = """\
 Pick the domains whose tools are needed to answer the request. Answer with the names of the \
-needed domains, or none if the request needs none of them. Pick every domain that may be needed. \
-Do not explain."""
+needed domains, or an empty list if the request needs none of them. Pick every domain that \
+may be needed. Do not explain."""
 
 
 @dataclass
@@ -127,7 +128,7 @@ async def classify(
     agent: Agent[None, list[Any]] = Agent(
         model,
         instructions=[CLASSIFY_PROMPT, lambda: now_line(zone) if zone is not None else ""],
-        output_type=list[Literal[names]],  # type: ignore[valid-type]
+        output_type=helper_output(model, list[Literal[names]]),  # type: ignore[valid-type]
     )
     tools = tools or {}
     prompt = "Domains:\n" + "\n".join(

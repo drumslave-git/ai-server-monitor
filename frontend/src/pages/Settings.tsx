@@ -170,7 +170,8 @@ export function SettingsPage() {
     spinner in the group head, a ✓/✕ line under it, and a result that goes away as soon as
     the values it was run with are edited. */
 function LlmTest({ profile, llm, onModels }: { profile: string; llm: JsonObject; onModels: (m: string[]) => void }) {
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  type Line = { ok: boolean; text: string };
+  const [result, setResult] = useState<(Line & { structured?: Line | null }) | null>(null);
   const [running, setRunning] = useState(false);
   const requestId = useRef(0);
   const snapshot = JSON.stringify(llm);
@@ -183,7 +184,7 @@ function LlmTest({ profile, llm, onModels }: { profile: string; llm: JsonObject;
     const mine = ++requestId.current;
     setRunning(true);
     setResult(null);
-    let outcome: { ok: boolean; text: string };
+    let outcome: Line & { structured?: Line | null };
     try {
       const r = await api.post<LlmTestResult>(`/api/settings/test-llm?profile=${profile}`, llm);
       if (mine !== requestId.current) return;
@@ -196,6 +197,7 @@ function LlmTest({ profile, llm, onModels }: { profile: string; llm: JsonObject;
               (r.tool_call ? " Tool call OK." : "") +
               (r.model_listed === false ? " Note: the endpoint's model list doesn't include this model name." : "") +
               (r.models?.length ? ` ${r.models.length} models available — suggestions added to the Model field.` : ""),
+            structured: r.structured_output,
           }
         : { ok: false, text: r.error ?? "The test failed." };
     } catch (e) {
@@ -210,7 +212,7 @@ function LlmTest({ profile, llm, onModels }: { profile: string; llm: JsonObject;
       <header className="group-head">
         <div>
           <h3>Connection test</h3>
-          <p className="help">Checks the endpoint and model, then runs one tool call with the values above (saved or not).</p>
+          <p className="help">Checks the endpoint and model, then runs one tool call and one structured answer with the values above (saved or not).</p>
         </div>
         <div className="test-buttons">
           <button type="button" className="btn btn-test" disabled={running} onClick={() => void run()}>
@@ -224,6 +226,12 @@ function LlmTest({ profile, llm, onModels }: { profile: string; llm: JsonObject;
           <p className={result.ok ? "ok" : "error"}>
             <strong>{result.ok ? "✓ " : "✕ "}</strong>
             {result.text}
+          </p>
+        )}
+        {result?.structured && (
+          <p className={result.structured.ok ? "ok" : "error"}>
+            <strong>{result.structured.ok ? "✓ " : "✕ "}</strong>
+            {result.structured.text}
           </p>
         )}
       </div>

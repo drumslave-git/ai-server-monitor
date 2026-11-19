@@ -22,7 +22,7 @@ from ai_server_monitor.mcp_client.discovery import check_mcp_server
 from ai_server_monitor.mcp_client.domains import DomainError, DomainStore, ListedTool
 
 from .mcp_fake import FakeMcp
-from .test_chat import FakeLLM, call
+from .test_chat import FakeLLM, final
 from .test_mcp_chat import settings_for, start_app
 
 
@@ -201,7 +201,7 @@ def sort_reply(body: dict[str, Any]) -> dict[str, Any]:
     rest = [n for n in names if n not in climate]
     if rest:
         domains.append({"name": "misc", "description": "Everything else", "tools": rest})
-    return call("final_result", {"response": domains})
+    return final(body, {"response": domains})
 
 
 @pytest.fixture

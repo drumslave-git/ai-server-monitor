@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.models import Model
 
+from ..agent.models import helper_output
 from ..db import Database
 from ..tracing import trace_scope
 from .settings import McpServerSettings
@@ -298,7 +299,7 @@ class DomainStore:
             return out
 
         agent: Agent[None, list[DomainOut]] = Agent(
-            model, instructions=SORT_PROMPT, output_type=list[DomainOut]
+            model, instructions=SORT_PROMPT, output_type=helper_output(model, list[DomainOut])
         )
         agent.output_validator(check)
         with trace_scope("mcp_sort"):

@@ -339,6 +339,7 @@ values a fresh install starts with.
 | `llm.timeout` | duration | `3m` | Per-request timeout. Local models on CPU can be slow. |
 | `llm.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up. |
 | `llm.extra_body` | map | empty | Extra provider-specific request fields (JSON), passed through verbatim. |
+| `llm.structured_output` | json_schema / tool_call | `json_schema` | How the short helper calls get their structured answer: picking the MCP domains a chat question needs (worker model), marking the commands of an answer read-only or write and sorting MCP tools into domains (main model). json_schema = the request carries the JSON schema (response_format) and the endpoint holds the model to it; tool_call = the model is asked to call a final_result tool, which small models sometimes skip by answering in prose. Pick tool_call if the endpoint rejects response_format (the Test button says so). Chat answers and job runs are not affected. |
 
 ### Worker model (`worker`)
 
@@ -355,6 +356,7 @@ values a fresh install starts with.
 | `worker.timeout` | duration | `3m` | Per-request timeout. Local models on CPU can be slow. |
 | `worker.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up. |
 | `worker.extra_body` | map | empty | Extra provider-specific request fields (JSON), passed through verbatim. |
+| `worker.structured_output` | json_schema / tool_call | `json_schema` | How the short helper calls get their structured answer: picking the MCP domains a chat question needs (worker model), marking the commands of an answer read-only or write and sorting MCP tools into domains (main model). json_schema = the request carries the JSON schema (response_format) and the endpoint holds the model to it; tool_call = the model is asked to call a final_result tool, which small models sometimes skip by answering in prose. Pick tool_call if the endpoint rejects response_format (the Test button says so). Chat answers and job runs are not affected. |
 
 ### Chat (`chat`)
 

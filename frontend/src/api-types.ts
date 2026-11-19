@@ -1506,6 +1506,19 @@ export interface components {
              */
             reasoning_effort: "auto" | "none" | "low" | "medium" | "high";
             /**
+             * Structured Output
+             * @description How the short helper calls get their structured answer: picking the MCP domains a chat
+             *     question needs (worker model), marking the commands of an answer read-only or write and
+             *     sorting MCP tools into domains (main model). json_schema = the request carries the JSON
+             *     schema (response_format) and the endpoint holds the model to it; tool_call = the model is
+             *     asked to call a final_result tool, which small models sometimes skip by answering in
+             *     prose. Pick tool_call if the endpoint rejects response_format (the Test button says so).
+             *     Chat answers and job runs are not affected.
+             * @default json_schema
+             * @enum {string}
+             */
+            structured_output: "json_schema" | "tool_call";
+            /**
              * Temperature
              * @description Randomness of answers: 0 is the most predictable, higher is more varied. auto = not sent,
              *     so the model's own default applies (for Ollama models it is shown above).
@@ -2160,6 +2173,7 @@ export interface components {
              *       "max_retries": 2,
              *       "model": "",
              *       "reasoning_effort": "auto",
+             *       "structured_output": "json_schema",
              *       "temperature": "auto",
              *       "timeout": "3m",
              *       "top_k": "auto",
@@ -2218,6 +2232,7 @@ export interface components {
              *       "max_retries": 2,
              *       "model": "",
              *       "reasoning_effort": "auto",
+             *       "structured_output": "json_schema",
              *       "temperature": "auto",
              *       "timeout": "3m",
              *       "top_k": "auto",
@@ -2602,6 +2617,19 @@ export interface components {
              * @enum {string}
              */
             reasoning_effort: "auto" | "none" | "low" | "medium" | "high";
+            /**
+             * Structured Output
+             * @description How the short helper calls get their structured answer: picking the MCP domains a chat
+             *     question needs (worker model), marking the commands of an answer read-only or write and
+             *     sorting MCP tools into domains (main model). json_schema = the request carries the JSON
+             *     schema (response_format) and the endpoint holds the model to it; tool_call = the model is
+             *     asked to call a final_result tool, which small models sometimes skip by answering in
+             *     prose. Pick tool_call if the endpoint rejects response_format (the Test button says so).
+             *     Chat answers and job runs are not affected.
+             * @default json_schema
+             * @enum {string}
+             */
+            structured_output: "json_schema" | "tool_call";
             /**
              * Temperature
              * @description Randomness of answers: 0 is the most predictable, higher is more varied. auto = not sent,

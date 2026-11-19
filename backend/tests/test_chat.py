@@ -129,6 +129,15 @@ def call(name: str, args: dict[str, Any] | str, call_id: str = "c1") -> dict[str
     }
 
 
+def final(body: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """The structured answer of a helper call (classification, marks, sorting): JSON text when
+    the request carries `response_format` (Structured output json_schema), else the
+    `final_result` tool call (tool_call)."""
+    if body.get("response_format"):
+        return say(json.dumps(args))
+    return call("final_result", args)
+
+
 def streamed(message: dict[str, Any]) -> httpx.Response:
     """A streamed chat completion response (as a real run, e.g. the Settings test, asks for)."""
     return httpx.Response(

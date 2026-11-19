@@ -87,6 +87,8 @@ export type LlmTestResult = {
   models?: string[] | null;
   model_listed?: boolean | null;
   tool_call?: boolean | null;
+  /** The structured call made the helper calls' way ("Structured output" of the profile). */
+  structured_output?: { ok: boolean; text: string } | null;
   error?: string;
 };
 

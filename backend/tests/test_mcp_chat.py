@@ -20,7 +20,7 @@ from ai_server_monitor.context import AppContext
 
 from .conftest import LLM_URL
 from .mcp_fake import FakeMcp
-from .test_chat import FakeLLM, call, completion, say, sse_body
+from .test_chat import FakeLLM, call, completion, final, say, sse_body
 
 
 class McpLLM(FakeLLM):
@@ -47,7 +47,7 @@ class McpLLM(FakeLLM):
                 text = body["messages"][-1]["content"]
                 offered = re.findall(r"^- ([a-z0-9-]+):", text.split("Request:")[0], re.M)
                 picks = offered if self.picks is None else self.picks
-                return self._answer(body, call("final_result", {"response": picks}))
+                return self._answer(body, final(body, {"response": picks}))
         return super().handler(request)
 
     def _sorting(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -57,7 +57,7 @@ class McpLLM(FakeLLM):
         for name in names:
             groups.setdefault(self.sort_into(name.partition("_")[2]), []).append(name)
         out = [{"name": d, "description": f"All about {d}", "tools": t} for d, t in groups.items()]
-        return call("final_result", {"response": out})
+        return final(body, {"response": out})
 
     @staticmethod
     def _answer(body: dict[str, Any], message: dict[str, Any]) -> httpx.Response:

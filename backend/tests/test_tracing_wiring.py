@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from ai_server_monitor.config import Bootstrap, Settings
 
 from .conftest import LLM_URL
-from .test_chat import FakeLLM, ask, call, make_app, say, streamed
+from .test_chat import FakeLLM, ask, call, completion, make_app, say, streamed
 
 
 def flush(client: TestClient, app: Any) -> None:
@@ -104,6 +104,8 @@ def test_the_settings_llm_test_is_recorded_as_a_test(
         if len(seen) == 0:
             seen.append(request)
             return streamed(call("bash", {"command": "echo x"}))
+        if "response_format" in json.loads(request.content):
+            return completion(say('{"word": "x"}'))
         return streamed(say("OK"))
 
     app = create_app(
@@ -115,7 +117,11 @@ def test_the_settings_llm_test_is_recorded_as_a_test(
         body = {"base_url": LLM_URL, "model": "fake"}
         assert client.post("/api/settings/test-llm", json=body).json()["ok"] is True
         flush(client, app)
-        assert [c["purpose"] for c in calls(client)] == ["test", "test"]  # tool call, answer
+        assert [c["purpose"] for c in calls(client)] == [
+            "test",
+            "test",
+            "test",
+        ]  # tool call, answer, structured
     # it runs like a real run: the same date line in its instructions
     messages = json.loads(seen[0].content)["messages"]
     system = "\n".join(str(m["content"]) for m in messages if m["role"] == "system")

@@ -226,6 +226,14 @@ class LLMSettings(_Model):
     """How many times a failed model request is retried before giving up."""
     extra_body: dict[str, Any] = Field(default_factory=dict)
     """Extra provider-specific request fields (JSON), passed through verbatim."""
+    structured_output: Literal["json_schema", "tool_call"] = "json_schema"
+    """How the short helper calls get their structured answer: picking the MCP domains a chat
+    question needs (worker model), marking the commands of an answer read-only or write and
+    sorting MCP tools into domains (main model). json_schema = the request carries the JSON
+    schema (response_format) and the endpoint holds the model to it; tool_call = the model is
+    asked to call a final_result tool, which small models sometimes skip by answering in
+    prose. Pick tool_call if the endpoint rejects response_format (the Test button says so).
+    Chat answers and job runs are not affected."""
 
     @property
     def configured(self) -> bool:
