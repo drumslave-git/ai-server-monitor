@@ -599,6 +599,17 @@ log and the model call logs are kept; the rest of the old data is deleted by the
 - The model connection test gets the same date line as a real run.
 - Approval cards show an empty argument as `""`.
 
+### 0.8.5
+
+- The short helper calls (picking the MCP domains a chat question needs, marking the commands of
+  an answer read-only or write, sorting MCP tools into domains) get their answer by JSON schema
+  (`response_format`), so a small model can no longer answer them in prose. "No domain needed"
+  is an empty list.
+- New setting **Structured output** under Settings → Main model and Worker model: `json_schema`
+  (default) or `tool_call` (the way until 0.8.4), for an endpoint that rejects `response_format`.
+- The model connection test also checks structured output and says when the endpoint rejects
+  it, with the way back to `tool_call`.
+
 ## Troubleshooting
 
 - **A job or the summary shows `error`** — open the run on the Jobs page: its error says why
