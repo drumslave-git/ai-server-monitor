@@ -639,6 +639,15 @@ export function SortableList({
 /** The global CSS (dnd-kit's CSS helper has the same name). */
 const CSS_ESCAPE = (value: string) => globalThis.CSS.escape(value);
 
+/** Where the row at `index` stands while the row at `from` is held over `to` (no move: where it is). */
+function movedPosition(index: number, from: number, to: number) {
+  if (from < 0 || to < 0 || from === to) return index;
+  if (index === from) return to;
+  if (from < index && index <= to) return index - 1;
+  if (to <= index && index < from) return index + 1;
+  return index;
+}
+
 function SortableRow({
   entry,
   index,
@@ -652,8 +661,10 @@ function SortableRow({
   onStep: (by: -1 | 1) => void;
   onRemove?: (id: string) => void;
 }) {
-  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: entry.id });
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging, activeIndex, overIndex } = useSortable({ id: entry.id });
   const look: CSSProperties = { transform: CSS.Translate.toString(transform), transition };
+  // while a row is being moved, every number shows where its row stands now, from the top
+  const shown = movedPosition(index, activeIndex, overIndex);
   return (
     <div ref={setNodeRef} className={cx("fd-sort-item", isDragging && "fd-sort-dragging")} style={look} role="listitem" data-sort-id={entry.id}>
       <button
@@ -662,10 +673,10 @@ function SortableRow({
         className="fd-sort-handle"
         {...attributes}
         {...listeners}
-        aria-label={`Move ${entry.name}, ${index + 1} of ${count}`}
+        aria-label={`Move ${entry.name}, ${shown + 1} of ${count}`}
         aria-pressed={isDragging}
       >
-        {String(index + 1).padStart(2, "0")}
+        {String(shown + 1).padStart(2, "0")}
       </button>
       <span className="fd-sort-body">
         <span className="fd-item-title">{entry.title}</span>
@@ -673,10 +684,10 @@ function SortableRow({
       </span>
       {entry.trailing && <span className="fd-sort-trailing">{entry.trailing}</span>}
       <span className="fd-sort-buttons">
-        <button type="button" className="fd-btn fd-btn-small" data-step="up" disabled={index === 0} onClick={() => onStep(-1)} aria-label={`Move ${entry.name} up`}>
+        <button type="button" className="fd-btn fd-btn-small" data-step="up" disabled={shown === 0} onClick={() => onStep(-1)} aria-label={`Move ${entry.name} up`}>
           up
         </button>
-        <button type="button" className="fd-btn fd-btn-small" data-step="down" disabled={index === count - 1} onClick={() => onStep(1)} aria-label={`Move ${entry.name} down`}>
+        <button type="button" className="fd-btn fd-btn-small" data-step="down" disabled={shown === count - 1} onClick={() => onStep(1)} aria-label={`Move ${entry.name} down`}>
           down
         </button>
         {onRemove && (

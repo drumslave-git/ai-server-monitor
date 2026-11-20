@@ -23,6 +23,7 @@ import {
   Schedule,
   Split,
   Status,
+  Text,
   type ScheduleRun,
   type Tone,
 } from "../kit";
@@ -75,10 +76,10 @@ export function DashboardPage() {
       {enabled.length === 0 ? (
         <Panel>
           <Hero meta="no summary is on" headline="Nothing sums up the jobs yet">
-            <Empty>
+            <Text dim block>
               A summary runs its jobs one after another and sets the status shown here.{" "}
               {summaries.length > 0 ? "Turn one on, or create one, on the Jobs page." : "Create one on the Jobs page."}
-            </Empty>
+            </Text>
             <Actions>
               <LinkButton variant="primary" href="#/jobs">
                 open jobs
@@ -87,7 +88,7 @@ export function DashboardPage() {
           </Hero>
         </Panel>
       ) : (
-        <Split>
+        <Split stretch>
           {enabled.map((job) => (
             <SummaryCard key={job.slug} job={job} state={states[job.slug]} running={running.has(job.slug)} paused={paused} now={now} />
           ))}

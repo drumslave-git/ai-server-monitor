@@ -11,6 +11,14 @@ import re
 import time
 from typing import Any
 
+from cron_descriptor import (
+    FormatError,
+    MissingFieldError,
+    Options,
+    WrongArgumentError,
+    get_description,
+)
+
 from ..db import Database
 from .builtins import BUILTINS, BY_SLUG, JobDef
 
@@ -89,10 +97,26 @@ def run_dict(row: Any) -> dict[str, Any]:
     return out
 
 
+_UNITS = (("days", 86400), ("hours", 3600), ("minutes", 60))
+_CRON_WORDS = Options(use_24hour_time_format=True, locale_code="en_US")
+
+
 def _schedule_words(job: dict[str, Any]) -> str:
-    if job.get("interval_s"):
-        return f"every {job['interval_s']} s"
-    return f"cron {job['cron']}"
+    """The schedule as the Jobs form shows it: "every 6 hours", "at 02:30". Same rules as the
+    page's intervalText and scheduleWord (cronstrue there, its Python sibling cron-descriptor
+    here); a cron expression it cannot read is shown as written."""
+    seconds = job.get("interval_s")
+    if seconds:
+        for unit, size in _UNITS:
+            if seconds >= size and seconds % size == 0:
+                n = seconds // size
+                return f"every {unit[:-1]}" if n == 1 else f"every {n} {unit}"
+        return f"every {seconds} seconds"
+    try:
+        words = get_description(job["cron"], _CRON_WORDS)
+    except (FormatError, MissingFieldError, WrongArgumentError):
+        return job["cron"]
+    return words[:1].lower() + words[1:]
 
 
 class JobStore:

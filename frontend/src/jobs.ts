@@ -82,20 +82,19 @@ export function whereWord(job: Pick<Job, "kind" | "summaries" | "interval_s" | "
   return "no schedule (manual)";
 }
 
-/** The group a job is shown in: the part of a builtin's slug before ":", "other builtins" for a
- *  builtin without one, "own jobs" for everything the owner or the LLM made. */
-export const OWN_GROUP = "own jobs";
-export const OTHER_GROUP = "other builtins";
-export function jobGroups<T extends Pick<Job, "slug" | "builtin" | "name">>(jobs: T[]): { label: string; jobs: T[] }[] {
+/** The group a job is shown in: the part of its slug before ":", whoever made it; jobs whose slug
+ *  has no colon form one group at the end. */
+export const NO_PREFIX_GROUP = "no prefix";
+export function jobGroups<T extends Pick<Job, "slug">>(jobs: T[]): { label: string; jobs: T[] }[] {
   const groups = new Map<string, T[]>();
   for (const job of jobs) {
-    const prefix = job.slug.includes(":") ? job.slug.slice(0, job.slug.indexOf(":")) : "";
-    const label = !job.builtin ? OWN_GROUP : prefix || OTHER_GROUP;
+    const colon = job.slug.indexOf(":");
+    const label = colon > 0 ? job.slug.slice(0, colon) : NO_PREFIX_GROUP;
     groups.set(label, [...(groups.get(label) ?? []), job]);
   }
-  const rank = (label: string) => (label === OWN_GROUP ? 2 : label === OTHER_GROUP ? 1 : 0);
+  const last = (label: string) => (label === NO_PREFIX_GROUP ? 1 : 0);
   return [...groups.entries()]
-    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
+    .sort(([a], [b]) => last(a) - last(b) || a.localeCompare(b))
     .map(([label, list]) => ({ label, jobs: list }));
 }
 

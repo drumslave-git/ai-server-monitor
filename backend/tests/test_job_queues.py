@@ -149,7 +149,7 @@ def test_a_job_that_joins_a_summary_loses_its_schedule_and_is_told(
         assert joined.status_code == 200
         job = joined.json()
         assert job["notice"] == (
-            "backups:restic was scheduled (every 3600 s). It is now in the summary Health, "
+            "backups:restic was scheduled (every hour). It is now in the summary Health, "
             "which runs it, so its own schedule was removed."
         )
         assert (job["interval_s"], job["cron"], job["next_run"]) == (None, None, None)
@@ -167,7 +167,7 @@ def test_a_job_that_joins_a_summary_loses_its_schedule_and_is_told(
         assert rescheduled["next_run"] is not None
         # joining through the summary's member list
         night = make_summary(client, "night", ["backups:restic"])
-        assert "backups:restic was scheduled (cron 30 7 * * *)" in night["notice"]
+        assert "backups:restic was scheduled (at 07:30)" in night["notice"]
         assert "in the summary Night" in night["notice"]
         assert client.get("/api/jobs/backups:restic").json()["cron"] is None
         # a schedule given with the summaries on create is dropped the same way
@@ -175,7 +175,7 @@ def test_a_job_that_joins_a_summary_loses_its_schedule_and_is_told(
             "/api/jobs",
             json={**body, "slug": "backups:borg", "interval_s": 3600, "summaries": ["night"]},
         ).json()
-        assert both["interval_s"] is None and "was scheduled (every 3600 s)" in both["notice"]
+        assert both["interval_s"] is None and "was scheduled (every hour)" in both["notice"]
 
 
 def test_notify_decides_what_reaches_telegram_and_a_queue_job_sends_nothing(
@@ -364,3 +364,13 @@ def test_upgrade_maps_send_summary_onto_the_summaries_and_removes_it(
     assert "jobs.summary_notify" not in rows  # read once by the seeding
     for key in ("settings", "settings.backup.1700000000"):
         assert "send_summary" not in rows.get(key, ""), key
+
+
+def test_the_schedule_in_a_notice_is_worded_as_the_jobs_form_words_it() -> None:
+    from ai_server_monitor.jobs.store import _schedule_words
+
+    assert _schedule_words({"interval_s": 21600}) == "every 6 hours"
+    assert _schedule_words({"interval_s": 86400}) == "every day"
+    assert _schedule_words({"interval_s": 1800}) == "every 30 minutes"
+    assert _schedule_words({"interval_s": 90}) == "every 90 seconds"
+    assert _schedule_words({"cron": "0 6 * * 1-5"}) == "at 06:00, Monday through Friday"

@@ -426,6 +426,9 @@ dialog.fd-dialog, dialog.fd-dialog * { box-sizing: border-box; }
 
 /* Split whose children are all as tall as the tallest */
 .fd-split-stretch { align-items: stretch; }
+/* heroes side by side: the cards as tall as the tallest, counters that wrap under the text sit at the foot of each, level with the others */
+.fd-split-stretch > .fd-panel:has(> .fd-hero) { display: flex; flex-direction: column; }
+.fd-split-stretch > .fd-panel > .fd-hero { flex: 1 1 auto; align-content: space-between; }
 
 /* Inline: small things on one wrapping line */
 .fd-inline { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
