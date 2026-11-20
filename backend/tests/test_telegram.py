@@ -24,6 +24,7 @@ from ai_server_monitor.main import create_app
 from ai_server_monitor.outputs import telegram as telegram_module
 from ai_server_monitor.outputs.telegram import (
     ID_COOLDOWN,
+    TelegramBot,
     markdown_messages,
     md_escape,
     run_message,
@@ -259,6 +260,24 @@ def entities(markdown: str) -> tuple[str, list[dict[str, Any]]]:
     """The one message `markdown` becomes, its entities as dicts."""
     [(text, found)] = markdown_messages(markdown)
     return text, [e.to_dict() for e in found]
+
+
+def test_an_approval_reason_cut_inside_a_code_span_leaves_no_stray_backtick() -> None:
+    reason = "x" * 290 + " run `invented-tool --restart` now"
+    batch = {
+        "id": 7,
+        "title": "Restart",
+        "source": "chat",
+        "items": [{"status": "pending", "target": "invented-host", "reason": reason}],
+    }
+    (text, _), *_ = markdown_messages(TelegramBot._batch_text(batch, expiry=False))
+    why = text.splitlines()[-1]
+    assert why == "why: " + "x" * 290 + " run"  # the broken span left out whole
+    # a span that fits whole stays code; the 300 characters are kept as they were
+    batch["items"][0]["reason"] = "x" * 270 + " run `invented-tool` now" + "y" * 20
+    (text, found), *_ = markdown_messages(TelegramBot._batch_text(batch, expiry=False))
+    assert text.splitlines()[-1] == "why: " + "x" * 270 + " run invented-tool now" + "y" * 6
+    assert [e.type for e in found] == ["bold", "code"]
 
 
 def test_markdown_becomes_text_and_entities() -> None:

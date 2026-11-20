@@ -160,6 +160,18 @@ def _literal_html(markdown: str) -> str:
     return "".join(parts)
 
 
+def md_cut(markdown: str, limit: int) -> str:
+    """The first `limit` characters of `markdown`; a code span the cut would break is left out
+    whole, so its opening backticks do not show as text (pyromark, the package's parser)."""
+    if len(markdown) <= limit:
+        return markdown
+    end = len(markdown[:limit].encode("utf-8"))  # pyromark's ranges count UTF-8 bytes
+    for event, span in pyromark.events_with_range(markdown, options=STANDARD_OPTIONS):
+        if isinstance(event, dict) and "Code" in event and span["start"] < end < span["end"]:
+            return markdown.encode("utf-8")[: span["start"]].decode("utf-8")
+    return markdown[:limit]
+
+
 def _convert(markdown: str) -> tuple[str, list[Any]]:
     """Markdown → (text, entities). The package's LaTeX pass (`\\(…\\)` → math) is off: it
     rewrites shell code such as `find \\( … \\)` inside code blocks."""
@@ -1028,7 +1040,7 @@ class TelegramBot:
         lines.append(md_escape(f"asked by: {batch.get('source') or ''}"))
         reasons = {i.get("reason") for i in waiting if i.get("reason")}
         if len(reasons) == 1:
-            lines.append(f"why: {str(next(iter(reasons)))[:300]}")
+            lines.append(f"why: {md_cut(str(next(iter(reasons))), 300)}")
         if expiry and waiting and batch.get("expires_at"):
             minutes = max(int((batch["expires_at"] - time.time()) // 60), 0)
             lines.append(f"expires in about {minutes} min")
