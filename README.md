@@ -2,27 +2,30 @@
 
 A self-hosted monitor for one Linux server in which **a language model does all the
 monitoring**. Nothing is collected by code: scheduled LLM jobs look at the host with a read-only
-shell and write down what they found, a summary job turns their results into one overall
-status, and you can ask the same agent anything in chat (web page, Telegram or `/api/chat`). It
-works with any OpenAI-compatible endpoint (Ollama, llama.cpp, OpenRouter, OpenAI...).
+shell and write down what they found, summaries run a list of them and turn their results into
+one status, and you can ask the same agent anything in chat (web page, Telegram or `/api/chat`).
+It works with any OpenAI-compatible endpoint (Ollama, llama.cpp, OpenRouter, OpenAI...).
 
 What it does:
 
-- **Topic jobs** on a small *worker* model check one area each (disk, journal, resources,
-  Docker, systemd, updates) on a schedule and store a status (`ok`, `warn`, `crit`, or `error`
-  when the run failed), a short summary and findings. You can edit them and add your own.
-- **A summary job** on the big *main* model reads the latest topic results and the previous
-  summary, looks again where it needs to, and writes the overall status. It is the headline of
-  the Dashboard, of `/api/status` and of the Telegram summary message.
+- **Topic jobs** on a small *worker* model check one small area each (Docker containers, disk
+  usage, journal errors, failed units, pending updates...) and store a status (`ok`, `warn`,
+  `crit`, or `error` when the run failed), a short summary and findings. You can edit them and
+  add your own.
+- **Summaries** on the big *main* model: a summary has a schedule and an ordered list of jobs;
+  it runs them one after another, then reads their results and the previous summary, looks
+  again where it needs to, and writes one status. Two come built in: *Health* every hour and
+  *Daily* at 06:00. The worst of them is the overall status of the Dashboard and `/api/status`.
 - **Chat** on the main model with a read-only `bash` tool on the host, `delegate` (hands a
   sub-task to the worker model), tools to list, run and edit jobs, and the tools of the MCP
   servers you add.
 - **Changes only with your approval**: when you ask the chat for a change, it proposes a root
   command (`bash_write`) or an MCP write; you approve it on the Approvals page or with a
   Telegram button, it runs, and the chat continues with the result by itself.
-- **Telegram** bot (questions, `/status`, `/run`, approvals, the summary when it changes),
-  **`/metrics`** for Prometheus with a Grafana dashboard, and a **Logs** page with every model
-  request as sent and received.
+- **Telegram** bot (questions, `/status`, `/summary`, `/run`, approvals, results by each job's
+  and summary's notify setting), **`/metrics`** for Prometheus with a Grafana dashboard, a
+  **Logs** page with every model request as sent and received, and CPU, RAM and NVIDIA GPU
+  meters in the sidebar.
 
 **The models must support native tool calling** (OpenAI-style `tools`). Settings → Main model →
 **Test** checks the endpoint and the model, then runs the model the way a real run does (main:
@@ -30,7 +33,7 @@ the chat's instructions and tools; worker: a topic job's) and asks it to run `ec
 It passes only on a real tool call; a model that writes the call as text fails the test.
 
 - [Quick start](#quick-start) · [The compose file](#the-compose-file) · [Models](#models)
-- [Jobs](#jobs) · [MCP servers](#mcp-servers) · [Using it](#using-it) · [Security model](#security-model)
+- [Jobs](#jobs) · [MCP servers](#mcp-servers) · [Using it](#using-it) · [Hardware meters](#hardware-meters) · [Security model](#security-model)
 - [Settings reference](#settings-reference) · [Upgrading from 0.6.x](#upgrading-from-06x)
 - [Troubleshooting](#troubleshooting) · [Development](#development) · [Design notes](docs/DESIGN.md)
 
@@ -38,8 +41,8 @@ It passes only on a real tool call; a model that writes the call as text fails t
 
 | | |
 |---|---|
-| [![Dashboard: the overall status from the summary job and every job's runs on a clock](docs/samples/ui/dashboard.png)](docs/samples/ui/dashboard.png) | [![Jobs: schedules, models, last results, Run now](docs/samples/ui/jobs.png)](docs/samples/ui/jobs.png) |
-| **Dashboard**: the summary job's overall status, then every job's runs on a clock | **Jobs**: turn jobs on and off, edit them, run one now |
+| [![Dashboard: the overall status from the summaries and every job's runs on a clock](docs/samples/ui/dashboard.png)](docs/samples/ui/dashboard.png) | [![Jobs: schedules, models, last results, Run now](docs/samples/ui/jobs.png)](docs/samples/ui/jobs.png) |
+| **Dashboard**: the overall status, then every job's runs on a clock | **Jobs**: turn jobs on and off, edit them, run one now |
 | [![A run of the Docker job with its summary and findings](docs/samples/ui/job-run.png)](docs/samples/ui/job-run.png) | [![Chat asking to approve a command on the host](docs/samples/ui/chat-approval.png)](docs/samples/ui/chat-approval.png) |
 | **A job run**: what the model found, with findings by severity | **Chat**: a change runs only after you approve the command |
 
@@ -108,8 +111,8 @@ Two model settings, both any OpenAI-compatible endpoint:
 
 | | Used for | Setting |
 |---|---|---|
-| **Main model** | chat, the summary job, chat titles | `llm` |
-| **Worker model** | the topic jobs, `delegate` sub-tasks from the chat and the summary | `worker` (empty model = the main model) |
+| **Main model** | chat, the summaries, chat titles | `llm` |
+| **Worker model** | the topic jobs, `delegate` sub-tasks from the chat and the summaries | `worker` (empty model = the main model) |
 
 - **Native tool calling is required** for both. There is no fallback for models that cannot call
   tools. A chat answer that is only a tool call written as text (e.g. `bash[ARGS]{...}`) is sent
@@ -118,37 +121,72 @@ Two model settings, both any OpenAI-compatible endpoint:
 - *Max output tokens* counts a thinking model's reasoning too: keep it at 4096 or more (default
   16384). With Ollama also raise `OLLAMA_CONTEXT_LENGTH`, or long prompts are cut silently.
 - A small local model (e.g. `gemma4:e4b` on Ollama) works as the worker; give the main model
-  the best model you have, since it writes the summary and talks to you.
+  the best model you have, since it writes the summaries and talks to you.
 - Cloud models: tool results (process names, container names, log lines, file contents) leave
   your network. Configured secrets and common credential formats are scrubbed first.
 
 ## Jobs
 
-A job is a prompt for the model, a schedule (an interval or a cron line, in the host's time
-zone unless `general.timezone` says otherwise) and a model. A topic run gets only `bash` and must
-finish with a structured result: status, a short markdown summary and findings (`info`, `warn`,
-`crit`). It must run at least one command: a result given before any is sent back once, and a
-run that still ran none is stored as `error` "ran no command" (the summary is exempt: it reads
-the topic results). A run that fails (model unreachable, over its time limit, no result) is
-stored as `error` with the reason. Runs are kept for `storage.retention`.
+A **job** is a prompt for the model and a model. A run gets only `bash` and must finish with a
+structured result: status, a short markdown summary and findings (`info`, `warn`, `crit`). It
+must run at least one command: a result given before any is sent back once, and a run that
+still ran none is stored as `error` "ran no command". A run that fails (model unreachable, over
+its time limit, no result) is stored as `error` with the reason. Runs are kept for
+`storage.retention`.
 
-Built-in jobs (edit them on the Jobs page; *Reset* brings back the release version, and
-unedited ones follow later releases):
+A **summary** is a queue: one schedule (an interval or a cron line, in the host's time zone
+unless `general.timezone` says otherwise) and an ordered list of jobs. When it is due it runs its
+enabled jobs one after another, then the model reads their results and the previous summary,
+may check again with `bash` and `delegate`, and writes one status with a line per job.
 
-| Job | Model | Schedule | Looks at |
-|---|---|---|---|
-| `storage` | worker | every 4 h | disk space and inodes, biggest directories |
-| `journal` | worker | every 1 h | journal errors of the last hour, kernel warnings |
-| `resources` | worker | every 30 min | CPU, memory, load, GPU, temperatures |
-| `docker` | worker | every 30 min | container state, restarts, health |
-| `systemd` | worker | every 1 h | failed units, system state |
-| `updates` | worker | daily at 06:00 | pending updates, reboot required |
-| `summary` | main | every 1 h | the latest result of every enabled topic job and the previous summary; may use `bash` and `delegate` to check |
+- A job in a summary has no schedule of its own: the summary runs it. Adding a scheduled job to
+  a summary removes its schedule, and the page or the chat says so.
+- A job can be in several summaries; it then runs in each of them.
+- A job outside every summary keeps its own schedule (or none: then it runs only when you
+  start it).
+- Each job and each summary has its own Telegram **notify** setting. A job's applies while it
+  is in no summary; in a summary, the summary reports (see [Telegram](#using-it)).
+- The overall status (Dashboard, `/api/status`, Telegram `/status`) is the worst of the
+  enabled summaries' latest runs.
+
+Built-in summaries (main model, notify `changed`):
+
+| Summary | Schedule | Jobs |
+|---|---|---|
+| `summary:health` *Health* | every hour | the eleven jobs below that are not in Daily, in this order |
+| `summary:daily` *Daily* | daily at 06:00 | `docker:updates`, `updates:packages`, `updates:reboot` |
+
+Built-in jobs (worker model, no schedule of their own, notify `warn_crit`):
+
+| Job | Looks at |
+|---|---|
+| `docker:status` | containers that are not running as they should |
+| `docker:issues` | trouble inside the containers: errors in their logs, restarts, out-of-memory kills |
+| `docker:resources` | CPU and memory of each container, the disk space Docker uses |
+| `docker:updates` | newer images for the running containers |
+| `resources:load` | CPU load, memory, swap and temperatures, the processes that use the most |
+| `resources:gpu` | GPU load, video memory and temperature |
+| `storage:usage` | disk space and inodes of the host's filesystems |
+| `journal:errors` | errors services logged to the journal in the last hour |
+| `journal:kernel` | kernel warnings and errors of the last hour (out-of-memory kills, disk and hardware errors) |
+| `journal:auth` | logins and failed login attempts of the last hour (SSH, sudo, su) |
+| `systemd:failed` | failed systemd units |
+| `systemd:timers` | whether the systemd timers ran and the services they start succeeded |
+| `updates:packages` | pending package updates |
+| `updates:reboot` | whether the server needs a reboot after updates |
+
+On the **Jobs** page you create, change and delete jobs and summaries, order a summary's jobs,
+and run one now; the list is grouped by the part of the slug before `:`. Edit a builtin as you
+like: *Reset* brings back the release version (a summary: its jobs too), and unedited builtins
+follow later releases. A builtin can be disabled but not deleted. Deleting a summary keeps its
+jobs; one that is then in no summary has no schedule and runs only when started.
+
+The chat can do the same with its job tools: `jobs_list`, `job_results`, `job_run`, `job_save`
+(create or change a job or summary), `job_delete`, and `summary_member` (add a job to a summary,
+move it, take it out).
 
 Settings → Jobs: `max_concurrent_runs` (1 = runs that come due together wait for each other,
-right for one GPU), the default time limit and step limit. The chat can list, run, create, edit
-and delete jobs (`jobs_list`, `job_results`, `job_run`, `job_save`, `job_delete`); a builtin can
-be disabled but not deleted.
+right for one GPU), the default time limit and step limit.
 
 **Pause automation** (button on every page) stops the whole schedule (jobs, pruning, approval
 sweeps) and cancels scheduled runs in flight. *Run now*, the chat, approvals and Telegram keep
@@ -194,16 +232,17 @@ before the timeout).
 
 ## Using it
 
-- **Dashboard** — the overall status and headline from the newest summary run, and one tile per
-  job with its last status. **Jobs** — every job with its runs (summary, findings, error, model,
-  tokens), the editor and *Run now*.
-- **Explain** — on the Dashboard's summary and the run view of the Jobs page, the run as a whole
-  and every finding have an *Explain* button. It opens a new chat in which the main model gets the
-  run's source data (the job and what it checks, the run, its findings with their evidence, the
-  commands it ran with their output, and for the summary the topic results it was given) and
-  explains in detail what it means, why it matters, the likely causes, how to confirm it and what
-  you can do. It may look at the current state with read-only commands; keep asking in the same
-  chat. The Telegram summary message has the same button.
+- **Dashboard** — one card per enabled summary (its status, headline, finding counts, last and
+  next run, *Run now*), every job's and summary's runs on a clock, and the findings of the
+  summaries' latest runs. **Jobs** — every job and summary with its runs (summary, findings,
+  error, model, tokens), the editor and *Run now*.
+- **Explain** — on the Dashboard's summary cards and the run view of the Jobs page, the run as a
+  whole and every finding have an *Explain* button. It opens a new chat in which the main model
+  gets the run's source data (the job and what it checks, the run, its findings with their
+  evidence, the commands it ran with their output, and for a summary the job results it was
+  given) and explains in detail what it means, why it matters, the likely causes, how to confirm
+  it and what you can do. It may look at the current state with read-only commands; keep asking
+  in the same chat. The result messages in Telegram have the same button.
 - **Chat** — ask about the server ("what is using the most disk?"). Answers stream in; each tool
   call is shown with its command and output. The model sees the last `chat.history_messages`
   messages of a conversation. Commands in an answer have a **Run** button: **Run** for a command
@@ -218,9 +257,11 @@ before the timeout).
   answer, reasoning, token counts, timings), a timeline per chat question and per job run, and
   the app's own log with a live tail. Secrets are removed from what is stored; limits are in
   Settings → Logs.
-- **Telegram** — write a plain question to chat. Commands: `/status` (overall status with its
-  headline, then one line per job), `/jobs` (every job: on or off, next run), `/run <job>`
-  (runs it and answers when it is done), `/summary` (the same for the summary), `/approvals`
+- **Telegram** — write a plain question to chat. Commands: `/status` (the overall status, one
+  line per enabled summary with its status and headline, then one line per job), `/jobs` (every
+  job: on or off, next run), `/run <job>` (runs it and answers when it is done), `/summary`
+  (buttons to pick an enabled summary to run now; `/summary health` or `/summary summary:health`
+  runs that one and answers when it is done), `/approvals`
   (open requests with buttons), `/new` (fresh conversation), `/id` (this chat's id; works in any
   chat, also before it is allowed), `/help`. The result of a summary, or of a job in no summary
   (status, headline, warnings), goes to every allowed chat as that job's **notify** says:
@@ -246,6 +287,25 @@ before the timeout).
       authorization: { credentials: "<bearer token>" }   # only if you set one
       static_configs: [{ targets: ["ai-server-monitor:8080"] }]
   ```
+
+## Hardware meters
+
+The sidebar of every page (at phone width, the top bar) shows the CPU use in %, the RAM in use
+of the total, and for each NVIDIA GPU its use in % and its video memory (VRAM) in use of the
+total; with several GPUs they are numbered from 0 as `nvidia-smi` numbers them. The page asks
+every 5 seconds while it is visible.
+
+- The values are read when the page asks and nothing is stored: there is no history, no
+  `/metrics` series and no log entry for them.
+- CPU and RAM are the whole machine's: the container reads the kernel's figures, so a memory or
+  CPU limit set on the container does not change them (checked with a container limited to
+  512 MB and one CPU: it showed the machine's full RAM, and its CPU use rose when another
+  container loaded the CPU).
+- GPU meters appear only when `nvidia-smi` answers in the read-only host shell (the line
+  `# gpus: all` in the [compose file](#the-compose-file)); without it there are no GPU meters
+  and nothing else changes. NVIDIA only: other GPUs are not shown.
+- `GET /api/hardware` gives the same reading as JSON: `cpu_percent`, `ram_used`, `ram_total`
+  (bytes) and `gpus` (`name`, `util_percent`, `vram_used`, `vram_total`).
 
 ## Security model
 
@@ -644,9 +704,39 @@ log and the model call logs are kept; the rest of the old data is deleted by the
   model, added after the built-in instructions of the chat, its worker, topic jobs and
   summaries. Empty (the default) adds nothing.
 
+### 0.10.0
+
+Summaries are now queues (see [Jobs](#jobs)). On the first start the database is migrated:
+
+- **Builtins:** the seven builtins of 0.9.1 (`docker`, `journal`, `resources`, `storage`,
+  `systemd`, `updates`, `summary`) are replaced by the 14 smaller jobs and the summaries
+  *Health* and *Daily*. Each new builtin starts with the MCP domains of the old builtin it came
+  from.
+  - An old builtin you had **not edited** is retired: it is gone from the job list and never
+    runs again. Its past runs are kept (`GET /api/jobs/docker/runs` still lists them) until
+    `storage.retention` removes them.
+  - An old topic builtin you **had edited** stays as your own job: same slug, prompt, schedule,
+    model and MCP domains, notify `never`, in no summary. It keeps running on its schedule
+    beside the new builtins, so disable or delete it if the new ones cover it.
+  - An old `summary` you **had edited** stays as your own summary, **disabled and without
+    jobs**: add jobs and turn it on, or delete it.
+- **Your own jobs** keep their schedule and everything else, with notify `never`, and are in no
+  summary. In 0.9.1 the summary read every enabled topic job; now a summary reads only its own
+  jobs, so **your own jobs no longer count in the overall status** and send nothing to
+  Telegram. Add them to a summary (Jobs page, or `summary_member` in chat) to have them counted
+  and reported, or give one a notify setting to have its own results sent. Summaries you
+  created yourself keep their schedule and start without jobs.
+- **`outputs.telegram.send_summary` is gone.** Its value becomes the notify setting of Health,
+  Daily and every summary you already had: `every` → `always`, `changed` → `changed`, `never` →
+  `never`, not set → `changed`. The setting is removed from the stored settings and from the
+  settings backups.
+- **Dashboard:** one card per enabled summary instead of one overall card; Telegram `/summary`
+  asks which summary to run, `/status` lists every enabled summary.
+- **Hardware meters** in the sidebar (see [Hardware meters](#hardware-meters)).
+
 ## Troubleshooting
 
-- **A job or the summary shows `error`** — open the run on the Jobs page: its error says why
+- **A job or a summary shows `error`** — open the run on the Jobs page: its error says why
   (model unreachable, timed out, no result). Settings → Main model / Worker model → **Test**.
   Thinking models need *Max output tokens* of 4096 or more.
 - **"the host lacks setpriv" / root-only paths unreadable** — the sandbox uses the host's own

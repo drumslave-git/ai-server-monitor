@@ -3,8 +3,11 @@
 One container on the monitored host: a FastAPI backend (`backend/ai_server_monitor/`) and a
 React/Vite SPA (`frontend/`, served by the backend). The rule since 0.7: **nothing is collected
 by code; a language model does all the monitoring** through a read-only shell, and the code only
-schedules, stores, shows and guards. Where a maintained library does the job, it is used
-instead of our own code.
+schedules, stores, shows and guards. The one reading the code does itself is the hardware meters
+of the sidebar (`GET /api/hardware`: CPU and RAM through psutil, the whole machine's also inside
+the container; GPUs through one `nvidia-smi` call in the read-only shell), read when the page
+asks and never stored. Where a maintained library does the job, it is used instead of our own
+code.
 
 ## Components
 
@@ -22,6 +25,7 @@ instead of our own code.
 | Approvals and audit (the action layer) | `actions/` | — |
 | Telegram bot | `outputs/telegram.py` | python-telegram-bot |
 | `/metrics` | `outputs/metrics.py` | prometheus_client |
+| Hardware meters: CPU, RAM, NVIDIA GPUs, read on request | `hardware.py` | psutil, `nvidia-smi` in the read-only shell |
 | Live updates (SSE), event bus | `outputs/sse.py`, `events.py` | FastAPI streaming responses |
 | Model call logs, app log | `tracing/` | — |
 | Settings (GUI only), SQLite, migrations | `config.py`, `settings_store.py`, `db.py`, `migrations/` | pydantic, aiosqlite |
@@ -45,7 +49,7 @@ context and an optional structured `output_type`.
   tool call into `llm_tool_calls`; sub-agent calls are tagged `worker:…` in the same turn.
 - Tool sets: **chat** (main model) gets `bash`, `delegate`, the job tools, `bash_write` (when
   offered) and the MCP tools of its domains (see MCP client). **`delegate`** runs the worker model with `bash` only
-  (`chat.worker_max_steps`). **Topic jobs** get `bash`; **the summary** gets `bash` and
+  (`chat.worker_max_steps`). **Topic jobs** get `bash`; **summaries** get `bash` and
   `delegate`. Jobs and the worker never get a writing tool.
 - Ollama URLs get Pydantic AI's Ollama profile; reasoning effort is sent as
   `openai_reasoning_effort` (Pydantic AI's `thinking` setting sends nothing to these endpoints).
@@ -53,8 +57,9 @@ context and an optional structured `output_type`.
 **Explain** (`chat/explain.py`): `POST /api/chat/explain` (run id, optional finding index)
 composes the first message of a new chat from what is stored for the run: the job and its
 prompt, the run, all findings with evidence and the `verified` mark (the chosen one first, as the
-subject), the `bash` calls of the run's trace turn with their output, and for a summary the user
-message of its first model request (the topic results it was given). It is fitted to 40 % of the
+subject), the `bash` calls of the run's trace turn with their output, and for a summary the job
+runs of its queue run in the order they ran (`queue_results`: the job results it was given; none
+for runs from before 0.10.0). It is fitted to 40 % of the
 main model's context (Ollama's `/api/show` context length, else 32k tokens): the subject stays
 whole, outputs are cut in the middle to a fair share, then the oldest outputs the findings do not
 quote are left out, each with a note. Outputs are wrapped as untrusted data. The chat engine runs
@@ -62,8 +67,8 @@ it as an ordinary turn; the stored question carries `meta.explain.label`, which 
 title and what the UI shows (the source folded under it). The turn must look before it answers:
 `LookFirst` (an output validator) sends an answer given before any `bash`/`delegate` call back
 once; a forced `tool_choice` is not used because Ollama ignores it and some endpoints reject
-`required`. Run times in the data are in the host's time zone. Telegram's summary message has an
-Explain button (signed callback `x:<run>:<sig>`) that runs the same turn in that chat.
+`required`. Run times in the data are in the host's time zone. Telegram's result messages (of a
+summary, or of a job in no summary) have an Explain button (signed callback `x:<run>:<sig>`) that runs the same turn in that chat.
 
 ## Jobs and scheduling
 
@@ -72,11 +77,21 @@ later releases, edited ones keep the owner's version until *Reset*); `job_runs` 
 `JobRunner` runs a job as one agent run with `output_type=JobResult` (status, summary, findings)
 under a per-job lock and a global semaphore (`jobs.max_concurrent_runs`) with a time limit.
 Every failure is stored as `error` with the reason; the overall headline turns it into plain
-words (`jobs/status.py`). The summary's input is the latest result of every enabled topic job
-and the previous summary. Its result (`SummaryResult`) also has `topics`: one entry per enabled
-topic job (slug, status, one clause). `TopicCheck` sends a list with a missing topic or a status
-other than that topic's latest run back once; what is stored has every topic with its real
-status (`job_runs.topics`), shown under the headline on the Dashboard and in Telegram. List
+words (`jobs/status.py`); the overall status is the worst of the enabled summaries' newest runs.
+
+A **summary** is a queue: one schedule and an ordered list of jobs (`summary_members`, by
+`position`). A job in a summary has no schedule of its own (it loses it when it joins, and a
+scheduled job cannot be added); a job can be in several summaries; a summary cannot be a member.
+`JobRunner` runs the summary's enabled members one after another, each run stored with
+`job_runs.queue_run_id` pointing at the summary run, then the summary itself. Its input is the
+results of this queue run and the previous summary. Its result (`SummaryResult`) also has
+`topics`: one entry per job of this queue run (slug, status, one clause). `TopicCheck` sends a
+list with a missing job or a status other than that job's run back once; what is stored has every
+job with its real status (`job_runs.topics`), shown under the headline on the Dashboard and in
+Telegram. `jobs.notify` (`always`, `changed`, `warn_crit`, `never`) decides what goes to Telegram:
+a summary's and a job's in no summary; a run inside a queue run sends nothing. Builtins: 14 topic
+jobs and the summaries `summary:health` and `summary:daily`; the builtins of 0.9.1 that 0.10.0
+replaced are `retired` (hidden from the list and the scheduler, their runs readable). List
 fields sent as a JSON string are read from their first JSON array (trailing characters ignored);
 an unreadable one is answered with what was sent, what is expected and an example.
 
@@ -85,7 +100,9 @@ every change (`sync_jobs`): interval or cron triggers in the host's time zone, `
 `max_instances=1`. Housekeeping (pruning, approval sweeps, the hourly-cap queue) is jittered and
 skips runs missed while paused. Pause pauses the scheduler and cancels scheduled runs in flight.
 A stop stores runs in flight as `interrupted (the service stopped)`; after the start those jobs
-are moved to run about a minute later (summary last), and the latest-run queries skip an
+are moved to run about a minute later (summaries last; only jobs with a schedule: an
+interrupted summary reruns its whole queue, a job in a summary waits for its next run), and the
+latest-run queries skip an
 interrupted run when the job has a real result.
 
 ## Approvals and continuation
@@ -218,7 +235,8 @@ model request has the time it runs at.
 | Table | Holds |
 |---|---|
 | `kv` | settings (and backups), the automation switch, the chat audit list, small state |
-| `jobs`, `job_runs` | job definitions; runs with status, summary, findings, error, tokens, trace turn |
+| `jobs`, `job_runs` | job and summary definitions; runs with status, summary, findings, error, tokens, trace turn, the summary run they were part of |
+| `summary_members` | the ordered jobs of each summary |
 | `chat_sessions`, `chat_messages` | conversations |
 | `chat_pending_runs`, `chat_pending_actions` | chat runs waiting for approvals |
 | `actions`, `approval_batches` | the permanent audit log and approval groups |
@@ -245,7 +263,7 @@ the container has `SYS_ADMIN` and `SYS_PTRACE` (the sandbox's effective set stay
 measured: `nvidia-smi`, a real AppArmor host.
 
 systemd: `systemctl` fails in the sandbox (the system bus closes the connection after `Hello`
-for the passwd-less uid; `/run/systemd/private` is 0700 root), so the systemd job reads
+for the passwd-less uid; `/run/systemd/private` is 0700 root), so the systemd jobs read
 systemd's Varlink socket (`io.systemd.Manager.Describe`, `io.systemd.Unit.List`; systemd ≥ 257)
 and the journal. That socket is 0666 and also has `Reload`/`Reexecute`, which systemd checks
 only through polkit (`reload-daemon`, admin authentication by default): the sandbox's guarantee

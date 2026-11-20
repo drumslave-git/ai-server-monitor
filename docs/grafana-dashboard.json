@@ -29,7 +29,7 @@
       "id": 1,
       "title": "Job status",
       "type": "stat",
-      "description": "Status of each job's latest finished run (the summary job is the overall status).",
+      "description": "Status of each job's latest finished run (the overall status is the worst of the enabled summaries).",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -121,7 +121,7 @@
       "id": 2,
       "title": "Last run age",
       "type": "stat",
-      "description": "How long ago each job's latest run finished. A job far past its interval is stuck, disabled or paused.",
+      "description": "How long ago each job's latest run finished. A job far past its schedule (or its summary's) is stuck, disabled or paused.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
