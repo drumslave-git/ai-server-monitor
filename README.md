@@ -631,6 +631,17 @@ log and the model call logs are kept; the rest of the old data is deleted by the
 - A command in a chat answer that is marked write, or not marked, has an amber **run** button.
 - The fonts ship with the app; the UI loads nothing from other hosts.
 
+### 0.9.1
+
+- **Telegram formatting:** the model's answers, summaries and approval messages arrive
+  formatted: code blocks, inline code, bold, lists; a heading is bold and underlined. Text that
+  looks like a tag, such as `<none>`, is shown as written. A long message is split without
+  breaking the formatting.
+- **Copy** button on every code block of a chat answer; it copies exactly what **run** sends.
+- New setting **Instructions** under Settings → General: your standing instructions for the
+  model, added after the built-in instructions of the chat, its worker, topic jobs and
+  summaries. Empty (the default) adds nothing.
+
 ## Troubleshooting
 
 - **A job or the summary shows `error`** — open the run on the Jobs page: its error says why
