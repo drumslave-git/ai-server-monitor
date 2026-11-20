@@ -1,24 +1,25 @@
 import { useState } from "react";
 import { api, ApiError, type ActionRecord, type ApprovalBatch } from "../api";
+import { Actions, Button, Code, ErrorText, Lamp, Meta, Panel, Status, type Tone } from "../kit";
 import { useStream } from "../live";
-import { Dot, usePoll, type Level } from "../ui";
+import { usePoll } from "../ui";
 import { HostCommand } from "./HostCommand";
 
-/** Items of a long approval shown before "Show n more". */
+/** Items of a long approval shown before "show n more". */
 const SHOWN = 5;
 
 const STATUS_TEXT: Record<string, string> = {
-  pending: "Waiting for your approval",
-  queued: "Approved; queued",
-  approved: "Approved; running",
-  executed: "Approved and run",
-  failed: "Approved; failed",
-  rejected: "Denied",
-  expired: "Expired",
-  dry_run: "Dry run: nothing was sent",
+  pending: "waiting for your approval",
+  queued: "approved; queued",
+  approved: "approved; running",
+  executed: "approved and run",
+  failed: "approved; failed",
+  rejected: "denied",
+  expired: "expired",
+  dry_run: "dry run: nothing was sent",
 };
 
-export const statusDot = (status: string): Level =>
+export const statusDot = (status: string): Tone =>
   status === "pending" || status === "queued"
     ? "warn"
     : status === "approved"
@@ -64,8 +65,8 @@ export function failure(item: Pick<ActionRecord, "status" | "result">): string {
   return "";
 }
 
-/** The dot of a whole approval: waiting, then the worst of what became of its items. */
-function batchDot(batch: ApprovalBatch): Level {
+/** The lamp of a whole approval: waiting, then the worst of what became of its items. */
+function batchDot(batch: ApprovalBatch): Tone {
   const n = batch.counts;
   if (n.pending || n.queued) return "warn";
   if (n.failed) return "crit";
@@ -84,7 +85,7 @@ export function ApprovalCards({ items }: { items: number[] }) {
     const batch = event.type.startsWith("approval") ? event.data.id : event.data.batch_id;
     if (batches.some((b) => b.id === batch) || items.includes(event.data.id)) found.reload();
   });
-  if (found.error && !found.data) return <div className="approval-card muted small">Approval: {found.error}</div>;
+  if (found.error && !found.data) return <Meta>Approval: {found.error}</Meta>;
   return (
     <>
       {batches.map((batch) => (
@@ -112,7 +113,7 @@ function ApprovalCard({ batch, onChange }: { batch: ApprovalBatch; onChange: () 
     setBusy(false);
     onChange();
   };
-  // What did not happen comes first, so a failure is never hidden behind "Show n more".
+  // What did not happen comes first, so a failure is never hidden behind "show n more".
   const ordered = [...batch.items.filter((i) => failure(i)), ...batch.items.filter((i) => !failure(i))];
   const visible = all ? ordered : ordered.slice(0, SHOWN);
   const count = waiting > 1 ? ` all ${waiting}` : "";
@@ -123,84 +124,84 @@ function ApprovalCard({ batch, onChange }: { batch: ApprovalBatch; onChange: () 
     .filter(([status]) => status !== "pending")
     .map(([status, n]) => `${n} ${status.replace(/_/g, " ")}`)
     .join(", ");
+  const tone = batchDot(batch);
+  // The kit's Approval, with the list of items between its title and its buttons; the stripe
+  // stays only while something waits.
   return (
-    <div className={`approval-card${waiting ? "" : " settled"}`}>
-      <div className="approval-card-body">
-        <p className="approval-title">
+    <Panel inset hazard={waiting ? "warn" : undefined}>
+      <div className="fd-approval-body">
+        <strong>
           {command ? (
-            <span>{many ? `${batch.total} commands` : "Command"} to run as root on the host</span>
+            <>{many ? `${batch.total} commands` : "Command"} to run as root on the host</>
           ) : (
             <>
-              <span className="mono">{batch.action}</span>
-              <span>{batch.summary}</span>
+              <span className="fd-mono">{batch.action}</span> {batch.summary}
             </>
           )}
-        </p>
-        <p className="muted small">
-          <Dot level={batchDot(batch)} />{" "}
-          {many
-            ? [waiting ? `${waiting} waiting for your approval` : "", settled].filter(Boolean).join(" · ")
-            : (STATUS_TEXT[batch.items[0]?.status ?? ""] ?? settled)}{" "}
-          · <a href={`#/approvals/${batch.id}`}>open in Approvals</a>
-        </p>
+        </strong>
         {batch.covered.length > 0 && (
-          <p className="muted small">
+          <p className="fd-dim">
             Approved for this whole answer: later calls of {batch.covered.join(", ")} run without asking and are listed here.
           </p>
         )}
         {perItem && (
-          <p className="small">
-            <span className="muted">Each with </span>
-            <span className="mono">{callArguments(batch.items[0], Object.keys(given(batch.items[0])).filter((k) => !shared.includes(k)))}</span>
+          <p>
+            <span className="fd-dim">Each with </span>
+            <Code inline>{callArguments(batch.items[0], Object.keys(given(batch.items[0])).filter((k) => !shared.includes(k)))}</Code>
           </p>
         )}
-        <ul className={`approval-items${all ? " scroll" : ""}`}>
-          {visible.map((item) => (
-            <li key={item.id}>
-              {command ? (
-                <HostCommand item={item} />
-              ) : (
-                <>
-                  {many && <Dot level={statusDot(item.status)} />}
-                  <div className="approval-item">
-                    <span className="mono small">{callArguments(item, perItem ? shared : []) || item.target}</span>
-                    {many && !["pending", "executed"].includes(item.status) && !failure(item) && (
-                      <span className="muted small block">{STATUS_TEXT[item.status] ?? item.status}</span>
-                    )}
-                    {failure(item) && <span className="error small block">{failure(item)}</span>}
-                  </div>
-                </>
-              )}
-            </li>
-          ))}
-        </ul>
-        {batch.items.length > SHOWN && (
-          <button className="btn btn-quiet btn-sm" aria-expanded={all} onClick={() => setAll(!all)}>
-            {all ? `Show only the first ${SHOWN}` : `Show ${batch.items.length - SHOWN} more`}
-          </button>
-        )}
-        {error && <p className="error small">{error}</p>}
-      </div>
-      {waiting > 0 && (
-        <div className="approval-buttons">
-          <button className="btn" disabled={busy} onClick={() => decide("reject")}>
-            Deny{count}
-          </button>
-          {batch.rest.length > 0 && (
-            <button
-              className="btn"
-              disabled={busy}
-              title={`Approves ${waiting > 1 ? "these" : "this"}, and every later call of ${batch.rest.join(", ")} the model makes until this answer is finished. Each call is still listed here and in the audit log.`}
-              onClick={() => decide("approve", true)}
-            >
-              Approve for this whole answer
-            </button>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8, ...(all ? { maxHeight: "50vh", overflow: "auto" } : {}) }}>
+          {visible.map((item) =>
+            command ? (
+              <HostCommand key={item.id} item={item} />
+            ) : (
+              <div key={item.id} style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+                {many && <Lamp tone={statusDot(item.status)} blink={item.status === "approved"} title={STATUS_TEXT[item.status] ?? item.status} />}
+                <div className="fd-stack fd-wrap" style={{ minWidth: 0 }}>
+                  <span className="data">{callArguments(item, perItem ? shared : []) || item.target}</span>
+                  {many && !["pending", "executed"].includes(item.status) && !failure(item) && <Meta>{STATUS_TEXT[item.status] ?? item.status}</Meta>}
+                  {failure(item) && <ErrorText>{failure(item)}</ErrorText>}
+                </div>
+              </div>
+            ),
           )}
-          <button className="btn btn-primary" disabled={busy} onClick={() => decide("approve")}>
-            Approve{count}
-          </button>
         </div>
-      )}
-    </div>
+        {batch.items.length > SHOWN && (
+          <Actions>
+            <Button variant="link" aria-expanded={all} onClick={() => setAll(!all)}>
+              {all ? `show only the first ${SHOWN}` : `show ${batch.items.length - SHOWN} more`}
+            </Button>
+          </Actions>
+        )}
+        {error && <ErrorText>{error}</ErrorText>}
+        <div className="fd-approval-actions">
+          {waiting > 0 && (
+            <>
+              <Button variant="primary" disabled={busy} onClick={() => decide("approve")}>
+                approve{count}
+              </Button>
+              {batch.rest.length > 0 && (
+                <Button
+                  disabled={busy}
+                  title={`Approves ${waiting > 1 ? "these" : "this"}, and every later call of ${batch.rest.join(", ")} the model makes until this answer is finished. Each call is still listed here and in the audit log.`}
+                  onClick={() => decide("approve", true)}
+                >
+                  approve for this whole answer
+                </Button>
+              )}
+              <Button disabled={busy} onClick={() => decide("reject")}>
+                deny{count}
+              </Button>
+            </>
+          )}
+          <Status tone={tone} blink={tone === "info"}>
+            {many
+              ? [waiting ? `${waiting} waiting for your approval` : "", settled].filter(Boolean).join(" · ")
+              : (STATUS_TEXT[batch.items[0]?.status ?? ""] ?? settled)}{" "}
+            · <a href={`#/approvals/${batch.id}`}>open in Approvals</a>
+          </Status>
+        </div>
+      </div>
+    </Panel>
   );
 }

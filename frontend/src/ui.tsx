@@ -1,8 +1,11 @@
+// Hooks and the markdown renderer shared by the pages. Everything visible comes from ./kit.
 import DOMPurify from "dompurify";
 import { marked } from "marked";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
+import type { Tone } from "./kit";
 
-export type Level = "ok" | "info" | "warn" | "crit" | "off";
+/** A status level; the kit calls it a tone. */
+export type Level = Tone;
 
 export function useNow(intervalMs = 15_000): number {
   const [now, setNow] = useState(() => Date.now() / 1000);
@@ -41,57 +44,7 @@ export function usePoll<T>(load: () => Promise<T>, intervalMs: number) {
   return { data, error, reload: () => setTick((t) => t + 1) };
 }
 
-export function Dot({ level }: { level: Level }) {
-  return <span className={`dot dot-${level}`} aria-hidden />;
-}
-
-export function Badge({ level, children }: { level: Level; children: ReactNode }) {
-  return (
-    <span className={`badge badge-${level}`}>
-      <Dot level={level} />
-      {children}
-    </span>
-  );
-}
-
-export function Panel({
-  title,
-  aside,
-  children,
-  className = "",
-}: {
-  title?: ReactNode;
-  aside?: ReactNode;
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <section className={`panel ${className}`}>
-      {(title || aside) && (
-        <header className="panel-head">
-          <h3>{title}</h3>
-          {aside && <div className="panel-aside">{aside}</div>}
-        </header>
-      )}
-      {children}
-    </section>
-  );
-}
-
-export function Empty({ children }: { children: ReactNode }) {
-  return <p className="empty">{children}</p>;
-}
-
-export function PageHead({ title, children }: { title: string; children?: ReactNode }) {
-  return (
-    <div className="page-head">
-      <h2>{title}</h2>
-      <div className="page-actions">{children}</div>
-    </div>
-  );
-}
-
 export function Markdown({ text }: { text: string }) {
   const html = DOMPurify.sanitize(marked.parse(text, { async: false, gfm: true }) as string);
-  return <div className="markdown" dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div className="fd-md" dangerouslySetInnerHTML={{ __html: html }} />;
 }

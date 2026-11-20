@@ -1,29 +1,66 @@
-import { ChevronRight, Pencil, Search, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { api } from "../api";
 import type { components } from "../api-types";
 import { Description } from "../components/McpTools";
 import { ago } from "../fmt";
 import { errorText } from "../jobs";
-import { Empty, PageHead } from "../ui";
+import {
+  Actions,
+  Button,
+  Cells,
+  Checkbox,
+  Counter,
+  Counters,
+  Empty,
+  ErrorText,
+  Field,
+  Input,
+  Legend,
+  ListItem,
+  Meta,
+  Notice,
+  PageHeader,
+  Panel,
+  Select,
+  Split,
+  Status,
+  Switch,
+  Table,
+  Tag,
+  Toolbar,
+  type Cell,
+} from "../kit";
 
 /* All tools of the configured MCP servers, organised by domain (the area a person asks about).
-   One collapsible card per domain; "Not sorted" on top when a sorting failed; on/off goes to
-   the server's tool_filter (the same value as the Settings table). Cards start open; the ones
-   the owner collapsed are remembered in this browser by domain name (a new or renamed domain
-   starts open). While a search or filter is on, every card with matches is open and what is
-   remembered stays as it was. */
+   The domains are listed on the left ("Not sorted" on top when a sorting failed); the open ones
+   show their tools on the right; on/off goes to the server's tool_filter (the same value as the
+   Settings table). Domains start open; the ones the owner closed are remembered in this browser
+   by domain name (a new or renamed domain starts open). While a search or filter is on, every
+   domain with matches is open and what is remembered stays as it was. */
 
 type Page = components["schemas"]["McpToolsPage"];
 type Tool = components["schemas"]["McpTool"];
 type Domain = components["schemas"]["McpDomain"];
 type Kind = "all" | "read" | "write";
 type OnOff = "all" | "on" | "off";
+type Act = (p: Promise<unknown>) => Promise<unknown>;
+/** One line of the list: a domain, or the tools without one (`domain` undefined). */
+type Entry = { key: string; name: string; domain?: Domain; rows: Tool[]; all: Tool[] };
 
 const NEW_DOMAIN = "__new__";
-/** The "Not sorted" card's key among the collapsed names (no domain can be called this). */
+/** The "Not sorted" group's key among the closed names (no domain can be called this). */
 const UNSORTED = "(not sorted)";
 const CLOSED_KEY = "asm.mcp-tools.collapsed";
+
+const SUMMARY: CSSProperties = { display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: "var(--space-4) var(--space-5)", padding: "var(--space-4) var(--space-5)" };
+const STRIP: CSSProperties = { flex: "1 1 380px", minWidth: 0, display: "flex", flexDirection: "column", gap: "var(--space-2)" };
+const RIGHT: CSSProperties = { marginLeft: "auto" };
+const OPEN: CSSProperties = { flex: "3 1 560px", minWidth: 0, display: "flex", flexDirection: "column", gap: "var(--space-4)" };
+const NOTE: CSSProperties = { padding: "0 var(--space-5) var(--space-4)" };
+const UNDER: CSSProperties = { display: "flex", flexDirection: "column", gap: "var(--space-1)" };
+const BESIDE: CSSProperties = { display: "flex", alignItems: "center", gap: "var(--space-2)" };
+const DIALOG: CSSProperties = { width: "min(440px, calc(100vw - 32px))" };
+const DIALOG_BODY: CSSProperties = { display: "flex", flexDirection: "column", gap: "var(--space-4)", padding: "var(--space-5)" };
 
 function readClosed(): Set<string> {
   try {
@@ -41,6 +78,8 @@ function writeClosed(names: Set<string>) {
     /* no storage (private window, blocked): the state lasts until the page is left */
   }
 }
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export function McpToolsPage() {
   const [page, setPage] = useState<Page | null>(null);
@@ -69,7 +108,7 @@ export function McpToolsPage() {
   /** One request for several tools (the same tool_filter as the single switch). */
   const switchAll = (list: Tool[], on: boolean) =>
     void act(api.post("/api/mcp/tools/switch", { tools: list.map((t) => ({ server: t.server, tool: t.tool })), enabled: on })).catch(() => undefined);
-  const act = (p: Promise<unknown>) => {
+  const act: Act = (p) => {
     const done = p.then(load);
     done.catch((e) => setError(errorText(e)));
     return done;
@@ -87,128 +126,178 @@ export function McpToolsPage() {
     );
   }, [page, query, server, kind, onOff]);
 
-  if (!page) return <div className="stack"><PageHead title="MCP tools" />{error ? <p className="error">{error}</p> : <p className="muted">Loading…</p>}</div>;
+  if (!page) {
+    return (
+      <>
+        <PageHeader title="MCP tools" />
+        {error ? <ErrorText>{error}</ErrorText> : <Meta>Loading…</Meta>}
+      </>
+    );
+  }
 
   const tools = page.tools;
   const servers = page.servers;
   const unsorted = shown.filter((t) => t.domain_id == null);
-  const byDomain = (d: Domain) => shown.filter((t) => t.domain_id === d.id);
   const on = tools.filter((t) => t.enabled).length;
   const writes = tools.filter((t) => t.kind === "write").length;
+  const writesOn = tools.filter((t) => t.enabled && t.kind === "write").length;
   const nServers = new Set(tools.map((t) => t.server)).size;
   const down = servers.filter((s) => s.error);
   const allNames = [UNSORTED, ...page.domains.map((d) => d.name)];
   const anyClosed = allNames.some((n) => closed.has(n));
-  /** A card's open state: open with matches under a filter, else what the owner left it at. */
+  /** Whether a domain is open: open with matches under a filter, else what the owner left it at. */
   const isOpen = (name: string) => filtering || !closed.has(name);
-  /** The owner opened or closed a card: remembered, except under a filter (forced open). */
+  /** The owner opened or closed a domain: remembered, except under a filter (forced open). */
   const toggled = (name: string, open: boolean) => {
     if (!filtering && open === closed.has(name)) setClosed(toggle(closed, name, open));
   };
   const toOn = shown.filter((t) => !t.enabled);
   const toOff = shown.filter((t) => t.enabled);
 
+  // The list: the tools without a domain first, then every domain (under a filter, those with matches).
+  const entries: Entry[] = [];
+  if (unsorted.length > 0) entries.push({ key: "unsorted", name: UNSORTED, rows: unsorted, all: tools.filter((t) => t.domain_id == null) });
+  for (const d of page.domains) {
+    const rows = shown.filter((t) => t.domain_id === d.id);
+    if (filtering && rows.length === 0) continue;
+    entries.push({ key: String(d.id), name: d.name, domain: d, rows, all: tools.filter((t) => t.domain_id === d.id) });
+  }
+  const open = entries.filter((e) => isOpen(e.name));
+  /** A line of the list was chosen: its domain opens or closes. */
+  const pick = (e: MouseEvent<HTMLElement>) => {
+    const item = (e.target as HTMLElement).closest("a");
+    if (!item) return;
+    e.preventDefault();
+    const entry = entries[Array.from(e.currentTarget.children).indexOf(item)];
+    if (entry) toggled(entry.name, !isOpen(entry.name));
+  };
+  /** One cell per tool: read and on, then write and on, then off. */
+  const cells: Cell[] = [...Array<Cell>(on - writesOn).fill("ok"), ...Array<Cell>(writesOn).fill("warn"), ...Array<Cell>(tools.length - on).fill("")];
+
   return (
-    <div className="stack mt-page">
-      <PageHead title="MCP tools">
-        <button className="btn btn-sm" type="button" onClick={() => setSortOpen(true)} disabled={page.sorting || servers.length === 0}>
-          <Sparkles size={14} strokeWidth={1.5} aria-hidden /> Sort into domains…
-        </button>
-      </PageHead>
+    <>
+      <PageHeader title="MCP tools">
+        <Button variant="primary" onClick={() => setSortOpen(true)} disabled={page.sorting || servers.length === 0}>
+          sort into domains…
+        </Button>
+      </PageHeader>
       {servers.length === 0 ? (
-        <Empty>No MCP server is configured. Add one under Settings → MCP servers.</Empty>
+        <Notice title="No MCP server is configured.">Add one under Settings → MCP servers.</Notice>
       ) : (
         <>
-          <p className="muted small mt-summary">
-            {tools.length} tool{tools.length === 1 ? "" : "s"} on {nServers} server{nServers === 1 ? "" : "s"} in {page.domains.length} domain
-            {page.domains.length === 1 ? "" : "s"} · {on} on · {writes} write
-          </p>
+          <Panel>
+            <div style={SUMMARY}>
+              <Counters flush flex="0 1 720px">
+                <Counter size="sm" value={tools.length} label={`tool${tools.length === 1 ? "" : "s"} on ${plural(nServers, "server")}`} />
+                <Counter size="sm" value={page.domains.length} label={`domain${page.domains.length === 1 ? "" : "s"}`} />
+                <Counter size="sm" value={on} label="on" tone={on ? "ok" : "off"} />
+                <Counter size="sm" value={writes} label="write" tone={writes ? "warn" : "off"} />
+              </Counters>
+              <div style={STRIP}>
+                <Cells cells={cells} label={`${plural(tools.length, "tool")}: ${on - writesOn} read and on, ${writesOn} write and on, ${tools.length - on} off`} />
+                <Legend>
+                  <span>one cell = one tool</span>
+                  <Status tone="ok" plain>read, on</Status>
+                  <Status tone="warn" plain>write, on</Status>
+                  <Status tone="off" hollow plain>off</Status>
+                </Legend>
+              </div>
+            </div>
+          </Panel>
           {page.sorting && (
-            <p className="mt-note" role="status">
-              <span className="spinner" aria-hidden /> Sorting tools into domains… The page updates when it is done; until then some tools may still be without a domain.
-            </p>
+            <Notice title={<Status tone="info" blink>sorting tools into domains…</Status>}>
+              The page updates when it is done; until then some tools may still be without a domain.
+            </Notice>
           )}
           {down.map((s) => (
-            <p key={s.name} className="mt-note mt-warn">
-              Server <strong>{s.name}</strong> could not be listed{s.listed_ts ? ` ${ago(s.listed_ts)}` : ""}: {s.error}. Its tools are shown as last listed.
-            </p>
+            <Notice key={s.name}>
+              <span className="fd-t-warn">
+                Server <strong>{s.name}</strong> could not be listed{s.listed_ts ? ` ${ago(s.listed_ts)}` : ""}: {s.error}. Its tools are shown as last listed.
+              </span>
+            </Notice>
           ))}
-          {notice && <p className="mt-note" role="status">{notice}</p>}
-          {error && <p className="error">{error}</p>}
-          <div className="mt-toolbar">
-            <label className="mt-search">
-              <Search size={14} strokeWidth={1.5} aria-hidden />
-              <input type="search" placeholder="Search tools and descriptions" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search tools and descriptions" />
-            </label>
-            <select value={server} onChange={(e) => setServer(e.target.value)} aria-label="Server">
-              <option value="all">All servers</option>
-              {servers.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
-            </select>
-            <select value={kind} onChange={(e) => setKind(e.target.value as Kind)} aria-label="Read or write">
-              <option value="all">Read and write</option>
-              <option value="read">Read</option>
-              <option value="write">Write</option>
-            </select>
-            <select value={onOff} onChange={(e) => setOnOff(e.target.value as OnOff)} aria-label="On or off">
-              <option value="all">On and off</option>
-              <option value="on">On</option>
-              <option value="off">Off</option>
-            </select>
-            <button type="button" className="btn btn-quiet btn-sm" disabled={filtering}
-              title={filtering ? "While searching or filtering, every card with matches is open" : undefined}
-              onClick={() => setClosed(anyClosed ? new Set() : new Set(allNames))}>
-              {anyClosed ? "Expand all" : "Collapse all"}
-            </button>
-            <span className="mt-bulk">
-              <button type="button" className="btn btn-sm" disabled={toOn.length === 0} onClick={() => switchAll(toOn, true)}
-                title={filtering ? "Switches on every tool the search and filters show" : "Switches on every tool"}>
-                {filtering ? "Select shown" : "Select all"} ({toOn.length})
-              </button>
-              <button type="button" className="btn btn-sm" disabled={toOff.length === 0} onClick={() => switchAll(toOff, false)}
-                title={filtering ? "Switches off every tool the search and filters show" : "Switches off every tool"}>
-                {filtering ? "Deselect shown" : "Deselect all"} ({toOff.length})
-              </button>
-            </span>
-          </div>
-          {filtering && shown.length === 0 && <Empty>No tool matches.</Empty>}
-          {unsorted.length > 0 && (
-            <Section
-              id="unsorted"
-              title="Not sorted"
-              description="These tools have no domain: they are not offered to the chat or to jobs."
-              count={unsorted}
-              total={tools.filter((t) => t.domain_id == null)}
-              open={isOpen(UNSORTED)}
-              onToggle={(o) => toggled(UNSORTED, o)}
-              onSwitch={(on) => switchAll(unsorted, on)}
-              warn
-            >
-              {unsorted.map((t) => <Row key={t.name} tool={t} domains={page.domains} servers={servers} act={act} reason />)}
-            </Section>
+          {notice && <Notice>{notice}</Notice>}
+          {error && <ErrorText>{error}</ErrorText>}
+          <Toolbar>
+            <Field label="search" flex="1 1 240px">
+              <Input type="search" placeholder="Search tools and descriptions" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search tools and descriptions" />
+            </Field>
+            <Field label="server" width="190px">
+              <Select value={server} onChange={(e) => setServer(e.target.value)} aria-label="Server">
+                <option value="all">all servers</option>
+                {servers.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+              </Select>
+            </Field>
+            <Field label="kind" width="190px">
+              <Select value={kind} onChange={(e) => setKind(e.target.value as Kind)} aria-label="Read or write">
+                <option value="all">read and write</option>
+                <option value="read">read</option>
+                <option value="write">write</option>
+              </Select>
+            </Field>
+            <Field label="state" width="190px">
+              <Select value={onOff} onChange={(e) => setOnOff(e.target.value as OnOff)} aria-label="On or off">
+                <option value="all">on and off</option>
+                <option value="on">on</option>
+                <option value="off">off</option>
+              </Select>
+            </Field>
+            <div style={RIGHT}>
+              <Actions>
+                <Button
+                  disabled={filtering}
+                  title={filtering ? "While searching or filtering, every domain with matches is open" : undefined}
+                  onClick={() => setClosed(anyClosed ? new Set() : new Set(allNames))}
+                >
+                  {anyClosed ? "expand all" : "collapse all"}
+                </Button>
+                <Button disabled={toOn.length === 0} onClick={() => switchAll(toOn, true)} title={filtering ? "Switches on every tool the search and filters show" : "Switches on every tool"}>
+                  {filtering ? "select shown" : "select all"} ({toOn.length})
+                </Button>
+                <Button disabled={toOff.length === 0} onClick={() => switchAll(toOff, false)} title={filtering ? "Switches off every tool the search and filters show" : "Switches off every tool"}>
+                  {filtering ? "deselect shown" : "deselect all"} ({toOff.length})
+                </Button>
+              </Actions>
+            </div>
+          </Toolbar>
+          {filtering && shown.length === 0 && (
+            <Panel>
+              <Empty>No tool matches.</Empty>
+            </Panel>
           )}
-          {page.domains.map((d) => {
-            const rows = byDomain(d);
-            const all = tools.filter((t) => t.domain_id === d.id);
-            if (filtering && rows.length === 0) return null;
-            if (all.length === 0) return <EmptyDomain key={d.id} domain={d} act={act} />;
-            return (
-              <Section
-                key={d.id}
-                id={d.name}
-                title={d.name}
-                description={d.description}
-                count={rows}
-                total={all}
-                open={isOpen(d.name)}
-                onToggle={(o) => toggled(d.name, o)}
-                onSwitch={(on) => switchAll(rows, on)}
-                domain={d}
-                act={act}
-              >
-                {rows.map((t) => <Row key={t.name} tool={t} domains={page.domains} servers={servers} act={act} />)}
-              </Section>
-            );
-          })}
+          {entries.length > 0 && (
+            <Split>
+              <Panel flex="1 1 300px">
+                <nav className="fd-list" aria-label="Domains" onClick={pick}>
+                  {entries.map((e) => (
+                    <ListItem key={e.key} mono href="#/mcp" selected={isOpen(e.name)} title={e.domain ? e.name : "not sorted"} trailing={e.domain ? counts(e) : <Meta tone="warn">{counts(e)}</Meta>} />
+                  ))}
+                </nav>
+              </Panel>
+              {open.length > 0 && (
+                <div style={OPEN}>
+                  {open.map((e) =>
+                    e.domain && e.all.length === 0 ? (
+                      <EmptyDomain key={e.key} domain={e.domain} act={act} />
+                    ) : (
+                      <Section
+                        key={e.key}
+                        title={e.domain ? e.name : "Not sorted"}
+                        description={e.domain ? e.domain.description : "These tools have no domain: they are not offered to the chat or to jobs."}
+                        count={e.rows}
+                        total={e.all}
+                        onSwitch={(to) => switchAll(e.rows, to)}
+                        domain={e.domain}
+                        act={act}
+                      >
+                        {e.rows.map((t) => <ToolRow key={t.name} tool={t} domains={page.domains} servers={servers} act={act} reason={!e.domain} />)}
+                      </Section>
+                    ),
+                  )}
+                </div>
+              )}
+            </Split>
+          )}
         </>
       )}
       {sortOpen && (
@@ -219,7 +308,7 @@ export function McpToolsPage() {
           onDone={(text) => { setNotice(text); void load(); }}
         />
       )}
-    </div>
+    </>
   );
 }
 
@@ -230,68 +319,94 @@ function toggle(set: Set<string>, key: string, open: boolean): Set<string> {
   return next;
 }
 
+/** A domain's line in the list: how many of its tools are on, and how many a filter shows. */
+function counts(e: Entry): string {
+  if (e.all.length === 0) return "no tools";
+  const on = `${e.all.filter((t) => t.enabled).length} of ${e.all.length} on`;
+  return e.rows.length !== e.all.length ? `${e.rows.length} shown · ${on}` : on;
+}
+
+/** An open domain (or the tools without one): its counts, its bulk buttons and its tools. */
 function Section({
-  id, title, description, count, total, open, onToggle, onSwitch, domain, act, warn, children,
+  title, description, count, total, onSwitch, domain, act, children,
 }: {
-  id: string; title: string; description: string; count: Tool[]; total: Tool[]; open: boolean;
-  onToggle: (open: boolean) => void; onSwitch: (on: boolean) => void; domain?: Domain; act?: (p: Promise<unknown>) => Promise<unknown>; warn?: boolean;
-  children: React.ReactNode;
+  title: string; description: string; count: Tool[]; total: Tool[];
+  onSwitch: (on: boolean) => void; domain?: Domain; act: Act; children: ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
   const on = total.filter((t) => t.enabled).length;
+  const writes = total.filter((t) => t.kind === "write").length;
   // Under a search or filter the buttons act on the tools shown; the "on" count is the domain's.
   const part = count.length !== total.length;
   return (
-    <>
-    <details className={`mt-domain${warn ? " mt-unsorted" : ""}`} open={open} onToggle={(e) => onToggle((e.target as HTMLDetailsElement).open)} id={`domain-${id}`}>
-      <summary>
-        <ChevronRight className="mt-chev" size={16} strokeWidth={1.5} aria-hidden />
-        <span className="mt-dtext">
-          <span className="mt-dname">{title}</span>
-          {description && <span className="mt-ddesc"> · {description}</span>}
-        </span>
-        <span className="mt-dmeta">
-          {part ? <span>{count.length} shown · {on} of {total.length} on in this {domain ? "domain" : "group"}</span> : <span>{on} of {total.length} on</span>}
-          <button type="button" className="link-btn mt-dswitch" disabled={count.every((t) => t.enabled)} onClick={(e) => { e.preventDefault(); onSwitch(true); }}>
-            {part ? "Select shown" : "Select all"}
-          </button>
-          <button type="button" className="link-btn mt-dswitch" disabled={!count.some((t) => t.enabled)} onClick={(e) => { e.preventDefault(); onSwitch(false); }}>
-            {part ? "Deselect shown" : "Deselect all"}
-          </button>
-          {domain && domain.used_by.length > 0 && <span title={domain.used_by.join(", ")}> · {domain.used_by.length} job{domain.used_by.length === 1 ? "" : "s"}</span>}
+    <Panel
+      title={title}
+      meta={
+        <>
+          <Meta tone={on ? "ok" : "off"}>
+            {part ? `${count.length} shown · ${on} of ${total.length} on in this ${domain ? "domain" : "group"}` : `${on} of ${total.length} on`}
+          </Meta>
+          {" · "}
+          {total.length - writes} read · {writes} write
+          {domain && domain.used_by.length > 0 && <span title={domain.used_by.join(", ")}> · {plural(domain.used_by.length, "job")}</span>}
+        </>
+      }
+      aside={
+        <>
+          <Button disabled={count.every((t) => t.enabled)} onClick={() => onSwitch(true)}>
+            {part ? "select shown" : "select all"}
+          </Button>
+          <Button disabled={!count.some((t) => t.enabled)} onClick={() => onSwitch(false)}>
+            {part ? "deselect shown" : "deselect all"}
+          </Button>
           {domain && (
-            <button type="button" className="btn-icon" aria-label={`Rename or describe ${domain.name}`} onClick={(e) => { e.preventDefault(); setEditing(true); }}>
-              <Pencil size={14} strokeWidth={1.5} aria-hidden />
-            </button>
+            <Button aria-label={`Rename or describe ${domain.name}`} onClick={() => setEditing(true)}>
+              rename
+            </Button>
           )}
-        </span>
-      </summary>
-      <div className="mt-tools">{children}</div>
-    </details>
-    {/* outside <details>: a dialog inside a closed one would not show */}
-    {editing && domain && act && <DomainEdit domain={domain} act={act} onClose={() => setEditing(false)} />}
-    </>
+        </>
+      }
+    >
+      {description && (
+        <div style={NOTE}>
+          <p className={domain ? "fd-dim" : "fd-t-warn"}>{description}</p>
+        </div>
+      )}
+      <Table>
+        <thead>
+          <tr>
+            <th>on</th>
+            <th>tool</th>
+            <th>what it does</th>
+            <th>domain</th>
+          </tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </Table>
+      {editing && domain && <DomainEdit domain={domain} act={act} onClose={() => setEditing(false)} />}
+    </Panel>
   );
 }
 
-function EmptyDomain({ domain, act }: { domain: Domain; act: (p: Promise<unknown>) => Promise<unknown> }) {
+function EmptyDomain({ domain, act }: { domain: Domain; act: Act }) {
   const [editing, setEditing] = useState(false);
   return (
-    <div className="mt-domain mt-empty-domain">
-      <div className="mt-empty-line">
-        <span className="mt-dtext">
-          <span className="mt-dname">{domain.name}</span>
-          {domain.description && <span className="mt-ddesc"> · {domain.description}</span>}
-        </span>
-        <span className="mt-dmeta">
-          no tools{domain.used_by.length > 0 && ` · used by ${domain.used_by.join(", ")}`}
-          <button type="button" className="btn-icon" aria-label={`Rename or describe ${domain.name}`} onClick={() => setEditing(true)}>
-            <Pencil size={14} strokeWidth={1.5} aria-hidden />
-          </button>
-        </span>
-      </div>
+    <Panel
+      title={domain.name}
+      meta={<>no tools{domain.used_by.length > 0 && ` · used by ${domain.used_by.join(", ")}`}</>}
+      aside={
+        <Button aria-label={`Rename or describe ${domain.name}`} onClick={() => setEditing(true)}>
+          rename
+        </Button>
+      }
+    >
+      {domain.description && (
+        <div style={NOTE}>
+          <p className="fd-dim">{domain.description}</p>
+        </div>
+      )}
       {editing && <DomainEdit domain={domain} act={act} onClose={() => setEditing(false)} />}
-    </div>
+    </Panel>
   );
 }
 
@@ -303,7 +418,7 @@ const NAME_OK = /^[a-z0-9][a-z0-9-]*$/;
 function DomainEdit({
   domain, act, onClose, onCreated,
 }: {
-  domain?: Domain; act: (p: Promise<unknown>) => Promise<unknown>; onClose: () => void; onCreated?: (d: Domain) => Promise<unknown>;
+  domain?: Domain; act: Act; onClose: () => void; onCreated?: (d: Domain) => Promise<unknown>;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [name, setName] = useState(domain?.name ?? "");
@@ -314,6 +429,7 @@ function DomainEdit({
   const trimmed = name.trim();
   const problem = !trimmed ? null : !NAME_OK.test(trimmed) ? "Only lowercase letters, digits and hyphens; start with a letter or digit" : null;
   const valid = trimmed !== "" && problem === null && (domain !== undefined || description.trim() !== "");
+  const length = `${trimmed.length} of ${NAME_MAX} characters`;
   const run = (p: Promise<unknown>) => {
     setBusy(true);
     setError(null);
@@ -330,38 +446,42 @@ function DomainEdit({
     run(api.del(`/api/mcp/domains/${domain.id}`));
   };
   return (
-    <dialog ref={ref} className="mt-dialog" onClose={onClose}>
-      <h3>{domain ? `Domain ${domain.name}` : "New domain"}</h3>
-      <label className="mt-dialog-field">
-        Name
-        <input value={name} maxLength={NAME_MAX} onChange={(e) => setName(e.target.value)} className="mono" aria-invalid={problem !== null} autoFocus />
-        <span className={`small ${problem ? "mt-reason" : "muted"}`}>
-          {problem ?? "Lowercase letters, digits and hyphens"} · {trimmed.length} of {NAME_MAX} characters
-        </span>
-      </label>
-      <label className="mt-dialog-field">
-        Description
-        <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What a person can ask about there" />
-        {!domain && <span className="small muted">One line; the chat's model reads it to pick the domain.</span>}
-      </label>
-      {error && <p className="error">{error}</p>}
-      <div className="form-buttons">
-        <button type="button" className="btn btn-primary" onClick={save} disabled={!valid || busy}>{domain ? "Save" : "Create and move"}</button>
-        <button type="button" className="btn btn-quiet" onClick={onClose}>Cancel</button>
-        {domain && (
-          <button type="button" className="btn btn-quiet mt-delete" onClick={remove} disabled={busy || domain.used_by.length > 0} title={domain.used_by.length ? `Used by ${domain.used_by.join(", ")}` : undefined}>
-            Delete domain
-          </button>
-        )}
+    <dialog ref={ref} className="fd-dialog" style={DIALOG} onClose={onClose}>
+      <div style={DIALOG_BODY}>
+        <h2 className="heading">{domain ? `Domain ${domain.name}` : "New domain"}</h2>
+        <Field
+          label="name"
+          help={problem ? undefined : `Lowercase letters, digits and hyphens · ${length}`}
+          error={problem ? `${problem} · ${length}` : undefined}
+        >
+          <Input value={name} maxLength={NAME_MAX} onChange={(e) => setName(e.target.value)} invalid={problem !== null} autoFocus />
+        </Field>
+        <Field label="description" help={domain ? undefined : "One line; the chat's model reads it to pick the domain."}>
+          <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What a person can ask about there" />
+        </Field>
+        {error && <ErrorText>{error}</ErrorText>}
+        <Actions>
+          <Button variant="primary" onClick={save} disabled={!valid || busy}>
+            {domain ? "save" : "create and move"}
+          </Button>
+          <Button onClick={onClose}>cancel</Button>
+          {domain && (
+            <span style={RIGHT}>
+              <Button onClick={remove} disabled={busy || domain.used_by.length > 0} title={domain.used_by.length ? `Used by ${domain.used_by.join(", ")}` : undefined}>
+                delete domain
+              </Button>
+            </span>
+          )}
+        </Actions>
       </div>
     </dialog>
   );
 }
 
-function Row({
+function ToolRow({
   tool, domains, servers, act, reason,
 }: {
-  tool: Tool; domains: Domain[]; servers: Page["servers"]; act: (p: Promise<unknown>) => Promise<unknown>; reason?: boolean;
+  tool: Tool; domains: Domain[]; servers: Page["servers"]; act: Act; reason?: boolean;
 }) {
   const state = servers.find((s) => s.name === tool.server);
   const path = `/api/mcp/tools/${encodeURIComponent(tool.server)}/${encodeURIComponent(tool.tool)}`;
@@ -371,33 +491,36 @@ function Row({
     else if (value) void act(api.patch(path, { domain_id: Number(value) })).catch(() => undefined);
   };
   return (
-    <div className={`mt-tool${tool.enabled ? "" : " off"}`}>
-      <label className="switch" title={tool.enabled ? "Turn off" : "Turn on"}>
-        <input type="checkbox" checked={tool.enabled} onChange={(e) => act(api.patch(path, { enabled: e.target.checked }))} aria-label={`${tool.name} on`} />
-        <span />
-      </label>
-      <div className="mt-tmain">
-        <div className="mt-tline">
-          <span className="mt-tname">{tool.tool}</span>
-          <span className={`mt-kind ${tool.kind}`}>{tool.kind === "write" ? "Write" : "Read"}</span>
-          <span className="mt-server">
-            {tool.server}
-            {state && !state.enabled && " · server off"}
-            {state?.error && " · unreachable"}
+    <tr className={tool.enabled ? undefined : "fd-off"}>
+      <td>
+        <Switch checked={tool.enabled} onChange={(to) => void act(api.patch(path, { enabled: to }))} label={`${tool.name} on`} title={tool.enabled ? "Turn off" : "Turn on"} />
+      </td>
+      <td>
+        <div style={UNDER}>
+          <span className="label fd-nowrap">{tool.tool}</span>
+          <span className="fd-nowrap" style={BESIDE}>
+            <Tag tone={tool.kind === "write" ? "warn" : undefined}>{tool.kind}</Tag>
+            <Tag>{tool.server}</Tag>
+            {state && !state.enabled && <Status tone="off" hollow>server off</Status>}
+            {state?.error && <Status tone="crit">unreachable</Status>}
           </span>
         </div>
+      </td>
+      <td style={{ minWidth: "260px" }}>
         <Description text={tool.description} />
-        {reason && <p className="mt-reason">{tool.sort_error ?? "Not sorted yet: it is sorted at the next listing."}</p>}
-      </div>
-      <select className="mt-move" value="" onChange={(e) => move(e.target.value)} aria-label={`Move ${tool.tool} to another domain`}>
-        <option value="">Move to…</option>
-        {domains.filter((d) => d.id !== tool.domain_id).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-        <option value={NEW_DOMAIN}>New domain…</option>
-      </select>
-      {creating && (
-        <DomainEdit act={act} onClose={() => setCreating(false)} onCreated={(d) => api.patch(path, { domain_id: d.id })} />
-      )}
-    </div>
+        {reason && <p className="fd-t-warn fd-wrap">{tool.sort_error ?? "Not sorted yet: it is sorted at the next listing."}</p>}
+      </td>
+      <td>
+        <Select style={{ width: "190px" }} value="" onChange={(e) => move(e.target.value)} aria-label={`Move ${tool.tool} to another domain`}>
+          <option value="">move to…</option>
+          {domains.filter((d) => d.id !== tool.domain_id).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          <option value={NEW_DOMAIN}>new domain…</option>
+        </Select>
+        {creating && (
+          <DomainEdit act={act} onClose={() => setCreating(false)} onCreated={(d) => api.patch(path, { domain_id: d.id })} />
+        )}
+      </td>
+    </tr>
   );
 }
 
@@ -422,25 +545,26 @@ function SortDialog({ page, onClose, onDone, onStart }: { page: Page; onClose: (
     );
   };
   return (
-    <dialog ref={ref} className="mt-dialog" onClose={onClose}>
-      <h3>Sort into domains</h3>
-      <p className="muted small">The main model sorts the tools again; domain names and descriptions you wrote stay.</p>
-      <label className="mt-dialog-field">
-        Servers
-        <select value={server} onChange={(e) => setServer(e.target.value)}>
-          <option value="">All enabled servers</option>
-          {page.servers.filter((s) => s.enabled).map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
-        </select>
-      </label>
-      <p className="small">
-        {byHand === 0 ? "You placed no tool by hand." : `${byHand} tool${byHand === 1 ? "" : "s"} you placed by hand stay${byHand === 1 ? "s" : ""} where ${byHand === 1 ? "it is" : "they are"}.`}
-      </p>
-      <label className="mt-check">
-        <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} disabled={byHand === 0} /> Also re-sort the tools I placed by hand
-      </label>
-      <div className="form-buttons">
-        <button type="button" className="btn btn-primary" onClick={start}>Sort</button>
-        <button type="button" className="btn btn-quiet" onClick={onClose}>Cancel</button>
+    <dialog ref={ref} className="fd-dialog" style={DIALOG} onClose={onClose}>
+      <div style={DIALOG_BODY}>
+        <h2 className="heading">Sort into domains</h2>
+        <p className="fd-dim">The main model sorts the tools again; domain names and descriptions you wrote stay.</p>
+        <Field label="servers">
+          <Select value={server} onChange={(e) => setServer(e.target.value)}>
+            <option value="">all enabled servers</option>
+            {page.servers.filter((s) => s.enabled).map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+          </Select>
+        </Field>
+        <p>
+          {byHand === 0 ? "You placed no tool by hand." : `${byHand} tool${byHand === 1 ? "" : "s"} you placed by hand stay${byHand === 1 ? "s" : ""} where ${byHand === 1 ? "it is" : "they are"}.`}
+        </p>
+        <Checkbox checked={mine} onChange={setMine} disabled={byHand === 0} label="Also re-sort the tools I placed by hand" />
+        <Actions>
+          <Button variant="primary" onClick={start}>
+            sort
+          </Button>
+          <Button onClick={onClose}>cancel</Button>
+        </Actions>
       </div>
     </dialog>
   );

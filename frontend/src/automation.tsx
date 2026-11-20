@@ -1,7 +1,8 @@
-// The global "pause automation" switch: shared state, the bar shown on every page, and the hook.
-import { Pause, Play } from "lucide-react";
+// The global "pause automation" switch: shared state, the switch in the rail, the notice shown
+// while paused, and the hook.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "./api";
+import { Button, ErrorText, Notice, Status } from "./kit";
 import { useStream } from "./live";
 
 export type AutomationState = {
@@ -65,34 +66,45 @@ export function sinceText(ts: number): string {
   return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${time}`;
 }
 
-/** On top of every page: the switch, and while it is on a banner saying what is stopped. */
-export function AutomationBar() {
-  const { state, busy, error, pause, resume } = useAutomation();
+/** At the foot of the rail on every page: whether automation runs, and the button that stops or resumes it. */
+export function AutomationSwitch() {
+  const { state, busy, pause, resume } = useAutomation();
   if (!state) return null;
-  if (!state.paused) {
-    return (
-      <div className="auto-bar">
-        <span className="muted small">Scheduled jobs and automations are running</span>
-        <button className="btn btn-quiet btn-sm" disabled={busy} onClick={pause} title="Stop every scheduled job and automation">
-          <Pause size={14} strokeWidth={1.5} aria-hidden /> Pause automation
-        </button>
-        {error && <span className="error small">{error}</span>}
-      </div>
-    );
-  }
   return (
-    <div className="auto-banner" role="status">
-      <div className="auto-banner-text">
-        <strong>Automation paused{state.since ? ` since ${sinceText(state.since)}` : ""}</strong>
-        <span>
-          Scheduled jobs and automations are stopped: no scheduled agent runs. Chat, approvals and the Telegram bot keep working.
-          {state.queued_actions > 0 && ` ${state.queued_actions} approved action${state.queued_actions > 1 ? "s" : ""} wait${state.queued_actions > 1 ? "" : "s"} and will run after the resume.`}
-        </span>
-        {error && <span className="error small">{error}</span>}
-      </div>
-      <button className="btn" disabled={busy} onClick={resume}>
-        <Play size={14} strokeWidth={1.5} aria-hidden /> Resume
-      </button>
-    </div>
+    <>
+      <Status tone={state.paused ? "warn" : "ok"} plain>
+        {state.paused ? "automation paused" : "automation running"}
+      </Status>
+      {state.paused ? (
+        <Button block disabled={busy} onClick={resume}>
+          resume automation
+        </Button>
+      ) : (
+        <Button block disabled={busy} onClick={pause} title="Stop every scheduled job and automation">
+          pause automation
+        </Button>
+      )}
+    </>
+  );
+}
+
+/** On top of every page while automation is paused: what is stopped, and the way back. */
+export function AutomationNotice() {
+  const { state, busy, error, resume } = useAutomation();
+  if (!state) return null;
+  if (!state.paused) return error ? <ErrorText>{error}</ErrorText> : null;
+  return (
+    <Notice
+      title={`Automation paused${state.since ? ` since ${sinceText(state.since)}` : ""}`}
+      action={
+        <Button variant="primary" disabled={busy} onClick={resume}>
+          resume
+        </Button>
+      }
+    >
+      Scheduled jobs and automations are stopped: no scheduled agent runs. Chat, approvals and the Telegram bot keep working.
+      {state.queued_actions > 0 && ` ${state.queued_actions} approved action${state.queued_actions > 1 ? "s" : ""} wait${state.queued_actions > 1 ? "" : "s"} and will run after the resume.`}
+      {error && <ErrorText>{error}</ErrorText>}
+    </Notice>
   );
 }

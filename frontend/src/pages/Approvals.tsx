@@ -4,15 +4,36 @@ import { callArguments } from "../components/ApprovalCards";
 import { HostCommand } from "../components/HostCommand";
 import { ago, clock, until } from "../fmt";
 import { useAutomation } from "../automation";
+import {
+  Actions,
+  Button,
+  Checkbox,
+  Counter,
+  Empty,
+  ErrorText,
+  Field,
+  LinkButton,
+  Meta,
+  Notice,
+  PageHeader,
+  Panel,
+  Row,
+  Select,
+  Stack,
+  Status,
+  Table,
+  Toolbar,
+  type Tone,
+} from "../kit";
 import { useStream } from "../live";
-import { Badge, Empty, PageHead, Panel, useNow, usePoll, type Level } from "../ui";
+import { useNow, usePoll } from "../ui";
 
 type Listing = { items: ActionRecord[]; total: number };
 
 const STATUSES = ["pending", "queued", "suggested", "executed", "failed", "rejected", "expired", "dry_run"];
 const SHOWN = 10;
 
-const statusLevel = (s: string): Level =>
+const statusLevel = (s: string): Tone =>
   s === "executed"
     ? "ok"
     : s === "failed"
@@ -24,6 +45,16 @@ const statusLevel = (s: string): Level =>
           : "off";
 
 const label = (s: string) => s.replace(/_/g, " ");
+
+/** The status of an action as lamp and word; an approved one is running. */
+function ActionStatus({ status, count }: { status: string; count?: number }) {
+  return (
+    <Status tone={statusLevel(status)} blink={status === "approved"}>
+      {count === undefined ? "" : `${count} `}
+      {label(status)}
+    </Status>
+  );
+}
 
 function describe(a: ActionRecord): string {
   const result = a.result ?? {};
@@ -68,139 +99,128 @@ function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) 
   // pending item, shown or not.
   const visible = all ? batch.items : batch.items.slice(0, SHOWN);
   const hidden = batch.items.length - visible.length;
+  const selectable = waiting.length > 1;
 
   return (
-    <article ref={ref} className={`batch ${focused ? "focused" : ""}`} aria-label={batch.title}>
-      <header className="batch-head">
-        <div className="batch-title">
-          <h4>{batch.title}</h4>
-          <p className="muted small">
-            #{batch.id} · from {batch.source} · requested {ago(batch.ts, now)}
-            {waiting.length > 0 && <> · expires {until(batch.expires_at, now)}</>}
+    <Row current={focused}>
+      <article ref={ref} aria-label={batch.title} style={{ flex: "1 1 100%", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+        <Meta>
+          #{batch.id} · from {batch.source} · requested {ago(batch.ts, now)}
+          {waiting.length > 0 && <> · expires {until(batch.expires_at, now)}</>}
+        </Meta>
+        <h3 className="heading fd-wrap">{batch.title}</h3>
+        {batch.covered.length > 0 && (
+          <p className="fd-dim">
+            Approved for the whole run: later requests of {batch.covered.join(", ")} run without asking and are listed here.
           </p>
-          {batch.covered.length > 0 && (
-            <p className="muted small">
-              Approved for the whole run: later requests of {batch.covered.join(", ")} run without asking and are listed here.
-            </p>
-          )}
-          {done.length > 0 && (
-            <p className="batch-outcome">
-              {done.map(([status, n]) => (
-                <Badge key={status} level={statusLevel(status)}>
-                  {n} {label(status)}
-                </Badge>
-              ))}
-              {batch.queued > 0 && <span className="muted small">{paused ? "approved; waiting because automation is paused, it runs after the resume" : batch.queue_note.replace(/^, /, "")}</span>}
-            </p>
-          )}
-        </div>
-        {waiting.length === 0 && batch.queued > 0 && (
-          <div className="approval-buttons">
-            <button className="btn" disabled={busy} onClick={() => onDecide(batch, "reject")}>
-              Cancel the {batch.queued} queued
-            </button>
+        )}
+        {done.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 16px" }}>
+            {done.map(([status, n]) => (
+              <ActionStatus key={status} status={status} count={n} />
+            ))}
+            {batch.queued > 0 && <Meta>{paused ? "approved; waiting because automation is paused, it runs after the resume" : batch.queue_note.replace(/^, /, "")}</Meta>}
           </div>
         )}
-        {waiting.length > 0 && (
-          <div className="approval-buttons">
-            <button className="btn" disabled={busy} onClick={() => onDecide(batch, "reject")}>
-              Reject all{waiting.length > 1 ? ` (${waiting.length})` : ""}
-            </button>
-            {batch.rest.length > 0 && (
-              <button
-                className="btn"
-                disabled={busy}
-                title={`Approves everything waiting here, and every later request of ${batch.rest.join(", ")} from the same run (a chat answer until it is finished). Each one is still recorded in the audit log.`}
-                onClick={() => onDecide(batch, "approve", undefined, true)}
-              >
-                Approve for the whole run
-              </button>
-            )}
-            <button className="btn btn-primary" disabled={busy} onClick={() => onDecide(batch, "approve")}>
-              Approve all{waiting.length > 1 ? ` (${waiting.length})` : ""}
-            </button>
-          </div>
-        )}
-      </header>
 
-      {waiting.length > 1 && (
-        <div className="batch-bar">
-          <label className="check">
-            <input
-              type="checkbox"
+        {selectable && (
+          <Toolbar>
+            <Checkbox
               checked={chosen.length === waiting.length}
-              ref={(el) => {
-                if (el) el.indeterminate = chosen.length > 0 && chosen.length < waiting.length;
-              }}
-              onChange={(e) => setSelected(e.target.checked ? new Set(waitingIds) : new Set())}
+              onChange={(checked) => setSelected(checked ? new Set(waitingIds) : new Set())}
+              label={chosen.length ? `${chosen.length} of ${waiting.length} selected` : `select all ${waiting.length}`}
             />
-            <span>{chosen.length ? `${chosen.length} of ${waiting.length} selected` : `Select all ${waiting.length}`}</span>
-          </label>
-          <div className="batch-bar-buttons">
-            <button
-              className="btn"
-              disabled={busy || chosen.length === 0}
-              onClick={() => {
-                onDecide(batch, "reject", chosen);
-                setSelected(new Set());
-              }}
-            >
-              Reject selected
-            </button>
-            <button
-              className="btn"
-              disabled={busy || chosen.length === 0}
-              onClick={() => {
-                onDecide(batch, "approve", chosen);
-                setSelected(new Set());
-              }}
-            >
-              Approve selected
-            </button>
-          </div>
-        </div>
-      )}
-
-      <ul className={`batch-items ${all ? "scroll" : ""}`}>
-        {visible.map((item) => (
-          <li key={item.id} className={item.status === "pending" ? undefined : "settled"}>
-            {waiting.length > 1 && item.status === "pending" ? (
-              <input
-                type="checkbox"
-                aria-label={`Select ${item.target ?? item.id}`}
-                checked={selected.has(item.id)}
-                onChange={() => toggle(item.id)}
-              />
-            ) : (
-              <span className="check-gap" aria-hidden />
-            )}
-            <div className="item-body">
-              {item.action === "host_command" ? (
-                <HostCommand item={item} />
-              ) : (
-                <>
-                  <span className="item-target">{item.target}</span>
-                  {callArguments(item) && <span className="mono small block">{callArguments(item)}</span>}
-                  {item.reason && item.status === "pending" && <span className="muted small block">{item.reason}</span>}
-                  {item.status !== "pending" && <span className="muted small block">{describe(item)}</span>}
-                </>
-              )}
-            </div>
-            {item.status !== "pending" && <Badge level={statusLevel(item.status)}>{label(item.status)}</Badge>}
-          </li>
-        ))}
-      </ul>
-      <footer className="batch-foot">
-        {batch.items.length > SHOWN && (
-          <button className="btn btn-quiet" aria-expanded={all} onClick={() => setAll(!all)}>
-            {all ? `Show only the first ${SHOWN}` : `Show ${hidden} more`}
-          </button>
+            <Actions>
+              <Button
+                disabled={busy || chosen.length === 0}
+                onClick={() => {
+                  onDecide(batch, "approve", chosen);
+                  setSelected(new Set());
+                }}
+              >
+                approve selected
+              </Button>
+              <Button
+                disabled={busy || chosen.length === 0}
+                onClick={() => {
+                  onDecide(batch, "reject", chosen);
+                  setSelected(new Set());
+                }}
+              >
+                reject selected
+              </Button>
+            </Actions>
+          </Toolbar>
         )}
-        <button className="btn btn-quiet" onClick={() => onAudit(batch)}>
-          Show in the audit log
-        </button>
-      </footer>
-    </article>
+
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8, ...(all ? { maxHeight: "60vh", overflow: "auto" } : {}) }}>
+          {visible.map((item) => (
+            <div
+              key={item.id}
+              className={item.status === "pending" ? undefined : "fd-dim"}
+              style={{ display: "flex", alignItems: item.status === "pending" ? "center" : "flex-start", gap: 12 }}
+            >
+              {selectable &&
+                (item.status === "pending" ? (
+                  <Checkbox hideLabel label={`Select ${item.target ?? item.id}`} checked={selected.has(item.id)} onChange={() => toggle(item.id)} />
+                ) : (
+                  <span aria-hidden style={{ flex: "none", width: 18 }} />
+                ))}
+              <div className="fd-wrap" style={{ flex: 1, minWidth: 0 }}>
+                {item.action === "host_command" ? (
+                  <HostCommand item={item} />
+                ) : (
+                  <Stack>
+                    <span className="label">{item.target}</span>
+                    {callArguments(item) && <span className="data">{callArguments(item)}</span>}
+                    {item.reason && item.status === "pending" && <span className="fd-dim">{item.reason}</span>}
+                    {item.status !== "pending" && <span className="fd-dim">{describe(item)}</span>}
+                  </Stack>
+                )}
+              </div>
+              {item.status !== "pending" && <ActionStatus status={item.status} />}
+            </div>
+          ))}
+        </div>
+        {batch.items.length > SHOWN && (
+          <Actions>
+            <Button variant="link" aria-expanded={all} onClick={() => setAll(!all)}>
+              {all ? `show only the first ${SHOWN}` : `show ${hidden} more`}
+            </Button>
+          </Actions>
+        )}
+
+        <Actions>
+          {waiting.length > 0 && (
+            <>
+              <Button variant="primary" disabled={busy} onClick={() => onDecide(batch, "approve")}>
+                approve all{waiting.length > 1 ? ` (${waiting.length})` : ""}
+              </Button>
+              {batch.rest.length > 0 && (
+                <Button
+                  disabled={busy}
+                  title={`Approves everything waiting here, and every later request of ${batch.rest.join(", ")} from the same run (a chat answer until it is finished). Each one is still recorded in the audit log.`}
+                  onClick={() => onDecide(batch, "approve", undefined, true)}
+                >
+                  approve for the whole run
+                </Button>
+              )}
+              <Button disabled={busy} onClick={() => onDecide(batch, "reject")}>
+                reject all{waiting.length > 1 ? ` (${waiting.length})` : ""}
+              </Button>
+            </>
+          )}
+          {waiting.length === 0 && batch.queued > 0 && (
+            <Button disabled={busy} onClick={() => onDecide(batch, "reject")}>
+              cancel the {batch.queued} queued
+            </Button>
+          )}
+          <Button variant="link" onClick={() => onAudit(batch)}>
+            show in the audit log
+          </Button>
+        </Actions>
+      </article>
+    </Row>
   );
 }
 
@@ -265,111 +285,142 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
   const actionNames = Array.from(new Set((log.data?.items ?? []).map((a) => a.action))).sort();
 
   return (
-    <div className="stack">
-      <PageHead title="Approvals and actions" />
+    <>
+      <PageHeader title="Approvals and actions" />
       {shell && shell.policy !== "off" && !shell.available && (
-        <div className="notice">
-          <strong>Changing shell commands are not available.</strong> The chat cannot ask to run them until this is fixed:
-          <p className="muted small">{shell.reason ?? "The host shell could not be reached."}</p>
-          <p className="muted small">
+        <Notice title="Changing shell commands are not available.">
+          The chat cannot ask to run them until this is fixed:
+          <p className="fd-dim">{shell.reason ?? "The host shell could not be reached."}</p>
+          <p className="fd-dim">
             Turn them off in <a href="#/settings/approvals">Settings → Approvals</a> to hide this note.
           </p>
-        </div>
+        </Notice>
       )}
       {extra && (
-        <Panel title={`Approval #${extra.id}`} aside={<a href="#/approvals" className="small">Close</a>}>
+        <Panel
+          title={`Approval #${extra.id}`}
+          aside={
+            <LinkButton variant="link" href="#/approvals">
+              close
+            </LinkButton>
+          }
+        >
           <BatchCard batch={extra} now={now} focused={false} busy={busy === extra.id} onDecide={decide} onAudit={showAudit} />
         </Panel>
       )}
-      <Panel
-        title="Waiting for you"
-        aside={
-          batches.length ? (
-            <span className="muted small">
-              {batches.length} approval{batches.length === 1 ? "" : "s"} · {waitingItems} item{waitingItems === 1 ? "" : "s"}
-            </span>
-          ) : undefined
-        }
-      >
-        {error && <p className="error">{error}</p>}
-        {pending.data && batches.length === 0 ? (
-          <Empty>Nothing is waiting. Actions set to “approve” in Settings appear here.</Empty>
-        ) : (
-          <div className="batches">
-            {batches.map((b) => (
-              <BatchCard
-                key={b.id}
-                batch={b}
-                now={now}
-                focused={b.id === focusId}
-                busy={busy === b.id}
-                onDecide={decide}
-                onAudit={showAudit}
-              />
-            ))}
+      <Panel hazard={batches.length ? "warn" : undefined}>
+        <div style={{ display: "flex", flexWrap: "wrap" }}>
+          <div style={{ padding: "20px 24px 24px" }}>
+            <Counter
+              value={pending.data ? batches.length : "—"}
+              tone={batches.length ? "warn" : "off"}
+              size="xl"
+              plain
+              title="Waiting for you"
+              label={
+                batches.length
+                  ? `${batches.length} approval${batches.length === 1 ? "" : "s"} · ${waitingItems} item${waitingItems === 1 ? "" : "s"}`
+                  : ""
+              }
+            />
           </div>
-        )}
+          <div style={{ flex: "1 1 560px", minWidth: 0 }}>
+            {error && (
+              <Row>
+                <ErrorText>{error}</ErrorText>
+              </Row>
+            )}
+            {pending.data && batches.length === 0 ? (
+              <Empty>Nothing is waiting. Actions set to “approve” in Settings appear here.</Empty>
+            ) : (
+              batches.map((b) => (
+                <BatchCard
+                  key={b.id}
+                  batch={b}
+                  now={now}
+                  focused={b.id === focusId}
+                  busy={busy === b.id}
+                  onDecide={decide}
+                  onAudit={showAudit}
+                />
+              ))
+            )}
+          </div>
+        </div>
       </Panel>
 
       <div id="audit-log">
         <Panel
           title="Audit log"
           aside={
-            <div className="filters">
+            <Toolbar>
               {batch && (
-                <button className="btn btn-quiet" onClick={() => setBatch(null)} title="Show all actions again">
-                  Approval #{batch} ✕
-                </button>
+                <Button onClick={() => setBatch(null)} title="Show all actions again">
+                  approval #{batch} · clear
+                </Button>
               )}
-              <select aria-label="Status" value={status} onChange={(e) => { setStatus(e.target.value); setLimit(25); }}>
-                <option value="">All statuses</option>
-                {STATUSES.map((s) => <option key={s} value={s}>{label(s)}</option>)}
-              </select>
-              <select aria-label="Action" value={action} onChange={(e) => { setAction(e.target.value); setLimit(25); }}>
-                <option value="">All actions</option>
-                {actionNames.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
+              <Field label="status" width="180px">
+                <Select aria-label="Status" value={status} onChange={(e) => { setStatus(e.target.value); setLimit(25); }}>
+                  <option value="">all statuses</option>
+                  {STATUSES.map((s) => <option key={s} value={s}>{label(s)}</option>)}
+                </Select>
+              </Field>
+              <Field label="action" width="180px">
+                <Select aria-label="Action" value={action} onChange={(e) => { setAction(e.target.value); setLimit(25); }}>
+                  <option value="">all actions</option>
+                  {actionNames.map((s) => <option key={s} value={s}>{s}</option>)}
+                </Select>
+              </Field>
+            </Toolbar>
           }
         >
           {log.data && log.data.items.length === 0 ? (
             <Empty>No actions recorded{status || action || batch ? " for this filter" : ""}.</Empty>
           ) : (
-            <table className="table log">
+            <Table>
               <thead>
-                <tr><th>Time</th><th>Action</th><th>Status</th><th className="hide-sm">Source</th><th className="hide-sm">Detail</th></tr>
+                <tr><th>time</th><th>action</th><th>status</th><th>source</th><th>detail</th></tr>
               </thead>
               <tbody>
                 {(log.data?.items ?? []).map((a) => (
                   <tr key={a.id}>
-                    <td className="nowrap">{clock(a.ts)}</td>
+                    <td><span className="data fd-nowrap">{clock(a.ts)}</span></td>
                     <td>
-                      <span className="mono">{a.action}</span>
-                      <span className="muted block small">{a.target}</span>
+                      <Stack>
+                        <Meta>{a.action}</Meta>
+                        <span className="data">{a.target}</span>
+                      </Stack>
                     </td>
-                    <td><Badge level={statusLevel(a.status)}>{label(a.status)}</Badge></td>
-                    <td className="hide-sm muted">
-                      {a.source}
-                      {a.decided_by ? ` · ${a.decided_by}` : ""}
-                      {a.batch_id && !batch ? (
-                        <button className="link-btn" onClick={() => { setBatch(a.batch_id); setLimit(100); }} title="Only this approval">
-                          {" "}#{a.batch_id}
-                        </button>
-                      ) : null}
+                    <td><ActionStatus status={a.status} /></td>
+                    <td>
+                      <span className="data fd-nowrap">
+                        {a.source}
+                        {a.decided_by ? ` · ${a.decided_by}` : ""}
+                        {a.batch_id && !batch ? (
+                          <>
+                            {" "}
+                            <Button variant="link" onClick={() => { setBatch(a.batch_id); setLimit(100); }} title="Only this approval">
+                              #{a.batch_id}
+                            </Button>
+                          </>
+                        ) : null}
+                      </span>
                     </td>
-                    <td className="hide-sm details">{describe(a)}</td>
+                    <td className="fd-wrap">{describe(a)}</td>
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           )}
           {log.data && log.data.total > log.data.items.length && (
-            <button className="btn btn-quiet more" onClick={() => setLimit(limit + 25)}>
-              Show more ({log.data.total - log.data.items.length} older)
-            </button>
+            <Row>
+              <Button variant="link" onClick={() => setLimit(limit + 25)}>
+                show more ({log.data.total - log.data.items.length} older)
+              </Button>
+            </Row>
           )}
         </Panel>
       </div>
-    </div>
+    </>
   );
 }

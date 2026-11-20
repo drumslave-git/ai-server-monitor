@@ -1,0 +1,77 @@
+/* Flight Deck tokens: the one place colours, type and sizes are defined.
+   Same values as the design kit. Dark is the default; the light values apply when the system asks for light. */
+:root {
+  color-scheme: dark;
+  --bg: #0a0e0d;
+  --panel: #101614;
+  --raised: #161e1b;
+  --line: #25332e;
+  --line-strong: #5d7068;
+  --text: #e8f1ec;
+  --dim: #93a69d;
+  --ok: #b8f04a;
+  --ok-text: #b8f04a;
+  --warn: #ffb224;
+  --warn-text: #ffb224;
+  --crit: #ff5a6e;
+  --crit-text: #ff5a6e;
+  --info: #62c6ff;
+  --info-text: #62c6ff;
+  --off: #7d8f87;
+  --on-fill: #0a0e0d;
+  --fill-edge: rgba(10, 14, 13, 0);
+  --grid-dot: rgba(255, 255, 255, 0.055);
+  --focus: #e8f1ec;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --radius-0: 0px;
+  --control: 44px;
+  --lamp: 10px;
+  --cell: 20px;
+  --rail: 212px;
+  --font-display: "Big Shoulders", "Arial Narrow", sans-serif;
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #eef1ec;
+    --panel: #f8faf6;
+    --raised: #e1e7df;
+    --line: #c3cdc6;
+    --line-strong: #6b7a72;
+    --text: #111a16;
+    --dim: #4c5a53;
+    --ok-text: #3a6a00;
+    --warn-text: #8a5200;
+    --crit-text: #c01f3a;
+    --info-text: #0b5e9e;
+    --off: #7d8a83;
+    --fill-edge: rgba(10, 14, 13, 0.5);
+    --grid-dot: rgba(10, 14, 13, 0.11);
+    --focus: #111a16;
+  }
+}
+
+body { margin: 0; background: var(--bg); }
+
+/* Text styles */
+.display-xl { font-family: var(--font-display); font-size: 128px; line-height: 0.88; font-weight: 800; letter-spacing: 0.01em; }
+.display-lg { font-family: var(--font-display); font-size: 96px; line-height: 0.88; font-weight: 800; }
+.display-md { font-family: var(--font-display); font-size: 56px; line-height: 0.88; font-weight: 800; letter-spacing: 0.01em; }
+.display-sm { font-family: var(--font-display); font-size: 34px; line-height: 0.9; font-weight: 800; letter-spacing: 0.01em; }
+.lead { font-family: var(--font-sans); font-size: 24px; line-height: 1.3; font-weight: 500; }
+.title { font-family: var(--font-sans); font-size: 18px; line-height: 1.3; font-weight: 600; }
+.heading { font-family: var(--font-sans); font-size: 16px; line-height: 1.4; font-weight: 600; }
+.body { font-family: var(--font-sans); font-size: 14px; line-height: 1.5; font-weight: 400; }
+.label { font-family: var(--font-mono); font-size: 13px; line-height: 1.5; font-weight: 500; }
+.data { font-family: var(--font-mono); font-size: 13px; line-height: 1.5; font-weight: 400; }
+.meta { font-family: var(--font-mono); font-size: 12px; line-height: 1.5; font-weight: 400; }

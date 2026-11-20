@@ -1,6 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from "react";
 import { api, ApiError, type FieldError, type JsonObject, type LlmTestResult, type ModelInfo, type SettingsDoc } from "../api";
-import { ObjectFields, resolve, type FormContext } from "../components/SchemaForm";
+import { ObjectFields, resolve, TestLine, type FormContext } from "../components/SchemaForm";
+import { Button, Count, ErrorText, ListItem, Meta, PageHeader, Panel, SaveBar, Split, Status } from "../kit";
+
+/** The section's form beside the list of sections: its blocks under each other. */
+const FORM: CSSProperties = { flex: "5 1 560px", minWidth: 0, display: "flex", flexDirection: "column", gap: "var(--space-4)" };
+const HEADING: CSSProperties = { display: "flex", flexDirection: "column", gap: "var(--space-1)", minWidth: 0 };
+const TEXT: CSSProperties = { maxWidth: "820px" };
+const NOTE: CSSProperties = { padding: "0 var(--space-5) var(--space-4)" };
+const LEFT: CSSProperties = { marginRight: "auto" };
 
 function modelDefaultsLine(info: ModelInfo): string {
   const p = info.parameters;
@@ -41,6 +49,7 @@ export function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const formId = useId();
 
   useEffect(() => {
     api.get<SettingsDoc>("/api/settings").then(
@@ -76,8 +85,22 @@ export function SettingsPage() {
   const llm = (values?.llm ?? {}) as JsonObject;
   const modelInfo = useModelInfo(String(llm.base_url ?? ""), String(llm.model ?? ""), llm);
 
-  if (loadError) return <p className="error">Could not load settings: {loadError}</p>;
-  if (!doc || !values) return <p className="muted">Loading…</p>;
+  if (loadError) {
+    return (
+      <>
+        <PageHeader title="Settings" />
+        <ErrorText>Could not load settings: {loadError}</ErrorText>
+      </>
+    );
+  }
+  if (!doc || !values) {
+    return (
+      <>
+        <PageHeader title="Settings" />
+        <Meta>Loading…</Meta>
+      </>
+    );
+  }
 
   const defs = doc.schema.$defs ?? {};
   const sectionSchema = resolve(doc.schema.properties![section], defs);
@@ -116,59 +139,76 @@ export function SettingsPage() {
     }
   };
 
+  /** A section of the list was chosen: the page stays, the address follows (see the effect above). */
+  const pick = (e: MouseEvent<HTMLElement>) => {
+    const key = (e.target as HTMLElement).closest("a")?.getAttribute("href")?.split("/")[2];
+    if (!key) return;
+    e.preventDefault();
+    setSection(key);
+  };
+
+  /** Discard and save: in the page's head, and again in the bar that stays in view while there are changes. */
+  const buttons = (
+    <>
+      <Button disabled={!dirty || saving} onClick={() => { setValues(doc.values); setErrors({}); setStatus(null); }}>
+        discard
+      </Button>
+      <Button type="submit" form={formId} variant="primary" disabled={!dirty || saving}>
+        {saving ? "saving…" : "save"}
+      </Button>
+    </>
+  );
+
   return (
-    <div className="settings">
-      <nav className="tabs" aria-label="Settings sections">
-        {Object.entries(doc.sections).map(([key, title]) => (
-          <button
-            key={key}
-            type="button"
-            className={key === section ? "tab active" : "tab"}
-            aria-current={key === section ? "page" : undefined}
-            onClick={() => setSection(key)}
-          >
-            {title}
-            {errorCount(key) > 0 && <span className="badge-error">{errorCount(key)}</span>}
-          </button>
-        ))}
-      </nav>
+    <>
+      <PageHeader title="Settings">{buttons}</PageHeader>
+      <Split>
+        <Panel flex="1 1 210px">
+          <nav className="fd-list" aria-label="Settings sections" onClick={pick}>
+            {Object.entries(doc.sections).map(([key, title], i) => (
+              <ListItem key={key} mono index={String.fromCharCode(97 + i)} title={title.toLowerCase()} href={`#/settings/${key}`} selected={key === section}>
+                {errorCount(key) > 0 && <Count tone="crit">{errorCount(key)}</Count>}
+              </ListItem>
+            ))}
+          </nav>
+        </Panel>
 
-      <form className="settings-body" onSubmit={(e) => { e.preventDefault(); void save(); }}>
-        <h2>{doc.sections[section]}</h2>
-        {sectionSchema.description && <p className="help">{sectionSchema.description}</p>}
-        <ObjectFields
-          schema={sectionSchema}
-          value={values[section]}
-          onChange={(v) => {
-            setValues({ ...values, [section]: v });
-            if (status) setStatus(null);
-          }}
-          path={section}
-          ctx={ctx}
-        />
-        {(section === "llm" || section === "worker") && (
-          <LlmTest key={section} profile={section === "llm" ? "main" : "worker"} llm={values[section] as JsonObject} onModels={setModels} />
-        )}
+        <form id={formId} style={FORM} onSubmit={(e) => { e.preventDefault(); void save(); }}>
+          <div style={HEADING}>
+            <h2 className="heading">{doc.sections[section]}</h2>
+            {sectionSchema.description && <p className="fd-dim" style={TEXT}>{sectionSchema.description}</p>}
+          </div>
+          <ObjectFields
+            schema={sectionSchema}
+            value={values[section]}
+            onChange={(v) => {
+              setValues({ ...values, [section]: v });
+              if (status) setStatus(null);
+            }}
+            path={section}
+            ctx={ctx}
+          />
+          {(section === "llm" || section === "worker") && (
+            <LlmTest key={section} profile={section === "llm" ? "main" : "worker"} llm={values[section] as JsonObject} onModels={setModels} />
+          )}
 
-        <div className={`savebar${dirty || status ? " visible" : ""}`}>
-          {status && <span className={status.kind === "ok" ? "ok" : "error"}>{status.text}</span>}
-          {dirty && !status && <span className="muted">Unsaved changes</span>}
-          <span className="spacer" />
-          <button type="button" className="btn btn-quiet" disabled={!dirty || saving} onClick={() => { setValues(doc.values); setErrors({}); setStatus(null); }}>
-            Discard
-          </button>
-          <button type="submit" className="btn btn-primary" disabled={!dirty || saving}>
-            {saving ? "Saving…" : "Save"}
-          </button>
-        </div>
-      </form>
-    </div>
+          {(dirty || status) && (
+            <SaveBar>
+              <span style={LEFT}>
+                {status ? <Status tone={status.kind === "ok" ? "ok" : "crit"}>{status.text}</Status> : <Status tone="warn">unsaved changes</Status>}
+              </span>
+              {buttons}
+            </SaveBar>
+          )}
+        </form>
+      </Split>
+    </>
   );
 }
 
-/** Same look and behaviour as the connection tests in SchemaForm: a "Test" button with a
-    spinner in the group head, a ✓/✕ line under it, and a result that goes away as soon as
-    the values it was run with are edited. */
+/** Same look and behaviour as the connection tests in SchemaForm: a "test" button in the
+    panel's head, an ok / failed line under it, and a result that goes away as soon as the
+    values it was run with are edited. */
 function LlmTest({ profile, llm, onModels }: { profile: string; llm: JsonObject; onModels: (m: string[]) => void }) {
   type Line = { ok: boolean; text: string };
   const [result, setResult] = useState<(Line & { structured?: Line | null }) | null>(null);
@@ -208,33 +248,22 @@ function LlmTest({ profile, llm, onModels }: { profile: string; llm: JsonObject;
     setRunning(false);
   };
   return (
-    <section className="group">
-      <header className="group-head">
-        <div>
-          <h3>Connection test</h3>
-          <p className="help">Checks the endpoint and model, then runs one tool call and one structured answer with the values above (saved or not).</p>
-        </div>
-        <div className="test-buttons">
-          <button type="button" className="btn btn-test" disabled={running} onClick={() => void run()}>
-            {running && <span className="spinner" aria-hidden="true" />}
-            {running ? "Testing…" : "Test"}
-          </button>
-        </div>
-      </header>
-      <div className="test-result" role="status" aria-live="polite">
-        {result && (
-          <p className={result.ok ? "ok" : "error"}>
-            <strong>{result.ok ? "✓ " : "✕ "}</strong>
-            {result.text}
-          </p>
-        )}
-        {result?.structured && (
-          <p className={result.structured.ok ? "ok" : "error"}>
-            <strong>{result.structured.ok ? "✓ " : "✕ "}</strong>
-            {result.structured.text}
-          </p>
-        )}
+    <Panel
+      title="Connection test"
+      aside={
+        <Button disabled={running} onClick={() => void run()}>
+          {running ? "testing…" : "test"}
+        </Button>
+      }
+    >
+      <div style={NOTE}>
+        <p className="fd-dim">Checks the endpoint and model, then runs one tool call and one structured answer with the values above (saved or not).</p>
       </div>
-    </section>
+      <div role="status" aria-live="polite">
+        {running && <TestLine running />}
+        {result && <TestLine ok={result.ok}>{result.text}</TestLine>}
+        {result?.structured && <TestLine ok={result.structured.ok}>{result.structured.text}</TestLine>}
+      </div>
+    </Panel>
   );
 }

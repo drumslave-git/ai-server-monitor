@@ -1,7 +1,7 @@
-import { Activity, Blocks, CalendarClock, MessageSquare, ScrollText, Settings, ShieldCheck, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, type StatusResponse } from "./api";
-import { AutomationBar, AutomationProvider } from "./automation";
+import { AutomationNotice, AutomationProvider, AutomationSwitch } from "./automation";
+import { Main, Rail, Shell, type NavItem } from "./kit";
 import { useConnected, useStream } from "./live";
 import { ApprovalsPage } from "./pages/Approvals";
 import { ChatPage } from "./pages/Chat";
@@ -11,40 +11,36 @@ import { LogsPage } from "./pages/Logs";
 import { McpToolsPage } from "./pages/McpTools";
 import { SettingsPage } from "./pages/Settings";
 
-const PAGES: { key: string; title: string; icon: LucideIcon }[] = [
-  { key: "dashboard", title: "Dashboard", icon: Activity },
-  { key: "jobs", title: "Jobs", icon: CalendarClock },
-  { key: "approvals", title: "Approvals", icon: ShieldCheck },
-  { key: "chat", title: "Chat", icon: MessageSquare },
-  { key: "mcp", title: "MCP tools", icon: Blocks },
-  { key: "logs", title: "Logs", icon: ScrollText },
-  { key: "settings", title: "Settings", icon: Settings },
+const PAGES: { key: string; title: string; label: string }[] = [
+  { key: "dashboard", title: "Dashboard", label: "dashboard" },
+  { key: "jobs", title: "Jobs", label: "jobs" },
+  { key: "approvals", title: "Approvals", label: "approvals" },
+  { key: "chat", title: "Chat", label: "chat" },
+  { key: "mcp", title: "MCP tools", label: "mcp tools" },
+  { key: "logs", title: "Logs", label: "logs" },
+  { key: "settings", title: "Settings", label: "settings" },
 ];
 
 function parseHash(): string[] {
   return location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
 }
 
-function Version() {
-  const [info, setInfo] = useState<{ version: string; commit: string | null } | null>(null);
+/** "v0.8.5 · c2448e1", once the server has said so. */
+function useVersion(): string | null {
+  const [version, setVersion] = useState<string | null>(null);
   useEffect(() => {
     api.get<{ version: string; commit?: string | null }>("/api/info").then(
-      (i) => setInfo({ version: i.version, commit: i.commit ?? null }),
+      (i) => setVersion(`v${i.version}${i.commit ? ` · ${i.commit}` : ""}`),
       () => undefined,
     );
   }, []);
-  if (!info) return null;
-  return (
-    <span className="app-version" title={`Server version${info.commit ? ` (commit ${info.commit})` : ""}`}>
-      v{info.version}
-      {info.commit ? ` · ${info.commit}` : ""}
-    </span>
-  );
+  return version;
 }
 
 export function App() {
   const [route, setRoute] = useState(parseHash);
   const connected = useConnected();
+  const version = useVersion();
   const [pending, setPending] = useState(0);
 
   useEffect(() => {
@@ -66,7 +62,7 @@ export function App() {
   }, []);
   useStream(["approval", "action"], () => void loadPending());
 
-  const page = route[0] || "dashboard";
+  const page = PAGES.some((p) => p.key === route[0]) ? route[0] : "dashboard";
   const params = route.slice(1);
   // Tabs, history and screen readers tell pages apart by the title.
   const title = PAGES.find((p) => p.key === page)?.title ?? "Dashboard";
@@ -74,47 +70,38 @@ export function App() {
     document.title = `${title} · AI Server Monitor`;
   }, [title]);
 
+  const items: NavItem[] = PAGES.map((p) => ({
+    key: p.key,
+    label: p.label,
+    href: `#/${p.key}`,
+    count: p.key === "approvals" ? pending : undefined,
+  }));
+
   return (
     <AutomationProvider>
-    <div className="app">
-      <aside className="sidebar">
-        <div className="brand-block">
-          <div className="brand">
-            <span className={`live-dot ${connected ? "on" : ""}`} title={connected ? "Live updates on" : "Reconnecting"} />
-            <span>AI Server Monitor</span>
-          </div>
-          <Version />
-        </div>
-        <nav aria-label="Main">
-          {PAGES.map(({ key, title, icon: Icon }) => (
-            <a key={key} href={`#/${key}`} className={page === key ? "active" : undefined} aria-current={page === key ? "page" : undefined}>
-              <Icon size={18} strokeWidth={1.5} aria-hidden />
-              <span>{title}</span>
-              {key === "approvals" && pending > 0 && <span className="count">{pending}</span>}
-            </a>
-          ))}
-        </nav>
-        {!connected && <p className="sidebar-foot">Reconnecting…</p>}
-      </aside>
-      <main className="content">
-        <AutomationBar />
-        {page === "jobs" ? (
-          <JobsPage params={params} />
-        ) : page === "approvals" ? (
-          <ApprovalsPage params={params} />
-        ) : page === "chat" ? (
-          <ChatPage />
-        ) : page === "mcp" ? (
-          <McpToolsPage />
-        ) : page === "logs" ? (
-          <LogsPage params={params} />
-        ) : page === "settings" ? (
-          <SettingsPage />
-        ) : (
-          <DashboardPage />
-        )}
-      </main>
-    </div>
+      <Shell>
+        <Rail items={items} active={page} live={connected} version={version}>
+          <AutomationSwitch />
+        </Rail>
+        <Main>
+          <AutomationNotice />
+          {page === "jobs" ? (
+            <JobsPage params={params} />
+          ) : page === "approvals" ? (
+            <ApprovalsPage params={params} />
+          ) : page === "chat" ? (
+            <ChatPage />
+          ) : page === "mcp" ? (
+            <McpToolsPage />
+          ) : page === "logs" ? (
+            <LogsPage params={params} />
+          ) : page === "settings" ? (
+            <SettingsPage />
+          ) : (
+            <DashboardPage />
+          )}
+        </Main>
+      </Shell>
     </AutomationProvider>
   );
 }

@@ -1,9 +1,10 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { type ConnectionTestResult, type Json, type JsonObject } from "../api";
+import { Actions, Button, Meta, Panel, Select, Status, Switch, Table } from "../kit";
 
 /* Tool picker of one MCP server: shown under the server's Test result. The list comes from the
    test (what the server offers); the choice is stored in the server's `tool_filter`, the
-   per-tool exceptions in `tool_overrides`. Tools are grouped by what they do (Read / Write,
+   per-tool exceptions in `tool_overrides`. Tools are grouped by what they do (read / write,
    after the owner's override); long descriptions fold to a few lines. */
 
 type ToolRow = {
@@ -15,6 +16,13 @@ type ToolRow = {
 
 const POLICIES = ["inherit", "suggest", "approve", "auto"];
 const KINDS = ["auto", "read", "write"];
+
+/** A folded description shows three lines; an open one keeps the line breaks it was written with. */
+const FOLDED: CSSProperties = { display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 3, overflow: "hidden" };
+const UNFOLDED: CSSProperties = { whiteSpace: "pre-line" };
+const HEAD: CSSProperties = { display: "flex", flexDirection: "column", gap: "var(--space-2)", padding: "var(--space-4) var(--space-5)" };
+const BETWEEN: CSSProperties = { display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: "var(--space-2) var(--space-3)" };
+const BESIDE: CSSProperties = { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "var(--space-2) var(--space-3)" };
 
 export function mcpTools(result: ConnectionTestResult | null): ToolRow[] | null {
   const tools = result?.ok ? (result.details?.tools as ToolRow[] | undefined) : undefined;
@@ -32,11 +40,11 @@ export function Description({ text }: { text: string }) {
   if (!text) return null;
   return (
     <>
-      <p ref={ref} className={`mcp-desc${open ? "" : " clamp"}`}>{text}</p>
+      <p ref={ref} className="fd-dim fd-wrap" style={open ? UNFOLDED : FOLDED}>{text}</p>
       {(long || open) && (
-        <button type="button" className="link-btn small" aria-expanded={open} onClick={() => setOpen(!open)}>
-          {open ? "Show less" : "Show more"}
-        </button>
+        <Button variant="link" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? "show less" : "show more"}
+        </Button>
       )}
     </>
   );
@@ -67,66 +75,79 @@ export function McpToolPicker({ tools, value, onChange }: {
   };
 
   const bulk = (names: string[], label: string) => (
-    <span className="mcp-bulk">
-      <button type="button" className="btn btn-sm btn-quiet" disabled={names.every((n) => chosen.includes(n))}
-        onClick={() => setChosen(names, true)} aria-label={`Select all ${label}`}>Select all</button>
-      <button type="button" className="btn btn-sm btn-quiet" disabled={!names.some((n) => chosen.includes(n))}
-        onClick={() => setChosen(names, false)} aria-label={`Deselect all ${label}`}>Deselect all</button>
-    </span>
+    <Actions>
+      <Button disabled={names.every((n) => chosen.includes(n))} onClick={() => setChosen(names, true)} aria-label={`Select all ${label}`}>
+        select all
+      </Button>
+      <Button disabled={!names.some((n) => chosen.includes(n))} onClick={() => setChosen(names, false)} aria-label={`Deselect all ${label}`}>
+        deselect all
+      </Button>
+    </Actions>
   );
 
   const groups = (["read", "write"] as const).map((kind) => ({ kind, rows: tools.filter((t) => kindOf(t) === kind) }));
+  const on = chosen.filter((n) => tools.some((t) => t.name === n)).length;
   return (
-    <div className="mcp-tools">
-      <div className="mcp-head">
-        <p className="help">
-          {chosen.filter((n) => tools.some((t) => t.name === n)).length} of {tools.length} tools on. A tool is read
-          only if the server says so (or you set it); anything else is a write and goes through the policy.
-        </p>
-        {bulk(tools.map((t) => t.name), "tools of this server")}
+    <Panel inset>
+      <div style={HEAD}>
+        <div style={BETWEEN}>
+          <Status tone={on ? "ok" : "off"} hollow={!on}>
+            {on} of {tools.length} tools on
+          </Status>
+          {bulk(tools.map((t) => t.name), "tools of this server")}
+        </div>
+        <p className="fd-sub">A tool is read only if the server says so (or you set it); anything else is a write and goes through the policy.</p>
       </div>
-      {groups.filter((g) => g.rows.length).map(({ kind, rows }) => (
-        <section key={kind} className="mcp-group" aria-label={kind === "read" ? "Read tools" : "Write tools"}>
-          <header className="mcp-group-head">
-            <h4>
-              {kind === "read" ? "Read" : "Write"}
-              <span className="muted"> · {rows.filter((t) => chosen.includes(t.name)).length} of {rows.length} on</span>
-            </h4>
-            {bulk(rows.map((t) => t.name), `${kind} tools`)}
-          </header>
-          <div className="mcp-row mcp-cols" aria-hidden>
-            <span />
-            <span>Tool</span>
-            <span className="mcp-controls">
-              <span>Treat as</span>
-              {kind === "write" && <span>Policy</span>}
-            </span>
-          </div>
-          {rows.map((t) => {
-            const on = chosen.includes(t.name);
-            const o = overrideOf(t.name);
-            return (
-              <div key={t.name} className={`mcp-row${on ? "" : " mcp-off"}`}>
-                <input type="checkbox" aria-label={`Use ${t.name}`} checked={on} onChange={(e) => setChosen([t.name], e.target.checked)} />
-                <div className="mcp-main">
-                  <span className="mcp-name">{t.name}</span>
-                  <Description text={t.description} />
+      <Table dense>
+        <thead>
+          <tr>
+            <th>tool</th>
+            <th>treat as</th>
+            <th>policy</th>
+          </tr>
+        </thead>
+        {groups.filter((g) => g.rows.length).map(({ kind, rows }) => (
+          <tbody key={kind} aria-label={kind === "read" ? "Read tools" : "Write tools"}>
+            <tr className="fd-group">
+              <td colSpan={3}>
+                <div style={BETWEEN}>
+                  <span style={BESIDE}>
+                    <Status tone={kind === "read" ? "info" : "warn"}>{kind}</Status>
+                    <Meta>
+                      {rows.filter((t) => chosen.includes(t.name)).length} of {rows.length} on
+                    </Meta>
+                  </span>
+                  {bulk(rows.map((t) => t.name), `${kind} tools`)}
                 </div>
-                <div className="mcp-controls">
-                  <select aria-label={`Treat ${t.name} as`} value={String(o?.kind ?? "auto")} onChange={(e) => setOverride(t.name, "kind", e.target.value)}>
+              </td>
+            </tr>
+            {rows.map((t) => {
+              const used = chosen.includes(t.name);
+              const o = overrideOf(t.name);
+              return (
+                <tr key={t.name} className={used ? undefined : "fd-off"}>
+                  <td style={{ minWidth: "240px" }}>
+                    <Switch checked={used} onChange={(v) => setChosen([t.name], v)} label={`Use ${t.name}`} text={t.name} />
+                    <Description text={t.description} />
+                  </td>
+                  <td>
+                    <Select style={{ width: "130px" }} aria-label={`Treat ${t.name} as`} value={String(o?.kind ?? "auto")} onChange={(e) => setOverride(t.name, "kind", e.target.value)}>
                       {KINDS.map((k) => <option key={k} value={k}>{k === "auto" ? `auto (${t.read_only === true ? "read" : "write"})` : k}</option>)}
-                  </select>
-                  {kind === "write" && (
-                    <select aria-label={`Policy of ${t.name}`} disabled={!on} value={String(o?.policy ?? "inherit")} onChange={(e) => setOverride(t.name, "policy", e.target.value)}>
-                      {POLICIES.map((p) => <option key={p} value={p}>{p === "inherit" ? "policy: server's" : p}</option>)}
-                    </select>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </section>
-      ))}
-    </div>
+                    </Select>
+                  </td>
+                  <td>
+                    {kind === "write" && (
+                      <Select style={{ width: "160px" }} aria-label={`Policy of ${t.name}`} disabled={!used} value={String(o?.policy ?? "inherit")} onChange={(e) => setOverride(t.name, "policy", e.target.value)}>
+                        {POLICIES.map((p) => <option key={p} value={p}>{p === "inherit" ? "policy: server's" : p}</option>)}
+                      </Select>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        ))}
+      </Table>
+    </Panel>
   );
 }

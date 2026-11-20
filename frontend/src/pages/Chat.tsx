@@ -5,8 +5,9 @@ import { HostCommand } from "../components/HostCommand";
 import { RunnableMarkdown } from "../components/RunnableMarkdown";
 import { ago } from "../fmt";
 import { takeExplain, type ExplainRequest } from "../components/Explain";
+import { Button, Code, Command, Empty, ErrorText, Field, Fold, LinkButton, ListItem, Message, Meta, PageHeader, Panel, Split, Status, Textarea, type Tone } from "../kit";
 import { useStream } from "../live";
-import { Dot, Empty, PageHead, useNow, usePoll, type Level } from "../ui";
+import { useNow, usePoll } from "../ui";
 
 type SessionList = Schemas["ChatSessionList"];
 type SessionDoc = Schemas["ChatSession"];
@@ -76,7 +77,7 @@ type McpDomainsLog = {
   classify_error?: string;
 };
 
-/** "Domains: sonarr (picked), torrents (loaded) · server arr unreachable": one quiet line. */
+/** "domains: sonarr (picked), torrents (loaded) · server arr unreachable": one quiet line. */
 function domainsText(d: McpDomainsLog): string {
   const picked = d.picked ?? [];
   const earlier = (d.offered ?? []).filter((n) => !picked.includes(n));
@@ -85,7 +86,7 @@ function domainsText(d: McpDomainsLog): string {
     ...earlier.map((n) => `${n} (loaded before)`),
     ...(d.loaded ?? []).map((n) => `${n} (loaded)`),
   ];
-  const parts = [`Domains: ${names.length ? names.join(", ") : "none"}`];
+  const parts = [`domains: ${names.length ? names.join(", ") : "none"}`];
   if (d.classify_error) parts.push("classification failed");
   for (const server of Object.keys(d.unreachable ?? {})) parts.push(`server ${server} unreachable`);
   if (d.unsorted?.length) parts.push(`${d.unsorted.length} tool${d.unsorted.length === 1 ? "" : "s"} not sorted`);
@@ -163,6 +164,20 @@ function toTurns(doc: SessionDoc): Turn[] {
 
 const chatRoute = () => location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).slice(1);
 
+/** Below this width the page shows the conversations or the thread, not both. */
+const ONE_PANE = "(max-width: 820px)";
+
+function useOnePane(): boolean {
+  const [onePane, setOnePane] = useState(() => window.matchMedia(ONE_PANE).matches);
+  useEffect(() => {
+    const query = window.matchMedia(ONE_PANE);
+    const onChange = () => setOnePane(query.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  return onePane;
+}
+
 export function ChatPage() {
   // The page follows the hash itself: starting a conversation rewrites it (replaceState)
   // without a hashchange event, so App's route would be stale.
@@ -173,6 +188,7 @@ export function ChatPage() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   const now = useNow(30_000);
+  const onePane = useOnePane();
   const sessions = usePoll(() => api.get<SessionList>("/api/chat/sessions?limit=50"), 60_000);
   const routeId = params[0] && params[0] !== "new" ? params[0] : null;
   const showThread = params[0] !== undefined;
@@ -373,105 +389,121 @@ export function ChatPage() {
 
   const items = sessions.data?.items ?? [];
   return (
-    <div className={`chat ${showThread ? "has-thread" : ""}`}>
-      <PageHead title="Chat">
-        <a className="btn" href="#/chat/new">
-          New conversation
-        </a>
-      </PageHead>
-      <div className="split">
-        <nav className="history" aria-label="Conversations">
-          {sessions.data && items.length === 0 && <Empty>No conversations yet.</Empty>}
-          <ul>
-            {items.map((s) => (
-              <li key={s.id} className="session-item">
-                <a href={`#/chat/${s.id}`} className={`history-row${s.id === routeId ? " selected" : ""}`}>
-                  <span className="history-top">
-                    <span className="history-time">{s.title || "Untitled"}</span>
-                  </span>
-                  <span className="history-summary">
-                    {s.channel === "telegram" ? "Telegram · " : ""}
-                    {ago(s.updated, now)} · {s.messages} messages
-                  </span>
-                </a>
-                <button className="btn btn-quiet session-delete" onClick={() => remove(s.id)} aria-label={`Delete conversation: ${s.title || "Untitled"}`}>
-                  Delete
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
-        <section className="thread">
-          <a className="back" href="#/chat">
-            All conversations
-          </a>
-          {loadError && <p className="error">{loadError}</p>}
-          {turns.length === 0 && !busy && (
-            <Empty>Ask about the server: what is using the disk, why a container restarted, what changed since yesterday.</Empty>
-          )}
-          <div className="messages">
-            {turns.map((t, i) =>
-              t.role === "user" ? (
-                <UserBubble key={i} text={t.text} explain={t.explain} />
-              ) : t.role === "run" ? (
-                <RunCard key={i} run={t.run} />
-              ) : (
-                <AssistantBubble key={i} turn={t} onRun={busy ? undefined : runCommand} />
-              ),
+    <>
+      <PageHeader title="Chat" back={onePane && showThread ? { label: "all conversations", href: "#/chat" } : undefined}>
+        <LinkButton variant="primary" href="#/chat/new">
+          new conversation
+        </LinkButton>
+      </PageHeader>
+      <Split>
+        {(!onePane || !showThread) && (
+          <Panel flex="1 1 240px">
+            {sessions.data && items.length === 0 && <Empty>No conversations yet.</Empty>}
+            <nav className="fd-list" aria-label="Conversations">
+              {items.map((s) => (
+                <ListItem
+                  key={s.id}
+                  href={`#/chat/${s.id}`}
+                  selected={s.id === routeId}
+                  title={s.title || "Untitled"}
+                  meta={`${s.channel === "telegram" ? "Telegram · " : ""}${ago(s.updated, now)} · ${s.messages} messages`}
+                >
+                  <Button
+                    variant="link"
+                    aria-label={`Delete conversation: ${s.title || "Untitled"}`}
+                    onClick={(e) => {
+                      // (the button stands inside the row's link)
+                      e.preventDefault();
+                      e.stopPropagation();
+                      void remove(s.id);
+                    }}
+                  >
+                    delete
+                  </Button>
+                </ListItem>
+              ))}
+            </nav>
+          </Panel>
+        )}
+        {(!onePane || showThread) && (
+          <Panel flex="3 1 300px">
+            {(loadError || turns.length > 0) && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "20px 24px" }}>
+                {loadError && <ErrorText>{loadError}</ErrorText>}
+                {turns.map((t, i) =>
+                  t.role === "user" ? (
+                    <UserMessage key={i} text={t.text} explain={t.explain} />
+                  ) : t.role === "run" ? (
+                    <RunCard key={i} run={t.run} />
+                  ) : (
+                    <AssistantMessage key={i} turn={t} onRun={busy ? undefined : runCommand} />
+                  ),
+                )}
+              </div>
             )}
-          </div>
-          <div ref={bottom} />
-          <form
-            className="composer"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void send();
-            }}
-          >
-            <textarea
-              rows={2}
-              value={draft}
-              placeholder="Ask about the server"
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  // Enter that confirms an IME candidate (Japanese, Chinese, Korean) is not a send.
-                  // keyCode 229: Safari reports the composition as ended before this keydown.
-                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                  e.currentTarget.form?.requestSubmit();
-                }
+            {turns.length === 0 && !busy && (
+              <Empty>Ask about the server: what is using the disk, why a container restarted, what changed since yesterday.</Empty>
+            )}
+            <form
+              className="fd-row"
+              style={{ flexWrap: "nowrap", alignItems: "flex-end", gap: 12 }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                void send();
               }}
-              aria-label="Message"
-            />
-            {busy ? (
-              <button type="button" className="btn" onClick={() => abort.current?.abort()}>
-                Stop
-              </button>
-            ) : (
-              <button type="submit" className="btn btn-primary" disabled={!draft.trim()}>
-                Send
-              </button>
-            )}
-          </form>
-        </section>
-      </div>
-    </div>
+            >
+              <Field label="ask about the server" flex="1 1 0">
+                <Textarea
+                  rows={2}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      // Enter that confirms an IME candidate (Japanese, Chinese, Korean) is not a send.
+                      // keyCode 229: Safari reports the composition as ended before this keydown.
+                      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                      e.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  aria-label="Message"
+                />
+              </Field>
+              {busy ? (
+                <Button onClick={() => abort.current?.abort()}>stop</Button>
+              ) : (
+                <Button type="submit" variant="primary" disabled={!draft.trim()}>
+                  send
+                </Button>
+              )}
+            </form>
+            <div ref={bottom} />
+          </Panel>
+        )}
+      </Split>
+    </>
   );
 }
 
-function UserBubble({ text, explain }: { text: string; explain?: ExplainNote }) {
-  if (!explain) return <div className="bubble bubble-user">{text}</div>;
+function UserMessage({ text, explain }: { text: string; explain?: ExplainNote }) {
+  // (a typed message keeps its line breaks)
+  if (!explain)
+    return (
+      <Message who="you">
+        <p className="fd-code-wrap">{text}</p>
+      </Message>
+    );
   return (
-    <div className="bubble bubble-user bubble-explain">
-      {explain.label}
+    <Message who="you">
+      <p>{explain.label}</p>
       {explain.source && (
-        <details className="explain-source">
-          <summary>Source data</summary>
-          <pre>{explain.source}</pre>
-        </details>
+        <Fold inline title="source data">
+          <div style={{ maxHeight: 320, overflow: "auto" }}>
+            <Code wrap>{explain.source}</Code>
+          </div>
+        </Fold>
       )}
-    </div>
+    </Message>
   );
 }
 
@@ -485,31 +517,39 @@ function displayName(name: string): string {
 function RunCard({ run }: { run: CommandRun }) {
   const failed = run.stopped === "error";
   const where = run.mode === "write" ? "as root (it can change the server)" : "in the read-only shell";
+  // The owner's side of the thread, as wide as a message.
+  const card = { alignSelf: "flex-end", width: "min(760px, 100%)", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 } as const;
   if (run.stopped === "running")
     return (
-      <div className="bubble bubble-run">
-        <p className="muted small">Running this command…</p>
-        <pre className="host-command-line">{run.command}</pre>
+      <div style={card}>
+        <Status tone="info" blink>
+          running this command…
+        </Status>
+        <Panel inset pad width="100%">
+          <Command wrap>{run.command}</Command>
+        </Panel>
       </div>
     );
   return (
-    <div className="bubble bubble-run">
-      <p className="muted small">You ran this command {where}</p>
-      <HostCommand
-        item={{
-          args: { command: run.command },
-          reason: null,
-          status: failed ? "failed" : "executed",
-          result: failed
-            ? { error: `Could not run: ${run.output}` }
-            : { exit_code: run.exit_code, duration_s: run.duration_s, stopped: run.stopped, truncated: run.truncated, output: run.output },
-        }}
-      />
+    <div style={card}>
+      <Status tone="info">you ran this command {where}</Status>
+      <Panel inset pad width="100%">
+        <HostCommand
+          item={{
+            args: { command: run.command },
+            reason: null,
+            status: failed ? "failed" : "executed",
+            result: failed
+              ? { error: `Could not run: ${run.output}` }
+              : { exit_code: run.exit_code, duration_s: run.duration_s, stopped: run.stopped, truncated: run.truncated, output: run.output },
+          }}
+        />
+      </Panel>
     </div>
   );
 }
 
-function AssistantBubble({
+function AssistantMessage({
   turn,
   onRun,
 }: {
@@ -522,67 +562,71 @@ function AssistantBubble({
     new Set([...(turn.waiting ?? []), ...turn.tools.filter((t) => t.approval?.status === "pending").map((t) => t.approval!.id)]),
   );
   return (
-    <div className="bubble bubble-assistant">
+    <Message who="assistant">
       {turn.live &&
         turn.tools
           .filter((t) => t.ok === undefined)
           .map((t) => (
-            <p key={t.id + t.name} className="muted small tool-running">
-              <Dot level="warn" /> Running <span className="mono">{displayName(t.name)}</span>
-              {t.elapsed ? ` for ${running(t.elapsed)}` : "…"} (big scans and slow services take a while)
-            </p>
+            <div key={t.id + t.name} style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "2px 8px" }}>
+              <Status tone="info" blink>
+                running {displayName(t.name)}
+                {t.elapsed ? ` for ${running(t.elapsed)}` : "…"}
+              </Status>
+              <Meta>(big scans and slow services take a while)</Meta>
+            </div>
           ))}
       {turn.tools.length > 0 && (
-        <details className="tools">
-          <summary>
-            Used {turn.tools.length === 1 ? "a tool" : `${turn.tools.length} tools`}: {names.join(", ")}
-          </summary>
-          <ul>
-            {turn.tools.map((t) => (
-              <li key={t.id + t.name}>
-                <Dot level={t.ok === undefined ? "off" : t.ok ? "ok" : "crit"} />
-                <span className="mono">{displayName(t.name)}</span>
-                {typeof t.args === "object" && t.args !== null && Object.keys(t.args).length > 0 && (
-                  <span className="muted small"> {JSON.stringify(t.args)}</span>
-                )}
-                {t.preview && <pre className="muted">{t.preview}</pre>}
-              </li>
-            ))}
-          </ul>
-        </details>
+        <Fold inline title={`used ${turn.tools.length === 1 ? "a tool" : `${turn.tools.length} tools`}: ${names.join(", ")}`}>
+          {turn.tools.map((t) => (
+            <div key={t.id + t.name} className="fd-wrap" style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+              <Status tone={t.ok === undefined ? "off" : t.ok ? "ok" : "crit"}>{displayName(t.name)}</Status>
+              {typeof t.args === "object" && t.args !== null && Object.keys(t.args).length > 0 && <Meta>{JSON.stringify(t.args)}</Meta>}
+              {t.preview && (
+                <div style={{ maxHeight: 120, overflow: "auto" }}>
+                  <Code wrap>{t.preview}</Code>
+                </div>
+              )}
+            </div>
+          ))}
+        </Fold>
       )}
       {approvals.length > 0 && <ApprovalCards key={approvals.join(",")} items={approvals} />}
       {turn.waiting && turn.text ? (
-        <p className="waiting-note muted small">
-          <Dot level={outcomeLevel(turn.outcome)} /> <span className="waiting-text">{turn.text.trim()}</span>
-        </p>
+        <Status tone={outcomeTone(turn.outcome)} plain>
+          {turn.text.trim()}
+        </Status>
       ) : turn.text ? (
         <RunnableMarkdown text={turn.text} onRun={turn.live ? undefined : onRun} />
       ) : turn.live && !turn.error ? (
-        <p className="muted">Thinking…</p>
+        <Status tone="info" blink>
+          thinking…
+        </Status>
       ) : null}
-      {turn.live && turn.text && <span className="cursor" aria-hidden />}
-      {!turn.live && turn.trace && turn.session && (
-        <p className="turn-foot">
-          <a className="trace-link" href={`#/logs/llm/for/chat/${turn.session}/${turn.trace}`}>
-            Trace
-          </a>
-          {turn.domains && <span className="domain-line">{domainsText(turn.domains)}</span>}
-          {turn.unmarked && (
-            <span className="domain-line" title={turn.unmarked.error ? `Labelling failed: ${turn.unmarked.error}` : undefined}>
-              {unmarkedText(turn.unmarked)}
-            </span>
-          )}
-        </p>
+      {turn.live && turn.text && (
+        <Status tone="info" blink>
+          answering…
+        </Status>
       )}
-      {turn.stopped && <p className="muted small">Stopped.</p>}
-      {turn.error && <p className="error">{turn.error}</p>}
-    </div>
+      {!turn.live && turn.trace && turn.session && (
+        <Meta>
+          <a href={`#/logs/llm/for/chat/${turn.session}/${turn.trace}`}>trace</a>
+          {turn.domains && <> · {domainsText(turn.domains)}</>}
+          {turn.unmarked && (
+            <>
+              {" · "}
+              <span title={turn.unmarked.error ? `Labelling failed: ${turn.unmarked.error}` : undefined}>{unmarkedText(turn.unmarked)}</span>
+            </>
+          )}
+        </Meta>
+      )}
+      {turn.stopped && <Status tone="off">stopped</Status>}
+      {turn.error && <ErrorText>{turn.error}</ErrorText>}
+    </Message>
   );
 }
 
-/** Dot of a waiting note: amber while waiting, then by what happened to its actions. */
-function outcomeLevel(outcome: Record<string, string> | undefined): Level {
+/** Lamp of a waiting note: amber while waiting, then by what happened to its actions. */
+function outcomeTone(outcome: Record<string, string> | undefined): Tone {
   if (!outcome) return "warn";
   const all = Object.values(outcome);
   if (all.some((s) => s === "failed")) return "crit";

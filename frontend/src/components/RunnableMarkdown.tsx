@@ -2,11 +2,8 @@ import DOMPurify from "dompurify";
 import { Marked, type Tokens } from "marked";
 import { useMemo, type MouseEvent } from "react";
 
-/** Code blocks with these tags get Run buttons. */
+/** Code blocks with these tags get run buttons. */
 const SHELLS = new Set(["bash", "sh", "shell", "zsh", "console"]);
-const PLAY =
-  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>';
 
 const escape = (text: string) =>
   text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -55,9 +52,9 @@ export function commandMode(group: string): "read-only" | "write" | "unmarked" {
 }
 
 const LABELS = {
-  "read-only": "Run",
-  write: "Run (changes the server)",
-  unmarked: "Run (may change the server)",
+  "read-only": "run",
+  write: "run (changes the server)",
+  unmarked: "run (may change the server)",
 };
 const TITLES = {
   "read-only": "Run this read-only command on the server; the result goes to the chat and the model answers it",
@@ -65,7 +62,21 @@ const TITLES = {
   unmarked: "Not marked read-only by the answer: it runs as root and may change the server",
 };
 
-function render(text: string): { html: string; commands: string[] } {
+/** One command in the markup of the kit's `Command`: its leading comment lines dim, the
+ *  command, and (when it can be run) the button attached. */
+function commandHtml(group: string, button: string): string {
+  const lines = group.split("\n");
+  let lead = 0;
+  while (lead < lines.length && /^\s*#/.test(lines[lead])) lead += 1;
+  const comment = lines.slice(0, lead).join("\n");
+  const rest = lines.slice(lead).join("\n");
+  const dim = comment ? `<span class="fd-dim">${escape(comment)}${rest ? "\n" : ""}</span>` : "";
+  return `<div class="fd-command"><pre class="fd-code">${dim}${escape(rest)}</pre>${button}</div>`;
+}
+
+/** `runnableNow`: the commands get their run buttons (not while the answer is still written
+ *  or another command runs). */
+function render(text: string, runnableNow: boolean): { html: string; commands: string[] } {
   const commands: string[] = [];
   const marked = new Marked({
     gfm: true,
@@ -76,13 +87,13 @@ function render(text: string): { html: string; commands: string[] } {
         const parts = commandGroups(code).map((group) => {
           const index = commands.push(runnable(group, tag)) - 1;
           const mode = commandMode(group);
-          return (
-            `<div class="run-cmd run-${mode}"><pre><code>${escape(group)}</code></pre>` +
-            `<button type="button" class="btn btn-sm btn-quiet btn-run" data-run="${index}" ` +
-            `data-label="${LABELS[mode]}" title="${TITLES[mode]}">${PLAY}<span>${LABELS[mode]}</span></button></div>`
-          );
+          const button = runnableNow
+            ? `<button type="button" class="fd-btn${mode === "read-only" ? "" : " fd-btn-warn"}" data-run="${index}" data-label="${LABELS[mode]}" title="${TITLES[mode]}">${LABELS[mode]}</button>`
+            : "";
+          return commandHtml(group, button);
         });
-        return `<div class="run-block">${parts.join("")}</div>`;
+        // (the commands of one block stand under each other with the gap of the text around them)
+        return `<div class="fd-md">${parts.join("")}</div>`;
       },
     },
   });
@@ -90,25 +101,23 @@ function render(text: string): { html: string; commands: string[] } {
   return { html, commands };
 }
 
-/** An answer's Markdown, with a Run button on every command of its shell code blocks. */
+/** An answer's Markdown, with a run button on every command of its shell code blocks. */
 export function RunnableMarkdown({ text, onRun }: { text: string; onRun?: (command: string) => Promise<void> }) {
-  const { html, commands } = useMemo(() => render(text), [text]);
+  const canRun = Boolean(onRun);
+  const { html, commands } = useMemo(() => render(text, canRun), [text, canRun]);
   const click = async (event: MouseEvent<HTMLDivElement>) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-run]");
     if (!button || !onRun || button.disabled) return;
     const command = commands[Number(button.dataset.run)];
     if (command === undefined) return;
-    const label = button.querySelector("span");
     button.disabled = true;
-    button.classList.add("running");
-    if (label) label.textContent = "Running…";
+    button.textContent = "running…";
     try {
       await onRun(command);
     } finally {
       button.disabled = false;
-      button.classList.remove("running");
-      if (label) label.textContent = button.dataset.label ?? "Run";
+      button.textContent = button.dataset.label ?? "run";
     }
   };
-  return <div className={`markdown${onRun ? "" : " no-run"}`} onClick={click} dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div className="fd-md" onClick={click} dangerouslySetInnerHTML={{ __html: html }} />;
 }

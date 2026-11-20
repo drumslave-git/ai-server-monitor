@@ -1,5 +1,5 @@
 import type { ActionRecord } from "../api";
-import { Badge } from "../ui";
+import { Code, Command, ErrorText, Fold, Meta, Status } from "../kit";
 
 /** Output longer than this opens on demand. */
 const LONG_LINES = 12;
@@ -14,37 +14,42 @@ export function HostCommand({ item }: { item: Pick<ActionRecord, "args" | "reaso
   const ran = item.status === "executed" || (item.status === "failed" && typeof result.exit_code === "number");
   const output = typeof result.output === "string" ? result.output : "";
   const long = output.split("\n").length > LONG_LINES || output.length > LONG_CHARS;
+  // (the output scrolls inside its own height)
+  const shown = (
+    <div style={{ maxHeight: 360, overflow: "auto" }}>
+      <Code>{output}</Code>
+    </div>
+  );
   return (
-    <div className="host-command">
-      <pre className="host-command-line">{args.command ?? "(no command)"}</pre>
-      {reason && <p className="muted small">{reason}</p>}
+    <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+      <Command wrap>{args.command ?? "(no command)"}</Command>
+      {reason && <p>{reason}</p>}
       {ran && (
-        <div className="host-command-result">
-          <p className="small">
-            <Badge level={result.exit_code === 0 ? "ok" : "crit"}>Exit code {String(result.exit_code ?? "?")}</Badge>
-            {typeof result.duration_s === "number" && <span className="muted"> · {result.duration_s.toFixed(1)} s</span>}
-            {result.stopped && result.stopped !== "exit" && <span className="muted"> · {String(result.stopped)}</span>}
-            {result.truncated && <span className="muted"> · output shortened</span>}
-          </p>
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+            <Status tone={result.exit_code === 0 ? "ok" : "crit"}>exit code {String(result.exit_code ?? "?")}</Status>
+            {typeof result.duration_s === "number" && <Meta>· {result.duration_s.toFixed(1)} s</Meta>}
+            {result.stopped && result.stopped !== "exit" && <Meta>· {String(result.stopped)}</Meta>}
+            {result.truncated && <Meta>· output shortened</Meta>}
+          </div>
           {output &&
             (long ? (
-              <details>
-                <summary className="small">Output ({output.split("\n").length} lines)</summary>
-                <pre className="host-command-output">{output}</pre>
-              </details>
+              <Fold inline title={`output (${output.split("\n").length} lines)`}>
+                {shown}
+              </Fold>
             ) : (
-              <pre className="host-command-output">{output}</pre>
+              shown
             ))}
-          {!output && <p className="muted small">No output.</p>}
-        </div>
+          {!output && <p className="fd-dim">No output.</p>}
+        </>
       )}
-      {item.status === "failed" && !ran && <p className="error small">{String(result.error ?? "failed")}</p>}
+      {item.status === "failed" && !ran && <ErrorText>{String(result.error ?? "failed")}</ErrorText>}
       {item.status === "rejected" && (
-        <p className="muted small">
+        <p className="fd-dim">
           Denied{result.detail && !/^rejected/i.test(String(result.detail)) ? `: ${String(result.detail)}` : ""}. The command did not run.
         </p>
       )}
-      {item.status === "expired" && <p className="muted small">Expired without a decision. The command did not run.</p>}
+      {item.status === "expired" && <p className="fd-dim">Expired without a decision. The command did not run.</p>}
     </div>
   );
 }

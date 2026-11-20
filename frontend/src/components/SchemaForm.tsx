@@ -1,16 +1,39 @@
-import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { McpToolPicker, mcpTools } from "./McpTools";
 import { api, type ConnectionTestResult, type Json, type JsonObject, type JsonSchema } from "../api";
+import { Actions, Button, ErrorText, Field as KitField, FormGrid, Input, Panel, Row, Segmented, Select, Status, Switch, Textarea } from "../kit";
 
 /* Renders a form from the backend's pydantic JSON schema, so every setting the backend
-   defines shows up here without UI changes. Field help comes from `description`. */
+   defines shows up here without UI changes. Field help comes from `description`.
+
+   Which kit control a field gets is decided in one place: `kindOf` names the kind of a schema
+   node and `Field` draws it.
+
+     group (an object with properties)     Panel, inset when it sits inside another panel
+     optional group (the same, or null)    that Panel with "configure" / "remove"
+     list of objects                       a Panel per entry, under a heading with "add"
+     boolean                               Switch
+     boolean or "auto"                     Segmented: auto / on / off
+     enum                                  Segmented up to SEGMENTED_MAX values, Select above
+     number, number or "auto"              Input (number)
+     secret                                Input (password) with "clear"
+     duration, text                        Input
+     list of texts or numbers              Input, comma-separated
+     names with a text each                two Inputs per row
+     any other object                      Textarea (JSON)
+
+   Fields stand in the columns of a FormGrid; a group, an optional group and a list of objects
+   are blocks of their own between those grids. */
 
 export const SECRET_MASK = "********";
 const ACRONYMS: Record<string, string> = {
   url: "URL", llm: "LLM", api: "API", id: "ID", ids: "IDs", gpu: "GPU", ttl: "TTL",
   df: "disk usage", n: "N", mcp: "MCP",
 };
+/** The most values an enum shows side by side (Segmented); one with more is a Select. */
+const SEGMENTED_MAX = 5;
 
+/** The title of a group and the name a control has for assistive tech. */
 export function humanize(key: string): string {
   const words = key.split("_").map((w) => ACRONYMS[w] ?? w);
   const text = words.join(" ");
@@ -18,6 +41,11 @@ export function humanize(key: string): string {
   const first = words[0];
   const mixedCase = first !== first.toLowerCase() && first[0] === first[0].toLowerCase();
   return mixedCase ? text : text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** A field's visible label: lowercase like every label, with the case the schema gives a name. */
+function fieldLabel(key: string): string {
+  return key.split("_").map((w) => ACRONYMS[w]?.toLowerCase() ?? w).join(" ");
 }
 
 export type FormContext = {
@@ -53,6 +81,76 @@ export function defaultFor(schema: JsonSchema, defs: Record<string, JsonSchema>)
   return "";
 }
 
+// ---- placement (the look comes from the kit) --------------------------------
+
+/** The inside of a group's panel: its blocks under each other. */
+const BODY: CSSProperties = { display: "flex", flexDirection: "column", gap: "var(--space-4)", minWidth: 0, padding: "0 var(--space-5) var(--space-4)" };
+const HEADING: CSSProperties = { display: "flex", flexDirection: "column", gap: "var(--space-1)", minWidth: 0 };
+/** A field or a line that takes the whole width of its grid. */
+const WIDE: CSSProperties = { gridColumn: "1 / -1", minWidth: 0 };
+const BESIDE: CSSProperties = { display: "flex", flexWrap: "wrap", gap: "var(--space-2)", minWidth: 0 };
+const SHARE: CSSProperties = { flex: "1 1 120px", minWidth: 0 };
+const UNDER: CSSProperties = { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "var(--space-2)", minWidth: 0 };
+const WHOLE: CSSProperties = { width: "100%" };
+const PICKER: CSSProperties = { padding: "0 var(--space-5) var(--space-4)" };
+
+// ---- the mapping: schema node → kind → kit control ---------------------------
+
+type Kind =
+  | { kind: "group" | "switch" | "auto-switch" | "number" | "secret" | "duration" | "text" | "pairs" | "json"; s: JsonSchema }
+  | { kind: "optional-group"; s: JsonSchema; inner: JsonSchema }
+  | { kind: "objects"; s: JsonSchema; item: JsonSchema }
+  | { kind: "auto-number"; s: JsonSchema; numeric: JsonSchema }
+  | { kind: "list"; s: JsonSchema; numeric: boolean }
+  | { kind: "choice"; s: JsonSchema; options: string[] };
+
+function isNestedObject(s: JsonSchema): boolean {
+  return s.type === "object" && !!s.properties;
+}
+
+const isNumber = (s: JsonSchema) => s.type === "number" || s.type === "integer";
+
+/** What kind of field a schema node is; `s` is the node the field is drawn from. */
+function kindOf(schema: JsonSchema, defs: Record<string, JsonSchema>): Kind {
+  const s = resolve(schema, defs);
+  if (isNestedObject(s)) return { kind: "group", s };
+
+  if (s.anyOf) {
+    const options = s.anyOf.map((x) => resolve(x, defs));
+    const nonNull = options.filter((x) => x.type !== "null");
+    const nullable = nonNull.length < options.length;
+    const auto = nonNull.some((x) => x.const === "auto");
+    if (nonNull.some((x) => x.type === "boolean") && auto) return { kind: "auto-switch", s };
+    const numeric = nonNull.find(isNumber);
+    // a number, or "auto" (= not sent) while the box is empty
+    if (numeric && auto) return { kind: "auto-number", s, numeric };
+    if (nullable && nonNull.length === 1 && isNestedObject(nonNull[0])) {
+      return { kind: "optional-group", s, inner: { ...nonNull[0], description: s.description ?? nonNull[0].description } };
+    }
+    return kindOf({ ...nonNull[0], description: s.description }, defs);
+  }
+
+  if (s.type === "array" && s.items) {
+    const item = resolve(s.items, defs);
+    return isNestedObject(item) ? { kind: "objects", s, item } : { kind: "list", s, numeric: isNumber(item) };
+  }
+
+  if (s.type === "object") {
+    const extra = s.additionalProperties;
+    return extra && typeof extra === "object" && extra.type === "string" ? { kind: "pairs", s } : { kind: "json", s };
+  }
+
+  if (s.enum) return { kind: "choice", s, options: s.enum.map(String) };
+  if (s.type === "boolean") return { kind: "switch", s };
+  if (isNumber(s)) return { kind: "number", s };
+  if (s.format === "password") return { kind: "secret", s };
+  if (s.format === "duration") return { kind: "duration", s };
+  return { kind: "text", s };
+}
+
+/** A block stands on its own between the grids of fields. */
+const isBlock = (k: Kind) => k.kind === "group" || k.kind === "optional-group" || k.kind === "objects";
+
 type FieldProps = {
   name: string;
   schema: JsonSchema;
@@ -60,251 +158,350 @@ type FieldProps = {
   onChange: (value: Json) => void;
   path: string;
   ctx: FormContext;
+  /** The field sits inside a panel: its groups are inset panels and its grids need no panel. */
+  inset?: boolean;
 };
 
-/** All properties of an object schema, as rows / nested groups. */
-export function ObjectFields({ schema, value, onChange, path, ctx }: Omit<FieldProps, "name">) {
+/** All properties of an object schema: fields in columns, groups as blocks between them. */
+export function ObjectFields({ schema, value, onChange, path, ctx, inset }: Omit<FieldProps, "name">) {
   const s = resolve(schema, ctx.defs);
   const obj = (value ?? {}) as JsonObject;
-  return (
-    <>
-      {Object.entries(s.properties ?? {}).map(([key, prop]) => {
-        const fieldPath = path ? `${path}.${key}` : key;
-        if (ctx.hidden?.includes(fieldPath)) return null;
-        return (
-          <Fragment key={key}>
-            {ctx.notes?.[fieldPath] && <p className="field-note">{ctx.notes[fieldPath]}</p>}
-            <Field
-              name={key}
-              schema={prop}
-              value={obj[key] ?? null}
-              onChange={(v) => onChange({ ...obj, [key]: v })}
-              path={fieldPath}
-              ctx={ctx}
-            />
-          </Fragment>
-        );
-      })}
-    </>
-  );
-}
-
-function isNestedObject(s: JsonSchema): boolean {
-  return s.type === "object" && !!s.properties;
-}
-
-export function Field(props: FieldProps) {
-  const { name, schema, value, onChange, path, ctx } = props;
-  const s = resolve(schema, ctx.defs);
-  const label = humanize(name);
-
-  // Nested settings group → titled group.
-  if (isNestedObject(s)) {
-    return (
-      <Tested spec={s} value={value}>
-        {(buttons, result) => (
-          <Group title={label} description={s.description} error={ctx.errors[path]} actions={buttons} below={result}>
-            <ObjectFields schema={s} value={value} onChange={onChange} path={path} ctx={ctx} />
-          </Group>
-        )}
-      </Tested>
-    );
-  }
-
-  if (s.anyOf) {
-    const options = s.anyOf.map((x) => resolve(x, ctx.defs));
-    const nonNull = options.filter((x) => x.type !== "null");
-    const nullable = nonNull.length < options.length;
-    if (nonNull.some((x) => x.type === "boolean") && nonNull.some((x) => x.const === "auto")) {
-      return (
-        <Row {...props} label={label} description={s.description}>
-          {(id) => (
-            <select
-              id={id}
-              value={value === "auto" ? "auto" : value ? "on" : "off"}
-              onChange={(e) => onChange(e.target.value === "auto" ? "auto" : e.target.value === "on")}
-            >
-              <option value="auto">Auto</option>
-              <option value="on">On</option>
-              <option value="off">Off</option>
-            </select>
-          )}
-        </Row>
-      );
+  const blocks: ReactNode[] = [];
+  let cells: ReactNode[] = [];
+  const closeGrid = () => {
+    if (cells.length === 0) return;
+    const key = `grid-${blocks.length}`;
+    blocks.push(inset ? <FormGrid key={key}>{cells}</FormGrid> : <Panel key={key} pad><FormGrid>{cells}</FormGrid></Panel>);
+    cells = [];
+  };
+  for (const [key, prop] of Object.entries(s.properties ?? {})) {
+    const fieldPath = path ? `${path}.${key}` : key;
+    if (ctx.hidden?.includes(fieldPath)) continue;
+    const note = ctx.notes?.[fieldPath];
+    const field = <Field key={key} name={key} schema={prop} value={obj[key] ?? null} onChange={(v) => onChange({ ...obj, [key]: v })} path={fieldPath} ctx={ctx} inset={inset} />;
+    if (isBlock(kindOf(prop, ctx.defs))) {
+      closeGrid();
+      if (note) blocks.push(<p key={`${key}-note`} className="fd-sub">{note}</p>);
+      blocks.push(field);
+    } else {
+      if (note) cells.push(<p key={`${key}-note`} className="fd-sub" style={WIDE}>{note}</p>);
+      cells.push(field);
     }
-    const numeric = nonNull.find((x) => x.type === "number" || x.type === "integer");
-    if (numeric && nonNull.some((x) => x.const === "auto")) {
-      // a number, or "auto" (= not sent) while the box is empty
+  }
+  closeGrid();
+  return <>{blocks}</>;
+}
+
+export function Field({ name, schema, value, onChange, path, ctx, inset }: FieldProps) {
+  const k = kindOf(schema, ctx.defs);
+  const s = k.s;
+  const title = humanize(name);
+  const cell = { name, description: s.description, path, ctx };
+
+  switch (k.kind) {
+    case "group":
       return (
-        <Row {...props} label={label} description={s.description}>
-          {(id) => (
-            <input
+        <Tested spec={s} value={value}>
+          {(buttons, result) => (
+            <Group title={title} description={s.description} error={ctx.errors[path]} actions={buttons} below={result} inset={inset}>
+              <ObjectFields schema={s} value={value} onChange={onChange} path={path} ctx={ctx} inset />
+            </Group>
+          )}
+        </Tested>
+      );
+
+    case "optional-group":
+      return <OptionalGroup title={title} spec={s} inner={k.inner} value={value} onChange={onChange} path={path} ctx={ctx} inset={inset} />;
+
+    case "objects":
+      return <ListOfObjects title={title} spec={s} item={k.item} value={value} onChange={onChange} path={path} ctx={ctx} inset={inset} />;
+
+    case "switch":
+      return (
+        <Cell {...cell} group>
+          {() => <Switch checked={Boolean(value)} onChange={onChange} label={title} />}
+        </Cell>
+      );
+
+    case "auto-switch":
+      return (
+        <Cell {...cell} group>
+          {() => (
+            <Segmented
+              label={title}
+              options={[{ value: "auto", label: "auto" }, { value: "on", label: "on" }, { value: "off", label: "off" }]}
+              value={value === "auto" ? "auto" : value ? "on" : "off"}
+              onChange={(v) => onChange(v === "auto" ? "auto" : v === "on")}
+            />
+          )}
+        </Cell>
+      );
+
+    case "choice":
+      if (k.options.length <= SEGMENTED_MAX) {
+        return (
+          <Cell {...cell} group>
+            {() => <Segmented label={title} options={k.options.map((o) => ({ value: o, label: o }))} value={String(value ?? "")} onChange={onChange} />}
+          </Cell>
+        );
+      }
+      return (
+        <Cell {...cell}>
+          {(id, invalid) => (
+            <Select id={id} invalid={invalid} value={String(value ?? "")} onChange={(e) => onChange(e.target.value)}>
+              {k.options.map((o) => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </Select>
+          )}
+        </Cell>
+      );
+
+    case "number":
+      return (
+        <Cell {...cell}>
+          {(id, invalid) => (
+            <Input
               id={id}
               type="number"
-              className="input-short"
+              invalid={invalid}
+              value={value === null || value === undefined ? "" : String(value)}
+              min={s.minimum}
+              max={s.maximum}
+              step={s.type === "integer" ? 1 : "any"}
+              onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
+            />
+          )}
+        </Cell>
+      );
+
+    case "auto-number":
+      return (
+        <Cell {...cell}>
+          {(id, invalid) => (
+            <Input
+              id={id}
+              type="number"
+              invalid={invalid}
               placeholder="auto"
               value={value === "auto" || value === null || value === undefined ? "" : String(value)}
-              min={numeric.minimum}
-              max={numeric.maximum}
-              step={numeric.type === "integer" ? 1 : "any"}
+              min={k.numeric.minimum}
+              max={k.numeric.maximum}
+              step={k.numeric.type === "integer" ? 1 : "any"}
               onChange={(e) => onChange(e.target.value === "" ? "auto" : Number(e.target.value))}
             />
           )}
-        </Row>
+        </Cell>
       );
-    }
-    if (nullable && nonNull.length === 1 && isNestedObject(nonNull[0])) {
-      return <OptionalGroup {...props} label={label} inner={{ ...nonNull[0], description: s.description ?? nonNull[0].description }} />;
-    }
-    return <Field {...props} schema={{ ...nonNull[0], description: s.description }} />;
-  }
 
-  if (s.type === "array" && s.items) {
-    const item = resolve(s.items, ctx.defs);
-    if (isNestedObject(item)) return <ListOfObjects {...props} label={label} item={item} />;
-    return (
-      <Row {...props} label={label} description={s.description}>
-        {(id) => <ListInput id={id} value={(value as Json[]) ?? []} numeric={item.type === "integer" || item.type === "number"} onChange={onChange} />}
-      </Row>
-    );
-  }
-
-  if (s.type === "object") {
-    const extra = s.additionalProperties;
-    if (extra && typeof extra === "object" && extra.type === "string") {
+    case "secret":
       return (
-        <Row {...props} label={label} description={s.description} wide>
-          {() => <KeyValueInput value={(value as Record<string, string>) ?? {}} onChange={onChange} />}
-        </Row>
+        <Cell {...cell}>
+          {(id, invalid) => <SecretInput id={id} invalid={invalid} value={String(value ?? "")} onChange={onChange} />}
+        </Cell>
+      );
+
+    case "duration": {
+      const text = String(value ?? "");
+      const valid = !s.pattern || new RegExp(s.pattern).test(text);
+      return (
+        <Cell {...cell}>
+          {(id, invalid) => <Input id={id} invalid={invalid || !valid} value={text} placeholder="e.g. 30s, 5m, 6h, 30d" onChange={(e) => onChange(e.target.value)} />}
+        </Cell>
       );
     }
-    return (
-      <Row {...props} label={label} description={s.description} wide>
-        {(id) => <JsonInput id={id} value={value ?? {}} onChange={onChange} />}
-      </Row>
-    );
-  }
 
-  return (
-    <Row {...props} label={label} description={s.description}>
-      {(id) => <Scalar id={id} schema={s} value={value} onChange={onChange} suggestions={ctx.suggestions[path]} />}
-    </Row>
-  );
+    case "text": {
+      const suggestions = ctx.suggestions[path];
+      return (
+        <Cell {...cell}>
+          {(id, invalid) => (
+            <>
+              <Input id={id} invalid={invalid} value={String(value ?? "")} list={suggestions?.length ? `${id}-list` : undefined} onChange={(e) => onChange(e.target.value)} />
+              {suggestions?.length ? (
+                <datalist id={`${id}-list`}>
+                  {suggestions.map((o) => <option key={o} value={o} />)}
+                </datalist>
+              ) : null}
+            </>
+          )}
+        </Cell>
+      );
+    }
+
+    case "list":
+      return (
+        <Cell {...cell}>
+          {(id, invalid) => <ListInput id={id} invalid={invalid} value={(value as Json[]) ?? []} numeric={k.numeric} onChange={onChange} />}
+        </Cell>
+      );
+
+    case "pairs":
+      return (
+        <Cell {...cell} wide group>
+          {() => <KeyValueInput value={(value as Record<string, string>) ?? {}} onChange={onChange} />}
+        </Cell>
+      );
+
+    case "json":
+      return (
+        <Cell {...cell} wide>
+          {(id, invalid) => <JsonInput id={id} invalid={invalid} value={value ?? {}} onChange={onChange} />}
+        </Cell>
+      );
+  }
 }
 
-function Row({
-  label,
+/** One labelled field of a grid: its control, its help line and the server's error for it. */
+function Cell({
+  name,
   description,
   path,
   ctx,
   wide,
+  group,
   children,
-}: FieldProps & { label: string; description?: string; wide?: boolean; children: (id: string) => ReactNode }) {
+}: {
+  name: string;
+  description?: string;
+  path: string;
+  ctx: FormContext;
+  /** Takes the whole width of the grid. */
+  wide?: boolean;
+  /** The control is not one input (a switch, a set of buttons, several inputs). */
+  group?: boolean;
+  children: (id: string, invalid: boolean) => ReactNode;
+}) {
   const id = useId();
   const error = ctx.errors[path];
-  return (
-    <div className={`field${wide ? " field-wide" : ""}${error ? " has-error" : ""}`}>
-      <div className="field-label">
-        <label htmlFor={id}>{label}</label>
-        {description && <p className="help">{description}</p>}
-      </div>
-      <div className="field-control">
-        {children(id)}
-        {error && <p className="error">{error}</p>}
-      </div>
-    </div>
+  const field = (
+    <KitField label={fieldLabel(name)} help={description} error={error} group={group} htmlFor={group ? undefined : id}>
+      {children(id, Boolean(error))}
+    </KitField>
   );
+  return wide ? <div style={WIDE}>{field}</div> : field;
 }
 
-function Group({ title, description, error, actions, below, children }: {
-  title: string; description?: string; error?: string; actions?: ReactNode; below?: ReactNode; children: ReactNode;
+function Group({ title, description, error, actions, below, inset, children }: {
+  title: string; description?: string; error?: string; actions?: ReactNode; below?: ReactNode; inset?: boolean; children: ReactNode;
 }) {
   return (
-    <section className="group">
-      <header className="group-head">
-        <div>
-          <h3>{title}</h3>
-          {description && <p className="help">{description}</p>}
-        </div>
-        {actions}
-      </header>
+    <Panel inset={inset} title={title} aside={actions}>
       {below}
-      {error && <p className="error">{error}</p>}
-      <div className="group-body">{children}</div>
-    </section>
+      <div style={BODY}>
+        {description && <p className="fd-dim">{description}</p>}
+        {error && <ErrorText>{error}</ErrorText>}
+        {children}
+      </div>
+    </Panel>
   );
 }
 
-function OptionalGroup(props: FieldProps & { label: string; inner: JsonSchema }) {
-  const { label, inner, value, onChange, path, ctx } = props;
+type BlockProps = Omit<FieldProps, "name" | "schema"> & {
+  title: string;
+  /** The schema node of the field itself: it says whether this is a connection that can be tested. */
+  spec: JsonSchema;
+};
+
+function OptionalGroup({ title, spec, inner, value, onChange, path, ctx, inset }: BlockProps & { inner: JsonSchema }) {
   const enabled = value !== null && value !== undefined;
   return (
-    <Tested spec={enabled ? resolve(props.schema, ctx.defs) : undefined} value={value}>
+    <Tested spec={enabled ? spec : undefined} value={value}>
       {(buttons, result) => (
         <Group
-          title={label}
+          title={title}
           description={inner.description}
           error={ctx.errors[path]}
           below={result}
+          inset={inset}
           actions={
             enabled ? (
-              <div className="head-actions">
+              <>
                 {buttons}
-                <button type="button" className="btn btn-quiet" onClick={() => onChange(null)}>Remove</button>
-              </div>
+                <Button onClick={() => onChange(null)}>remove</Button>
+              </>
             ) : (
-              <button type="button" className="btn" onClick={() => onChange(defaultFor({ ...inner, default: undefined }, ctx.defs))}>
-                Configure
-              </button>
+              <Button onClick={() => onChange(defaultFor({ ...inner, default: undefined }, ctx.defs))}>configure</Button>
             )
           }
         >
-          {enabled ? <ObjectFields schema={inner} value={value} onChange={onChange} path={path} ctx={ctx} /> : <p className="muted">Not configured.</p>}
+          {enabled ? <ObjectFields schema={inner} value={value} onChange={onChange} path={path} ctx={ctx} inset /> : <p className="fd-dim">Not configured.</p>}
         </Group>
       )}
     </Tested>
   );
 }
 
-function ListOfObjects(props: FieldProps & { label: string; item: JsonSchema }) {
-  const { label, item, value, onChange, path, ctx } = props;
-  const s = resolve(props.schema, ctx.defs);
+function ListOfObjects({ title, spec, item, value, onChange, path, ctx, inset }: BlockProps & { item: JsonSchema }) {
   const list = (value as Json[]) ?? [];
   const update = (i: number, v: Json) => onChange(list.map((x, j) => (j === i ? v : x)));
+  const add = <Button onClick={() => onChange([...list, defaultFor({ ...item, default: undefined }, ctx.defs)])}>add</Button>;
+  const none = list.length === 0 && <p className="fd-dim">None.</p>;
+  const entries = list.map((entry, i) => (
+    <Tested key={i} spec={spec} value={entry} index={i} onEdit={(v) => update(i, v)}>
+      {(buttons, result) => (
+        <Panel
+          inset={inset}
+          title={(entry as JsonObject)?.name ? String((entry as JsonObject).name) : `#${i + 1}`}
+          aside={
+            <>
+              {buttons}
+              <Button onClick={() => onChange(list.filter((_, j) => j !== i))}>remove</Button>
+            </>
+          }
+        >
+          {result}
+          <div style={BODY}>
+            <ObjectFields schema={item} value={entry} onChange={(v) => update(i, v)} path={`${path}.${i}`} ctx={ctx} inset />
+          </div>
+        </Panel>
+      )}
+    </Tested>
+  ));
+  // Inside a panel the list is a card of its own; on the page its entries are the panels.
+  if (inset) {
+    return (
+      <Group title={title} description={spec.description} error={ctx.errors[path]} actions={add} inset>
+        {none}
+        {entries}
+      </Group>
+    );
+  }
   return (
-    <Group
-      title={label}
-      description={s.description}
-      error={ctx.errors[path]}
-      actions={
-        <button type="button" className="btn" onClick={() => onChange([...list, defaultFor({ ...item, default: undefined }, ctx.defs)])}>
-          Add
-        </button>
-      }
-    >
-      {list.length === 0 && <p className="muted">None.</p>}
-      {list.map((entry, i) => (
-        <Tested key={i} spec={s} value={entry} index={i} onEdit={(v) => update(i, v)}>
-          {(buttons, result) => (
-            <div className="list-item">
-              <div className="list-item-head">
-                <strong>{(entry as JsonObject)?.name ? String((entry as JsonObject).name) : `#${i + 1}`}</strong>
-                <div className="head-actions">
-                  {buttons}
-                  <button type="button" className="btn btn-quiet" onClick={() => onChange(list.filter((_, j) => j !== i))}>
-                    Remove
-                  </button>
-                </div>
-              </div>
-              {result}
-              <ObjectFields schema={item} value={entry} onChange={(v) => update(i, v)} path={`${path}.${i}`} ctx={ctx} />
-            </div>
-          )}
-        </Tested>
-      ))}
-    </Group>
+    <>
+      <div className="fd-section-head">
+        <div style={HEADING}>
+          <h2>{title}</h2>
+          {spec.description && <p className="fd-dim">{spec.description}</p>}
+        </div>
+        <Actions>{add}</Actions>
+      </div>
+      {ctx.errors[path] && <ErrorText>{ctx.errors[path]}</ErrorText>}
+      {none}
+      {entries}
+    </>
   );
 }
+
+/** One line of a test's outcome, or the line shown while it runs. */
+export function TestLine({ ok, running, children }: { ok?: boolean; running?: boolean; children?: ReactNode }) {
+  if (running) {
+    return (
+      <Row>
+        <Status tone="info" blink>testing…</Status>
+      </Row>
+    );
+  }
+  return (
+    <Row>
+      <Status tone={ok ? "ok" : "crit"}>{ok ? "ok" : "failed"}</Status>
+      <span className="fd-wrap" style={{ flex: "1 1 320px", minWidth: 0 }}>{children}</span>
+    </Row>
+  );
+}
+
+/** A button's label as the schema writes it, starting lowercase like every button. */
+const buttonLabel = (label: string) => label.charAt(0).toLowerCase() + label.slice(1);
 
 /** Test buttons + inline result for a connection. A node is a connection when its schema has
     a `test` extra; any other node gets nothing extra. The values tested are the ones in the
@@ -348,152 +545,87 @@ function Tested({ spec, value, index, onEdit, children }: {
     setRunning(null);
   };
   const button = (mode: string | null, label: string) => (
-    <button type="button" className="btn btn-test" disabled={running !== null} onClick={() => void run(mode)}>
-      {running === (mode ?? "") && <span className="spinner" aria-hidden="true" />}
-      {running === (mode ?? "") ? "Testing…" : label}
-    </button>
+    <Button key={mode ?? ""} disabled={running !== null} onClick={() => void run(mode)}>
+      {running === (mode ?? "") ? "testing…" : label}
+    </Button>
   );
   const buttons = (
-    <div className="test-buttons">
-      {button(null, "Test")}
-      {Object.entries(spec?.test_modes ?? {}).map(([mode, label]) => (
-        <span key={mode}>{button(mode, label)}</span>
-      ))}
-    </div>
+    <>
+      {button(null, "test")}
+      {Object.entries(spec?.test_modes ?? {}).map(([mode, label]) => button(mode, buttonLabel(label)))}
+    </>
   );
+  const tools = kind === "mcp" && onEdit ? mcpTools(result) : null;
   const shown = (
-    <div className="test-result" role="status" aria-live="polite">
-      {result && (
-        <p className={result.ok ? "ok" : "error"}>
-          <strong>{result.ok ? "✓ " : "✕ "}</strong>
-          {result.message}
-        </p>
-      )}
-      {kind === "mcp" && onEdit && mcpTools(result) && (
-        <McpToolPicker tools={mcpTools(result)!} value={value as JsonObject} onChange={onEdit} />
+    <div role="status" aria-live="polite">
+      {running !== null && <TestLine running />}
+      {result && <TestLine ok={result.ok}>{result.message}</TestLine>}
+      {tools && onEdit && (
+        <div style={PICKER}>
+          <McpToolPicker tools={tools} value={value as JsonObject} onChange={onEdit} />
+        </div>
       )}
     </div>
   );
   return <>{children(buttons, shown)}</>;
 }
 
-function Scalar({ id, schema, value, onChange, suggestions }: {
-  id: string; schema: JsonSchema; value: Json; onChange: (v: Json) => void; suggestions?: string[];
-}) {
-  const listId = useId();
-  if (schema.enum) {
-    return (
-      <select id={id} value={String(value ?? "")} onChange={(e) => onChange(e.target.value)}>
-        {schema.enum.map((opt) => (
-          <option key={String(opt)} value={String(opt)}>{String(opt)}</option>
-        ))}
-      </select>
-    );
-  }
-  if (schema.type === "boolean") {
-    return (
-      <label className="switch">
-        <input id={id} type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />
-        <span aria-hidden="true" />
-      </label>
-    );
-  }
-  if (schema.type === "integer" || schema.type === "number") {
-    return (
-      <input
-        id={id}
-        type="number"
-        className="input-short"
-        value={value === null || value === undefined ? "" : String(value)}
-        min={schema.minimum}
-        max={schema.maximum}
-        step={schema.type === "integer" ? 1 : "any"}
-        onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
-      />
-    );
-  }
-  if (schema.format === "password") return <SecretInput id={id} value={String(value ?? "")} onChange={onChange} />;
-  if (schema.format === "duration") {
-    const text = String(value ?? "");
-    const valid = !schema.pattern || new RegExp(schema.pattern).test(text);
-    return (
-      <input
-        id={id}
-        className={`input-short${valid ? "" : " invalid"}`}
-        value={text}
-        placeholder="e.g. 30s, 5m, 6h, 30d"
-        onChange={(e) => onChange(e.target.value)}
-      />
-    );
-  }
-  return (
-    <>
-      <input id={id} value={String(value ?? "")} list={suggestions?.length ? listId : undefined} onChange={(e) => onChange(e.target.value)} />
-      {suggestions?.length ? (
-        <datalist id={listId}>
-          {suggestions.map((s) => <option key={s} value={s} />)}
-        </datalist>
-      ) : null}
-    </>
-  );
-}
-
-function SecretInput({ id, value, onChange }: { id: string; value: string; onChange: (v: Json) => void }) {
+function SecretInput({ id, invalid, value, onChange }: { id: string; invalid: boolean; value: string; onChange: (v: Json) => void }) {
   const isStored = value === SECRET_MASK;
   return (
-    <div className="secret">
-      <input
+    <span style={BESIDE}>
+      <Input
         id={id}
         type="password"
         autoComplete="new-password"
+        style={SHARE}
+        invalid={invalid}
         value={isStored ? "" : value}
         placeholder={isStored ? "Saved — type to replace" : "Not set"}
         onChange={(e) => onChange(e.target.value === "" && isStored ? SECRET_MASK : e.target.value)}
       />
-      {isStored && (
-        <button type="button" className="btn btn-quiet" onClick={() => onChange("")}>Clear</button>
-      )}
-    </div>
+      {isStored && <Button onClick={() => onChange("")}>clear</Button>}
+    </span>
   );
 }
 
-function ListInput({ id, value, numeric, onChange }: { id: string; value: Json[]; numeric: boolean; onChange: (v: Json) => void }) {
+function ListInput({ id, invalid, value, numeric, onChange }: { id: string; invalid: boolean; value: Json[]; numeric: boolean; onChange: (v: Json) => void }) {
   const [text, setText] = useState(value.join(", "));
   useEffect(() => setText(value.join(", ")), [value.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
   const commit = (t: string) => {
     const parts = t.split(/[\s,]+/).filter(Boolean);
     onChange(numeric ? parts.map(Number).filter((n) => !Number.isNaN(n)) : parts);
   };
-  return <input id={id} value={text} placeholder="Comma-separated" onChange={(e) => setText(e.target.value)} onBlur={(e) => commit(e.target.value)} />;
+  return <Input id={id} invalid={invalid} value={text} placeholder="Comma-separated" onChange={(e) => setText(e.target.value)} onBlur={(e) => commit(e.target.value)} />;
 }
 
 function KeyValueInput({ value, onChange }: { value: Record<string, string>; onChange: (v: Json) => void }) {
   const rows = Object.entries(value);
   const set = (next: [string, string][]) => onChange(Object.fromEntries(next));
   return (
-    <div className="kv">
+    <div style={UNDER}>
       {rows.map(([k, v], i) => (
-        <div className="kv-row" key={i}>
-          <input value={k} placeholder="name" onChange={(e) => set(rows.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} />
-          <input value={v} placeholder="value" onChange={(e) => set(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
-          <button type="button" className="btn btn-quiet" onClick={() => set(rows.filter((_, j) => j !== i))}>Remove</button>
+        <div key={i} style={{ ...BESIDE, ...WHOLE }}>
+          <Input style={SHARE} value={k} placeholder="name" onChange={(e) => set(rows.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} />
+          <Input style={SHARE} value={v} placeholder="value" onChange={(e) => set(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
+          <Button onClick={() => set(rows.filter((_, j) => j !== i))}>remove</Button>
         </div>
       ))}
-      <button type="button" className="btn" onClick={() => set([...rows, [`query_${rows.length + 1}`, ""]])}>Add</button>
+      <Button onClick={() => set([...rows, [`query_${rows.length + 1}`, ""]])}>add</Button>
     </div>
   );
 }
 
-function JsonInput({ id, value, onChange }: { id: string; value: Json; onChange: (v: Json) => void }) {
+function JsonInput({ id, invalid, value, onChange }: { id: string; invalid: boolean; value: Json; onChange: (v: Json) => void }) {
   const [text, setText] = useState(JSON.stringify(value, null, 2));
   const [error, setError] = useState<string | null>(null);
   return (
     <>
-      <textarea
+      <Textarea
         id={id}
         rows={4}
         spellCheck={false}
-        className={`mono${error ? " invalid" : ""}`}
+        invalid={invalid || error !== null}
         value={text}
         onChange={(e) => {
           setText(e.target.value);
@@ -505,7 +637,7 @@ function JsonInput({ id, value, onChange }: { id: string; value: Json; onChange:
           }
         }}
       />
-      {error && <p className="error">{error}</p>}
+      {error && <span className="fd-field-error">{error}</span>}
     </>
   );
 }

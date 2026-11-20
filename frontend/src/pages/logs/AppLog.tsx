@@ -1,11 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api";
-import { Empty } from "../../ui";
+import { clock } from "../../fmt";
+import { Axis, Button, Cells, Code, Counter, Counters, Empty, ErrorText, Field, Input, Meta, Notice, Panel, Row, Select, Status, Switch, Table, Toolbar, type Cell } from "../../kit";
 import { clockTime } from "./format";
+import { Scroll } from "./parts";
 import type { AppLogList, AppLogRecord } from "./types";
 
 const MAX_ROWS = 1500;
 const LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"] as const;
+/** The strip over the loaded records has at most this many cells: one per minute while the records
+ *  span no more than that, otherwise each cell covers as many whole minutes as it takes. */
+const STRIP_CELLS = 60;
+
+/** error and above → crit, warning → warn, info → info, debug → off. */
+const levelTone = (levelno: number) => (levelno >= 40 ? "crit" : levelno >= 30 ? "warn" : levelno >= 20 ? "info" : "off");
 
 export function AppLogView() {
   const [source, setSource] = useState<"memory" | "stored">("memory");
@@ -102,66 +110,153 @@ export function AppLogView() {
   };
 
   return (
-    <div className="stack">
-      <div className="log-filters">
-        <input type="search" className="log-search" placeholder="Search messages" value={text} onChange={(e) => setText(e.target.value)} aria-label="Search the log" />
-        <select value={level} onChange={(e) => setLevel(e.target.value)} aria-label="Minimum level">
-          {LEVELS.map((l) => (<option key={l} value={l}>{l === "DEBUG" ? "All levels" : `${l[0]}${l.slice(1).toLowerCase()} and above`}</option>))}
-        </select>
-        <select value={logger} onChange={(e) => setLogger(e.target.value)} aria-label="Logger">
-          <option value="">All loggers</option>
-          {loggers.map((l) => (<option key={l} value={l}>{l.replace(/^ai_server_monitor\./, "")}</option>))}
-        </select>
-        <select value={source} onChange={(e) => setSource(e.target.value as "memory" | "stored")} aria-label="Source">
-          <option value="memory">Since the last start</option>
-          <option value="stored">Saved warnings and errors</option>
-        </select>
+    <>
+      <Toolbar>
+        <Field label="search the log" flex="3 1 260px">
+          <Input type="search" placeholder="Search messages" value={text} onChange={(e) => setText(e.target.value)} aria-label="Search the log" />
+        </Field>
+        <Field label="minimum level" flex="1 1 170px">
+          <Select value={level} onChange={(e) => setLevel(e.target.value)} aria-label="Minimum level">
+            {LEVELS.map((l) => (<option key={l} value={l}>{l === "DEBUG" ? "all levels" : `${l.toLowerCase()} and above`}</option>))}
+          </Select>
+        </Field>
+        <Field label="logger" flex="1 1 170px">
+          <Select value={logger} onChange={(e) => setLogger(e.target.value)} aria-label="Logger">
+            <option value="">all loggers</option>
+            {loggers.map((l) => (<option key={l} value={l}>{l.replace(/^ai_server_monitor\./, "")}</option>))}
+          </Select>
+        </Field>
+        <Field label="source" flex="1 1 210px">
+          <Select value={source} onChange={(e) => setSource(e.target.value as "memory" | "stored")} aria-label="Source">
+            <option value="memory">since the last start</option>
+            <option value="stored">saved warnings and errors</option>
+          </Select>
+        </Field>
         {source === "memory" && (
-          <label className="live-toggle">
-            <span className="switch">
-              <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
-              <span />
-            </span>
-            Live
-            {live && <span className={`dot ${connected ? "dot-ok" : ""}`} aria-hidden />}
-          </label>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "var(--space-3)" }}>
+            <Switch checked={live} onChange={setLive} label="Live" text="live" />
+            {live && (
+              <Status tone={connected ? "ok" : "off"} hollow={!connected}>
+                {connected ? "connected" : "not connected"}
+              </Status>
+            )}
+          </div>
         )}
-      </div>
-      {skipped > 0 && <p className="muted small">The live view is rate-limited: {skipped.toLocaleString()} records were left out. Reload to see them all.</p>}
-      {error && <p className="error">{error}</p>}
-      {loaded && rows.length === 0 && <Empty>Nothing matches.</Empty>}
-      {rows.length > 0 && (
-        <section className="panel log-panel">
-          <ul className="applog">
-            {rows.map((r) => (<LogRow key={`${r.seq ?? "s"}-${r.id ?? ""}-${r.ts}`} rec={r} />))}
-          </ul>
-          {more && (
-            <div className="pager"><button className="btn" onClick={older}>Older records</button></div>
-          )}
-        </section>
+      </Toolbar>
+      {skipped > 0 && <Notice>The live view is rate-limited: {skipped.toLocaleString()} records were left out. Reload to see them all.</Notice>}
+      {error && <ErrorText>{error}</ErrorText>}
+      {loaded && rows.length === 0 && (
+        <Panel>
+          <Empty>Nothing matches.</Empty>
+        </Panel>
       )}
-    </div>
+      {rows.length > 0 && <LoadedSummary rows={rows} debug={level === "DEBUG"} />}
+      {rows.length > 0 && (
+        <Panel>
+          <Table dense>
+            <thead>
+              <tr>
+                <th>time</th>
+                <th>level</th>
+                <th>logger</th>
+                <th style={{ width: "100%" }}>message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (<LogRow key={`${r.seq ?? "s"}-${r.id ?? ""}-${r.ts}`} rec={r} />))}
+            </tbody>
+          </Table>
+          {more && (
+            <Row>
+              <Button onClick={older}>older records</Button>
+            </Row>
+          )}
+        </Panel>
+      )}
+    </>
+  );
+}
+
+const WORSE: Record<string, number> = { "": 0, info: 1, warn: 2, crit: 3 };
+
+/** What the records on the page add up to: how many of each level, and the worst level of each
+ *  stretch of time between the oldest and the newest of them. Nothing is fetched for it. */
+function LoadedSummary({ rows, debug }: { rows: AppLogRecord[]; debug: boolean }) {
+  const { counts, cells, per, from, to } = useMemo(() => {
+    const counts = { off: 0, info: 0, warn: 0, crit: 0 };
+    let first = Infinity;
+    let last = -Infinity;
+    for (const r of rows) {
+      counts[levelTone(r.levelno)] += 1;
+      first = Math.min(first, r.ts);
+      last = Math.max(last, r.ts);
+    }
+    const start = Math.floor(first / 60);
+    const minutes = Math.floor(last / 60) - start + 1;
+    const per = Math.max(1, Math.ceil(minutes / STRIP_CELLS));
+    const cells: Cell[] = Array.from({ length: Math.ceil(minutes / per) }, () => "");
+    for (const r of rows) {
+      const tone = levelTone(r.levelno);
+      const i = Math.floor((Math.floor(r.ts / 60) - start) / per);
+      // (a stretch with nothing above debug stays empty: a cell has no mark for "off")
+      if (tone !== "off" && WORSE[tone] > WORSE[cells[i]]) cells[i] = tone;
+    }
+    return { counts, cells, per, from: start * 60, to: (start + (cells.length - 1) * per) * 60 };
+  }, [rows]);
+  const cell = per === 1 ? "one minute" : `${per} minutes`;
+  return (
+    <Panel title="Loaded records" meta={`${rows.length.toLocaleString()} on this page, counted by level`} pad>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: "var(--space-4) var(--space-6)" }}>
+        <Counters>
+          {debug && <Counter size="sm" value={counts.off} label="debug" tone="off" />}
+          <Counter size="sm" value={counts.info} label="info" tone={counts.info ? "info" : "off"} />
+          <Counter size="sm" value={counts.warn} label="warn" tone={counts.warn ? "warn" : "off"} />
+          <Counter size="sm" value={counts.crit} label="error" tone={counts.crit ? "crit" : "off"} />
+        </Counters>
+        <div style={{ flex: "1 1 420px", minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+          <Cells cells={cells} label={`Worst level logged in each stretch of ${cell}, from ${clock(from)} to ${clock(to)}`} />
+          <Axis labels={[clock(from), `one cell = ${cell} · colour = the worst level logged in it`, clock(to)]} />
+        </div>
+      </div>
+    </Panel>
   );
 }
 
 function LogRow({ rec }: { rec: AppLogRecord }) {
   const [open, setOpen] = useState(false);
-  const lvl = rec.levelno >= 40 ? "crit" : rec.levelno >= 30 ? "warn" : rec.levelno >= 20 ? "info" : "off";
+  const message = <span className="data fd-code-wrap">{rec.message}</span>;
   return (
-    <li className={`log-row log-${lvl}`}>
-      <span className="log-time">{clockTime(rec.ts)}</span>
-      <span className="log-level">{rec.level === "WARNING" ? "WARN" : rec.level}</span>
-      <span className="log-logger" title={rec.logger}>{rec.logger.replace(/^ai_server_monitor\./, "")}</span>
-      <span className="log-msg">
-        {rec.message}
-        {rec.exc && (
-          <>
-            {" "}
-            <button className="linklike" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? "hide traceback" : "traceback"}</button>
-          </>
+    <tr>
+      <td className="fd-nowrap">
+        <Meta>{clockTime(rec.ts)}</Meta>
+      </td>
+      <td className="fd-nowrap">
+        <Status tone={levelTone(rec.levelno)}>{rec.level === "WARNING" ? "WARN" : rec.level}</Status>
+      </td>
+      <td className="fd-nowrap">
+        <span className="fd-meta" title={rec.logger}>
+          {rec.logger.replace(/^ai_server_monitor\./, "")}
+        </span>
+      </td>
+      <td>
+        {rec.exc ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 12px" }}>
+              {message}
+              <Button variant="link" onClick={() => setOpen(!open)} aria-expanded={open}>
+                {open ? "hide traceback" : "traceback"}
+              </Button>
+            </div>
+            {open && (
+              <Scroll max={320}>
+                <Code wrap>{rec.exc}</Code>
+              </Scroll>
+            )}
+          </div>
+        ) : (
+          message
         )}
-        {open && rec.exc && <pre className="mono-box">{rec.exc}</pre>}
-      </span>
-    </li>
+      </td>
+    </tr>
   );
 }

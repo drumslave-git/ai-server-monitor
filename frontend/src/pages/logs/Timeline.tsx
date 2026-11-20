@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { bytes } from "../../fmt";
-import { Panel } from "../../ui";
+import { Axis, Bar, Button, Code, ErrorText, Legend, Meta, Panel, Row, Split, Status } from "../../kit";
 import { ms, num, prettyJson } from "./format";
+import { CallStatus, Scroll, Section } from "./parts";
 import type { Timeline, TimelineEntry, ToolCallDetail } from "./types";
 
 /** The LLM calls and tool calls that belong together (a chat turn, an agent run),
@@ -25,56 +26,70 @@ export function TimelineView({ timeline }: { timeline: Timeline }) {
   const llm = entries.filter((e) => e.type === "llm").length;
   const tools = entries.length - llm;
   return (
-    <Panel
-      title="Timeline"
-      aside={
-        <span className="muted">
-          {llm} LLM {llm === 1 ? "call" : "calls"}, {tools} tool {tools === 1 ? "call" : "calls"} · {ms(span * 1000)}
-        </span>
-      }
-    >
-      <ol className="tl">
-        {entries.map((e) => (
-          <TimelineRow key={`${e.type}-${e.id}`} entry={e} t0={t0} span={span} selected={e.type === "llm" && e.id === timeline.selected} />
-        ))}
-      </ol>
+    <Panel title="Timeline" meta={`${llm} LLM ${llm === 1 ? "call" : "calls"}, ${tools} tool ${tools === 1 ? "call" : "calls"} · ${ms(span * 1000)}`}>
+      {entries.map((e) => (
+        <TimelineRow key={`${e.type}-${e.id}`} entry={e} t0={t0} span={span} selected={e.type === "llm" && e.id === timeline.selected} />
+      ))}
+      <Row>
+        <div style={{ flex: "1 0 100%", minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+          {/* Ticks at every quarter of the span the bars above share. */}
+          <Axis labels={[0, 1, 2, 3, 4].map((i) => (i === 0 ? "0" : ms((span * 1000 * i) / 4)))} />
+          <Legend>
+            <Status tone="info" plain>waiting for the first token</Status>
+            <Status tone="ok" plain>generating</Status>
+            <Status tone="text" plain>tool running</Status>
+            {entries.some(failed) && <Status tone="crit" plain>failed</Status>}
+          </Legend>
+        </div>
+      </Row>
     </Panel>
   );
 }
 
 const duration = (e: TimelineEntry) => (e.type === "llm" ? (e.total_ms ?? 0) : (e.duration_ms ?? 0));
+const failed = (e: TimelineEntry) => (e.type === "llm" ? e.status !== "ok" : e.ok === false);
 
 function TimelineRow({ entry: e, t0, span, selected }: { entry: TimelineEntry; t0: number; span: number; selected: boolean }) {
   const [open, setOpen] = useState(false);
-  const left = ((e.ts - t0) / span) * 100;
-  const width = Math.max((duration(e) / 1000 / span) * 100, 0.8);
-  const failed = e.type === "llm" ? e.status !== "ok" : e.ok === false;
+  const start = e.ts - t0;
+  const bad = failed(e);
+  const llm = e.type === "llm";
+  // An LLM call that went well shows its wait for the first token inside its bar.
+  const firstToken = llm && !bad && e.ttft_ms !== null && e.ttft_ms !== undefined ? start + e.ttft_ms / 1000 : undefined;
   return (
-    <li className={`tl-row tl-${e.type}${selected ? " tl-selected" : ""}`}>
-      <div className="tl-label">
-        <span className="tl-kind">{e.type === "llm" ? (e.link_step ? `LLM · step ${e.link_step}` : "LLM") : "tool"}</span>
-        {e.type === "llm" ? (
-          <>
-            {selected ? <strong>this call</strong> : <a href={`#/logs/llm/${e.id}`}>call #{e.id}</a>}
-            <span className="muted">
-              {num(e.prompt_tokens)} → {num(e.completion_tokens)} tokens
-              {e.tool_calls_count ? ` · asked for ${e.tool_calls_count} tool${e.tool_calls_count === 1 ? "" : "s"}` : e.finish_reason ? ` · ${e.finish_reason}` : ""}
+    <Row current={selected}>
+      <span style={{ flex: "0 0 104px" }}>
+        <Meta>{llm ? (e.link_step ? `LLM · step ${e.link_step}` : "LLM") : "tool"}</Meta>
+      </span>
+      {llm ? (
+        <>
+          {selected ? (
+            <strong>this call</strong>
+          ) : (
+            <span className="data">
+              <a href={`#/logs/llm/${e.id}`}>call #{e.id}</a>
             </span>
-          </>
-        ) : (
-          <>
-            <button className="linklike mono" onClick={() => setOpen(!open)} aria-expanded={open}>{e.tool}</button>
-            <span className="muted">{e.result_size !== null && e.result_size !== undefined ? bytes(e.result_size) : ""}</span>
-          </>
-        )}
-        {failed && <span className="warn-text">{e.type === "llm" ? e.status : "failed"}</span>}
-        <span className="tl-ms">{ms(duration(e))}</span>
-      </div>
-      <div className="tl-track" aria-hidden>
-        <span className={`tl-bar ${e.type === "llm" ? "seg-gen" : "seg-tool"}${failed ? " tl-failed" : ""}`} style={{ left: `${left}%`, width: `${Math.min(width, 100 - left)}%` }} />
-      </div>
-      {open && e.type === "tool" && <ToolBody id={e.id} fallbackError={e.error ?? null} />}
-    </li>
+          )}
+          <span className="fd-dim">
+            {num(e.prompt_tokens)} → {num(e.completion_tokens)} tokens
+            {e.tool_calls_count ? ` · asked for ${e.tool_calls_count} tool${e.tool_calls_count === 1 ? "" : "s"}` : e.finish_reason ? ` · ${e.finish_reason}` : ""}
+          </span>
+        </>
+      ) : (
+        <>
+          <Button variant="link" onClick={() => setOpen(!open)} aria-expanded={open}>
+            {e.tool}
+          </Button>
+          {e.result_size !== null && e.result_size !== undefined && <span className="fd-dim">{bytes(e.result_size)}</span>}
+        </>
+      )}
+      {bad && <CallStatus status={llm ? (e.status ?? "") : "error"} />}
+      <span className="data" style={{ marginLeft: "auto" }}>
+        {ms(duration(e))}
+      </span>
+      <Bar size="sm" flex="1 0 100%" start={start} inner={firstToken} end={start + duration(e) / 1000} total={span} tone={bad ? "crit" : llm ? "ok" : "text"} />
+      {open && !llm && <ToolBody id={e.id} fallbackError={e.error ?? null} />}
+    </Row>
   );
 }
 
@@ -84,16 +99,30 @@ function ToolBody({ id, fallbackError }: { id: number; fallbackError: string | n
   useEffect(() => {
     api.get<ToolCallDetail>(`/api/logs/tools/${id}`).then(setTool, (e: Error) => setError(e.message));
   }, [id]);
-  if (error) return <p className="error small">{error}</p>;
-  if (!tool) return <p className="muted small">Loading…</p>;
   const show = (v: unknown) => (typeof v === "string" ? prettyJson(v) : JSON.stringify(v, null, 2));
   return (
-    <div className="tl-tool">
-      <h4>Arguments</h4>
-      <pre className="mono-box">{tool.args === null || tool.args === undefined ? "—" : show(tool.args)}</pre>
-      <h4>{tool.ok ? "Result" : "Error"}{tool.truncated ? " (cut at the storage cap)" : ""}</h4>
-      <pre className="mono-box">{tool.result === null || tool.result === undefined ? (tool.error ?? fallbackError ?? "—") : show(tool.result)}</pre>
-      {!tool.ok && tool.error && tool.result !== null && <p className="error small">{tool.error}</p>}
+    <div style={{ flex: "1 0 100%", minWidth: 0, display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+      {error ? (
+        <ErrorText>{error}</ErrorText>
+      ) : !tool ? (
+        <Meta>Loading…</Meta>
+      ) : (
+        <>
+          <Split>
+            <Section title="arguments" flex="1 1 260px">
+              <Scroll max={240}>
+                <Code>{tool.args === null || tool.args === undefined ? "—" : show(tool.args)}</Code>
+              </Scroll>
+            </Section>
+            <Section title={`${tool.ok ? "result" : "error"}${tool.truncated ? " (cut at the storage cap)" : ""}`} flex="1 1 260px">
+              <Scroll max={240}>
+                <Code wrap>{tool.result === null || tool.result === undefined ? (tool.error ?? fallbackError ?? "—") : show(tool.result)}</Code>
+              </Scroll>
+            </Section>
+          </Split>
+          {!tool.ok && tool.error && tool.result !== null && <ErrorText>{tool.error}</ErrorText>}
+        </>
+      )}
     </div>
   );
 }

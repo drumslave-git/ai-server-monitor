@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api";
+import { Actions, Button, Empty, ErrorText, Field, Input, Legend, Meta, Meter, Notice, Panel, Row, Select, Stack, Status, Table, Toolbar } from "../../kit";
 import { useStream } from "../../live";
-import { Empty } from "../../ui";
-import { StatusMark } from "./CallDetail";
 import { linkLabel, ms, purposeLabel, stamp, tokens } from "./format";
+import { CallStatus } from "./parts";
 import type { LlmCallList, LlmCallSummary, TraceStats } from "./types";
 
 const PAGE = 50;
 const RANGES: { key: string; label: string; seconds: number | null }[] = [
-  { key: "1h", label: "Last hour", seconds: 3600 },
-  { key: "24h", label: "Last 24 hours", seconds: 86400 },
-  { key: "7d", label: "Last 7 days", seconds: 7 * 86400 },
-  { key: "all", label: "Everything stored", seconds: null },
+  { key: "1h", label: "last hour", seconds: 3600 },
+  { key: "24h", label: "last 24 hours", seconds: 86400 },
+  { key: "7d", label: "last 7 days", seconds: 7 * 86400 },
+  { key: "all", label: "everything stored", seconds: null },
 ];
+/** Cells of the two meters of a row. */
+const TOKEN_CELLS = 12;
+const TIME_CELLS = 16;
 
 export function LlmCallsList({ link }: { link: { kind: string; id: string; turn?: string } | null }) {
   const [purpose, setPurpose] = useState("");
@@ -62,7 +65,7 @@ export function LlmCallsList({ link }: { link: { kind: string; id: string; turn?
     return () => {
       alive = false;
     };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [purpose, status, range, q, offset, tick, link?.kind, link?.id, link?.turn]);
 
   useEffect(() => {
@@ -78,87 +81,133 @@ export function LlmCallsList({ link }: { link: { kind: string; id: string; turn?
 
   const items = data?.items ?? [];
   const filtered = Boolean(purpose || status || q || range !== "all" || link);
+  // The meters of every row share one maximum, so the rows of a page compare.
+  const maxTokens = Math.max(0, ...items.map((c) => c.prompt_tokens ?? 0));
+  const maxMs = Math.max(0, ...items.map((c) => c.total_ms ?? 0));
   return (
-    <div className="stack">
-      {stats && !stats.enabled && <div className="notice">LLM call logging is switched off. New calls are not recorded.</div>}
+    <>
+      {stats && !stats.enabled && <Notice>LLM call logging is switched off. New calls are not recorded.</Notice>}
       {stats && stats.enabled && !stats.store_bodies && (
-        <div className="notice">Only metadata is stored (no prompts or answers). Turn on full bodies in the log settings to see what was sent.</div>
+        <Notice>Only metadata is stored (no prompts or answers). Turn on full bodies in the log settings to see what was sent.</Notice>
       )}
-      {link && (
-        <p className="muted">
-          Calls belonging to {link.kind} {link.id} · <a href="#/logs/llm">show all</a>
-        </p>
-      )}
-      <div className="log-filters">
-        <input type="search" className="log-search" placeholder="Search prompts and answers" value={text} onChange={(e) => setText(e.target.value)} aria-label="Search in messages" />
-        <select value={purpose} onChange={(e) => { setPurpose(e.target.value); setOffset(0); }} aria-label="Purpose">
-          <option value="">All purposes</option>
-          {(stats?.purposes ?? []).map((p) => (
-            <option key={p.purpose} value={p.purpose}>{purposeLabel(p.purpose)} ({p.count})</option>
-          ))}
-        </select>
-        <select value={status} onChange={(e) => { setStatus(e.target.value); setOffset(0); }} aria-label="Status">
-          <option value="">Any status</option>
-          <option value="ok">OK</option>
-          <option value="error">Failed</option>
-          <option value="cancelled">Cancelled</option>
-        </select>
-        <select value={range} onChange={(e) => { setRange(e.target.value); setOffset(0); }} aria-label="Time range">
-          {RANGES.map((r) => (<option key={r.key} value={r.key}>{r.label}</option>))}
-        </select>
-      </div>
+      <Toolbar>
+        <Field label="search" flex="3 1 280px">
+          <Input type="search" placeholder="Search prompts and answers" value={text} onChange={(e) => setText(e.target.value)} aria-label="Search in messages" />
+        </Field>
+        <Field label="purpose" flex="1 1 180px">
+          <Select value={purpose} onChange={(e) => { setPurpose(e.target.value); setOffset(0); }} aria-label="Purpose">
+            <option value="">all purposes</option>
+            {(stats?.purposes ?? []).map((p) => (
+              <option key={p.purpose} value={p.purpose}>{purposeLabel(p.purpose)} ({p.count})</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="status" flex="1 1 150px">
+          <Select value={status} onChange={(e) => { setStatus(e.target.value); setOffset(0); }} aria-label="Status">
+            <option value="">any status</option>
+            <option value="ok">OK</option>
+            <option value="error">failed</option>
+            <option value="cancelled">cancelled</option>
+          </Select>
+        </Field>
+        <Field label="range" flex="1 1 180px">
+          <Select value={range} onChange={(e) => { setRange(e.target.value); setOffset(0); }} aria-label="Time range">
+            {RANGES.map((r) => (<option key={r.key} value={r.key}>{r.label}</option>))}
+          </Select>
+        </Field>
+      </Toolbar>
 
-      {error && <p className="error">{error}</p>}
+      {error && <ErrorText>{error}</ErrorText>}
       {data && items.length === 0 && (
-        <Empty>{filtered ? "No calls match these filters." : "No LLM calls recorded yet. They appear here as soon as you ask the chat something or the agent runs."}</Empty>
+        <Panel>
+          <Empty>{filtered ? "No calls match these filters." : "No LLM calls recorded yet. They appear here as soon as you ask the chat something or the agent runs."}</Empty>
+        </Panel>
       )}
       {items.length > 0 && (
-        <section className="panel call-list-panel">
-          <div className="call-row call-header" aria-hidden>
-            <span>Time</span><span>Call</span><span>Status</span><span className="num">Tokens in → out</span><span className="num">First token</span><span className="num">Total</span>
-          </div>
-          <ul className="call-list">
-            {items.map((c) => (<CallRow key={c.id} call={c} />))}
-          </ul>
-          <div className="pager">
-            <span className="muted small">
+        <Panel>
+          <Table>
+            <thead>
+              <tr>
+                <th>time</th>
+                <th>purpose · model</th>
+                <th style={{ minWidth: 260 }}>prompt or answer · where it ran</th>
+                <th>status</th>
+                <th>tokens in → out · bar = in</th>
+                <th>
+                  <Legend>
+                    <span>time</span>
+                    <Status tone="info" plain>first token</Status>
+                    <Status tone="ok" plain>total</Status>
+                  </Legend>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((c) => (<CallRow key={c.id} call={c} maxTokens={maxTokens} maxMs={maxMs} />))}
+            </tbody>
+          </Table>
+          <Row>
+            <Meta>
               {offset + 1}–{offset + items.length} of {data?.total}
               {data && !data.complete && " · search covers the newest 2,000 calls"}
-            </span>
-            <span className="pager-buttons">
-              <button className="btn" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>Newer</button>
-              <button className="btn" disabled={!data || offset + PAGE >= data.total} onClick={() => setOffset(offset + PAGE)}>Older</button>
-            </span>
-          </div>
-        </section>
+            </Meta>
+            <div style={{ marginLeft: "auto" }}>
+              <Actions>
+                <Button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>newer</Button>
+                <Button disabled={!data || offset + PAGE >= data.total} onClick={() => setOffset(offset + PAGE)}>older</Button>
+              </Actions>
+            </div>
+          </Row>
+        </Panel>
       )}
-    </div>
+    </>
   );
 }
 
-function CallRow({ call: c }: { call: LlmCallSummary }) {
+function CallRow({ call: c, maxTokens, maxMs }: { call: LlmCallSummary; maxTokens: number; maxMs: number }) {
   const label = linkLabel(c);
+  const preview = c.status !== "ok" && c.error ? c.error : c.response_preview || c.request_preview || "";
   return (
-    <li>
-      <a className={`call-row${c.status !== "ok" ? " call-bad" : ""}`} href={`#/logs/llm/${c.id}`}>
-        <span className="call-time">{stamp(c.ts)}</span>
-        <span className="call-what">
-          <span className="call-purpose">
-            {purposeLabel(c.purpose)}
-            {c.attempt > 1 && <span className="muted"> · retry {c.attempt}</span>}
-            {c.tool_calls_count > 0 && <span className="muted"> · {c.tool_calls_count} tool call{c.tool_calls_count === 1 ? "" : "s"}</span>}
-          </span>
-          <span className="muted call-model mono">{c.model ?? "—"}</span>
-          <span className="call-preview">{c.status !== "ok" && c.error ? c.error : (c.response_preview || c.request_preview || "")}</span>
-          {label && <span className="call-link muted">{label}</span>}
-        </span>
-        <span className="call-status"><StatusMark status={c.status} /></span>
-        <span className="call-nums">
-          <span className="num"><span className="lbl">Tokens </span>{tokens(c)}</span>
-          <span className="num"><span className="lbl">First token </span>{ms(c.ttft_ms)}</span>
-          <span className="num"><span className="lbl">Total </span>{ms(c.total_ms)}</span>
-        </span>
-      </a>
-    </li>
+    <tr>
+      <td className="fd-nowrap">
+        <Meta>{stamp(c.ts)}</Meta>
+      </td>
+      <td>
+        <Stack>
+          <strong className="fd-nowrap">
+            {purposeLabel(c.purpose).toLowerCase()}
+            {c.attempt > 1 && ` · retry ${c.attempt}`}
+            {c.tool_calls_count > 0 && ` · ${c.tool_calls_count} tool call${c.tool_calls_count === 1 ? "" : "s"}`}
+          </strong>
+          <Meta>{c.model ?? "—"}</Meta>
+        </Stack>
+      </td>
+      <td className={c.status === "error" ? "fd-fill fd-t-crit" : "fd-fill"}>
+        <Stack>
+          {/* The row's way into the call: its preview, or its number when nothing was stored to preview. */}
+          <a className="fd-title-link fd-truncate" href={`#/logs/llm/${c.id}`}>
+            {preview || `call #${c.id}`}
+          </a>
+          {label && <Meta>{label}</Meta>}
+        </Stack>
+      </td>
+      <td>
+        <CallStatus status={c.status} />
+      </td>
+      <td className="fd-nowrap">
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <Meter value={c.prompt_tokens ?? 0} max={maxTokens} count={TOKEN_CELLS} tone="text" />
+          <Meta>{tokens(c)}</Meta>
+        </div>
+      </td>
+      <td className="fd-nowrap">
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <Meter value={c.total_ms ?? 0} inner={c.ttft_ms ?? undefined} innerTone="info" max={maxMs} count={TIME_CELLS} tone="ok" />
+          <Meta>
+            first {ms(c.ttft_ms)} · total {ms(c.total_ms)}
+          </Meta>
+        </div>
+      </td>
+    </tr>
   );
 }

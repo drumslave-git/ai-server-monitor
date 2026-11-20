@@ -1,8 +1,7 @@
-import { PageHead } from "../ui";
+import { PageHeader, Tabs } from "../kit";
 import { AppLogView } from "./logs/AppLog";
 import { CallDetail } from "./logs/CallDetail";
 import { LlmCallsList } from "./logs/LlmCalls";
-import "./logs/logs.css";
 
 /** Routes (params after `#/logs`):
  *    (none) | llm            LLM calls list
@@ -16,15 +15,31 @@ export function LogsPage({ params }: { params: string[] }) {
   const callId = tab === "llm" && /^\d+$/.test(params[1] ?? "") ? Number(params[1]) : null;
   const link = tab === "llm" && params[1] === "for" && params[2] && params[3] ? { kind: params[2], id: params[3], turn: params[4] } : null;
 
+  // One call has its own header: the way back, the call's number, its buttons.
+  if (callId !== null) return <CallDetail id={callId} />;
+
   return (
-    <div className="logs">
-      <PageHead title="Logs">
-        <nav className="log-tabs" aria-label="Log type">
-          <a href="#/logs/llm" className={tab === "llm" ? "active" : undefined} aria-current={tab === "llm" ? "page" : undefined}>LLM calls</a>
-          <a href="#/logs/app" className={tab === "app" ? "active" : undefined} aria-current={tab === "app" ? "page" : undefined}>App log</a>
-        </nav>
-      </PageHead>
-      {tab === "app" ? <AppLogView /> : callId !== null ? <CallDetail id={callId} /> : <LlmCallsList link={link} />}
-    </div>
+    <>
+      <PageHeader
+        title="Logs"
+        note={
+          link ? (
+            <>
+              Calls belonging to {link.kind} {link.id} · <a href="#/logs/llm">show all</a>
+            </>
+          ) : undefined
+        }
+      >
+        <Tabs
+          label="Log type"
+          value={tab}
+          tabs={[
+            { key: "llm", label: "LLM calls", href: "#/logs/llm" },
+            { key: "app", label: "App log", href: "#/logs/app" },
+          ]}
+        />
+      </PageHeader>
+      {tab === "app" ? <AppLogView /> : <LlmCallsList link={link} />}
+    </>
   );
 }
