@@ -38,6 +38,8 @@ import {
   ErrorText,
   Field,
   FieldValue,
+  IconButton,
+  IconLink,
   Inline,
   Input,
   KeyValue,
@@ -49,11 +51,12 @@ import {
   Notice,
   PageHeader,
   Pad,
+  Pane,
+  Panes,
   Panel,
   Picker,
   Row,
   Schedule,
-  Scroll,
   Segmented,
   Select,
   SortableList,
@@ -133,8 +136,8 @@ function JobList() {
         title="Jobs"
         note="A job is an LLM run with one narrow topic. A summary runs its jobs one after another, sums up their results and sets its status on the Dashboard. A job in a summary has no schedule of its own: the summary runs it."
       >
-        <LinkButton href="#/jobs/new/summary">new summary</LinkButton>
-        <LinkButton variant="primary" href="#/jobs/new">
+        <IconLink icon="newSummary" label="new summary" href="#/jobs/new/summary" />
+        <LinkButton variant="primary" icon="add" href="#/jobs/new">
           new job
         </LinkButton>
       </PageHeader>
@@ -143,14 +146,15 @@ function JobList() {
       {!jobs.data ? (
         !jobs.error && <Meta>Loading…</Meta>
       ) : (
-        <>
+        <Panes>
+          <Pane bare label="Summaries and jobs">
           <Panel title="Summaries" meta={`${summaries.length} · each runs its jobs in order, then sums them up`}>
             {summaries.length === 0 ? (
               <Empty>
                 No summaries. <a href="#/jobs/new/summary">Create one</a>
               </Empty>
             ) : (
-              <Table stack head={["on", "summary", "schedule", "jobs", "notify", "last result", "next run", ""]}>
+              <Table stack stickyHead head={["on", "summary", "schedule", "jobs", "notify", "last result", "next run", ""]}>
                 <tbody>
                   {summaries.map((s) => (
                     <Tr key={s.slug} off={!s.enabled}>
@@ -187,14 +191,7 @@ function JobList() {
                         <NextRun job={s} paused={paused} now={now} />
                       </Td>
                       <Td right>
-                        <Button
-                          onClick={() => void start(s)}
-                          disabled={running.has(s.slug)}
-                          title={`Runs its ${s.members.length} jobs one after another, then the summary`}
-                          aria-label={`Run ${s.name} now: its ${s.members.length} jobs, then the summary`}
-                        >
-                          run now
-                        </Button>
+                        <RunButton job={s} names={names} disabled={running.has(s.slug)} onRun={() => void start(s)} />
                       </Td>
                     </Tr>
                   ))}
@@ -209,7 +206,7 @@ function JobList() {
                 No jobs. <a href="#/jobs/new">Create one</a>
               </Empty>
             ) : (
-              <Table stack head={["on", "job", "runs", "notify", "last result", "next run", ""]}>
+              <Table stack stickyHead head={["on", "job", "runs", "notify", "last result", "next run", ""]}>
                 {jobGroups(topics).map((g) => (
                   <tbody key={g.label}>
                     <Tr group>
@@ -262,7 +259,8 @@ function JobList() {
               </Table>
             )}
           </Panel>
-        </>
+          </Pane>
+        </Panes>
       )}
     </>
   );
@@ -328,30 +326,20 @@ function NextRun({ job, paused, now, via = [] }: { job: Job; paused: boolean; no
   );
 }
 
-/** "run now" for a job on its own; "run alone" for a job in a summary, which runs it without the summary. */
-function RunButton({ job, names, disabled, onRun, variant }: { job: Job; names: Record<string, string>; disabled: boolean; onRun: () => void; variant?: "primary" }) {
-  if (job.kind === "summary")
-    return (
-      <Button
-        variant={variant}
-        onClick={onRun}
-        disabled={disabled}
-        title={`Runs its ${job.members.length} jobs one after another, then the summary`}
-        aria-label={`Run ${job.name} now: its ${job.members.length} jobs, then the summary`}
-      >
-        run now
-      </Button>
-    );
-  if (job.summaries.length === 0)
-    return (
-      <Button variant={variant} onClick={onRun} disabled={disabled} aria-label={`Run ${job.name} now`}>
-        run now
-      </Button>
-    );
+/** "run now" for a job on its own; "run alone" for a job in a summary, which runs it without the summary.
+ *  In a row an icon with its hint; main: the page's main action, icon and word. */
+function RunButton({ job, names, disabled, onRun, main }: { job: Job; names: Record<string, string>; disabled: boolean; onRun: () => void; main?: boolean }) {
   const where = job.summaries.map((s) => names[s] ?? s).join(", ");
+  const { word, label, hint } =
+    job.kind === "summary"
+      ? { word: "run now", label: `Run ${job.name} now: its ${job.members.length} jobs, then the summary`, hint: `Runs its ${job.members.length} jobs one after another, then the summary` }
+      : job.summaries.length === 0
+        ? { word: "run now", label: `Run ${job.name} now`, hint: undefined }
+        : { word: "run alone", label: `Run ${job.name} alone, without ${where}`, hint: `Runs only this job, not ${where}` };
+  if (!main) return <IconButton small icon="run" label={label} hint={hint} disabled={disabled} onClick={onRun} />;
   return (
-    <Button variant={variant} onClick={onRun} disabled={disabled} title={`Runs only this job, not ${where}`} aria-label={`Run ${job.name} alone, without ${where}`}>
-      run alone
+    <Button variant="primary" icon="run" onClick={onRun} disabled={disabled} title={hint} aria-label={label}>
+      {word}
     </Button>
   );
 }
@@ -564,17 +552,13 @@ function JobForm({ job, kind, all, notice, onReset }: { job: Job | null; kind: K
         }
       >
         {job?.builtin && job.edited && (
-          <Button onClick={() => setAsking("reset")} disabled={busy}>
-            reset to default
-          </Button>
+          <IconButton icon="reset" label="reset to default" onClick={() => setAsking("reset")} disabled={busy} />
         )}
         {job && !job.builtin && (
-          <Button variant="danger" onClick={() => setAsking("delete")} disabled={busy}>
-            delete
-          </Button>
+          <IconButton icon="remove" variant="danger" label="delete" onClick={() => setAsking("delete")} disabled={busy} />
         )}
         <LinkButton href={back}>cancel</LinkButton>
-        <Button variant="primary" type="submit" form={formId} disabled={busy}>
+        <Button variant="primary" icon={creating ? "add" : "save"} type="submit" form={formId} disabled={busy}>
           {creating ? `create ${noun}` : "save"}
         </Button>
       </PageHeader>
@@ -731,9 +715,7 @@ function JobForm({ job, kind, all, notice, onReset }: { job: Job | null; kind: K
           title="Jobs in this summary"
           meta={`${members.length} · they run in this order, then the summary sums them up`}
           aside={
-            <Button onClick={() => setPicking(true)} disabled={busy}>
-              add job
-            </Button>
+            <IconButton icon="add" label="add job" onClick={() => setPicking(true)} disabled={busy} />
           }
         >
           {members.length === 0 ? (
@@ -986,17 +968,15 @@ function JobDetail({ slug, runId }: { slug: string; runId: number | null }) {
           </>
         }
       >
-        <LinkButton href={`#/jobs/${slug}/edit`}>edit</LinkButton>
-        <RunButton job={j} names={names} variant="primary" disabled={isRunning} onRun={() => void start()} />
+        <IconLink icon="rename" label="edit" href={`#/jobs/${slug}/edit`} />
+        <RunButton job={j} names={names} main disabled={isRunning} onRun={() => void start()} />
       </PageHeader>
       {error && <ErrorText>{error}</ErrorText>}
       {notice && (
         <Notice
           title="Saved"
           action={
-            <Button onClick={() => setNotice(null)} aria-label="Dismiss this notice">
-              dismiss
-            </Button>
+            <IconButton small icon="close" label="dismiss" hint="Dismiss this notice" onClick={() => setNotice(null)} />
           }
         >
           {notice}
@@ -1013,9 +993,9 @@ function JobDetail({ slug, runId }: { slug: string; runId: number | null }) {
           </Empty>
         </Panel>
       ) : (
-        <Split>
+        <Panes>
           {shown ? (
-            <Column flex={RUN_FLEX} gap={4}>
+            <Pane bare label="Run" resetOn={shown.id}>
               <RunView
                 run={shown}
                 now={now}
@@ -1025,14 +1005,15 @@ function JobDetail({ slug, runId }: { slug: string; runId: number | null }) {
                 names={Object.fromEntries(all.map((x) => [x.slug, x.name]))}
               />
               {isSummary && <QueuePanel run={shown} loading={!full.run && !full.error} names={Object.fromEntries(all.map((x) => [x.slug, x.name]))} now={now} />}
-            </Column>
+            </Pane>
           ) : runId !== null && runs.data ? (
-            <Panel flex={RUN_FLEX}>
-              <Empty>This run is not among the last 50.</Empty>
-            </Panel>
+            <Pane bare label="Run">
+              <Panel>
+                <Empty>This run is not among the last 50.</Empty>
+              </Panel>
+            </Pane>
           ) : null}
-          <Panel title="Runs" meta="bar = how long the run took" flex="2 1 420px">
-            <Scroll max="70vh">
+          <Pane side="wide" title="Runs" meta="bar = how long the run took">
               <List>
                 {items.map((r) => (
                   <ListItem
@@ -1057,9 +1038,8 @@ function JobDetail({ slug, runId }: { slug: string; runId: number | null }) {
                   </ListItem>
                 ))}
               </List>
-            </Scroll>
-          </Panel>
-        </Split>
+          </Pane>
+        </Panes>
       )}
     </>
   );
@@ -1093,9 +1073,6 @@ function useRunWithQueue(id: number | null, again: string) {
   }, [id, again]);
   return { run: run?.id === id ? run : null, error };
 }
-
-/** Where the opened run stands beside the list of runs. */
-const RUN_FLEX = "3 1 520px";
 
 /** A run's tone as the fill of a meter (a run is never "off"). */
 const cellTone = (tone: Tone) => (tone === "off" ? "text" : tone);

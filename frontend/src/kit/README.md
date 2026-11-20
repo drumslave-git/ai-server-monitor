@@ -31,13 +31,13 @@ The design kit with live previews of every component: https://claude.ai/artifact
   at the foot, the current one marked with `aria-current` and its own look). `Main` `resetOn` scrolls back
   to the top when the value changes (the route). A page starts with `PageHeader`, then `Panel`s or `Panes`.
 - The shell fills the window and the page scrolls inside `Main`, never the window. A page with a list
-  beside its content uses `Panes` > `Pane side` (the list, `--pane-side` wide) + `Pane`: each scrolls on
+  beside its content uses `Panes` > `Pane side` (the list, `--pane-side` wide; `side="wide"`, `--pane-side-wide`, for rows that carry more) + `Pane`: each scrolls on
   its own. `Pane` takes `label`, `bare` (no panel frame), `foot` (stays at the pane's foot: a composer, a
   save bar), `resetOn` (back to the top when it changes), `endOn` (to the end when it changes: a thread)
   and `onSubmit` (the pane is a `<form>`). On a phone the panes stack and the window scrolls; a `foot`
   sticks above the bottom bar.
-- `PageHeader` with buttons, `tools` or `back` sticks to the top of its scroller and turns compact while
-  the page scrolls (a scroll-driven animation; where the browser has none it simply stays full size).
+- `PageHeader` sticks to the top of its scroller and turns compact while the page scrolls (smaller title,
+  no note, no meta) (a scroll-driven animation; where the browser has none it simply stays full size).
   `tools` is a row under the title that stays with it (filters); `fold` names it, and on a phone it folds
   behind an icon of that name.
 - Layout: `Split` (blocks side by side that wrap; `stretch`), `Column` (blocks under each other),
@@ -52,13 +52,14 @@ The design kit with live previews of every component: https://claude.ai/artifact
 - Controls: `Button` (`primary`, `warn` for what changes the server, `danger` for what deletes,
   `link`; `icon` puts an icon before the word), `LinkButton` (also `icon`), `IconButton` (an icon alone:
   `label` is its accessible name and its hint, `hint` a longer one, `count` a number beside the icon,
-  `small` for repeated actions in rows, `variant`, `type`), `Switch`, `Checkbox` (`some` = partly selected; `CheckboxBlank` keeps its
+  `small` for repeated actions in rows, `variant`, `type`), `IconLink` (the same as a link: it goes
+  somewhere or downloads a file), `Switch`, `Checkbox` (`some` = partly selected; `CheckboxBlank` keeps its
   room), `Field` with `Input` / `Textarea` / `Select` / `Segmented`, `Joined` (an input with its button
   attached), `FieldValue` (a value that cannot be changed here), `Chip` (a chosen thing with
   "remove"), `Tabs`, `Dialog`, `Confirm` (a yes/no question before something that cannot be undone;
   `variant` colours the yes button), `Picker` (a dialog that lists groups of things to choose one
   from, with a filter), `SortableList` (rows put in order by dragging the handle, by keyboard on the
-  handle — space, arrows, space — or by the up/down buttons; `onRemove` adds "remove").
+  handle — space, arrows, space — or by the up/down icon buttons; `onRemove` adds a take-out icon).
 - Status: `Status` (a lamp plus a word; never colour alone), `Lamp`, `Tag`, `Count`, `Counter`.
 - Data: `Schedule` and `Lane` (time as cells), `Meter` (an amount out of a maximum shared by the list;
   `fluid`), `Gauge` (one reading now with its label and value, for `Rail` `meters`), `Bar` (a span on a
@@ -98,7 +99,7 @@ Page titles are written in normal case (the header uppercases them). Proper name
 ## Icons
 
 Icons are Carbon (`@carbon/icons-react`), and only the kit imports them: `icons.tsx` names each one the
-kit uses, and pages pass a name (`icon="save"`) to `Icon`, `Button`, `LinkButton` or `IconButton`. A new
+kit uses, and pages pass a name (`icon="save"`) to `Icon`, `Button`, `LinkButton`, `IconButton` or `IconLink`. A new
 icon is a new name in `icons.tsx`. An action that repeats (in a row, a toolbar, a list) is an icon alone,
 with its word as the accessible name and the hint shown on hover or focus. The one main action of a page
 is an icon and a word. The pages in the rail and the bottom bar each have an icon. No emoji.

@@ -188,8 +188,7 @@ export function Main({ resetOn, children }: { resetOn?: unknown; children: React
 /** The head of a page. Write the title in normal case; actions go in as children.
  *  tools: a row under the title that belongs to the head (the filters of a list): it stays in view with it.
  *  fold: on a phone the tools fold behind one icon button with this name ("filters").
- *  A head with something to use in it (actions, tools, a way back) stays at the top while the page scrolls
- *  and turns compact: a smaller title, no note. */
+ *  The head stays at the top while the page scrolls and turns compact: a smaller title, no note, no meta. */
 export function PageHeader({
   title,
   note,
@@ -211,7 +210,7 @@ export function PageHeader({
   const toolsId = useId();
   const folds = Boolean(tools && fold);
   return (
-    <header className={cx("fd-head", Boolean(children || tools || back) && "fd-head-sticky")}>
+    <header className="fd-head fd-head-sticky">
       <div className="fd-head-text">
         {(back || meta) && (
           <div className="fd-head-over">
@@ -251,7 +250,8 @@ export function Panes({ children }: { children: ReactNode }) {
   return <div className="fd-panes">{children}</div>;
 }
 
-/** One of the Panes. side: the narrow one at the left (a list of conversations, sections, domains).
+/** One of the Panes. side: the narrow one at the left (a list of conversations, sections, domains);
+ *  "wide" for a list whose rows carry more (the runs of a job).
  *  bare: no box of its own, for panels under each other. foot: stays at its foot (a composer, a save bar).
  *  resetOn: when it changes, the pane scrolls back to the top. endOn: when it changes, it scrolls to its end
  *  (a conversation that grows); on a phone, where the page scrolls instead, the page does. With onSubmit it is a form. */
@@ -269,7 +269,7 @@ export function Pane({
   onSubmit,
   children,
 }: {
-  side?: boolean;
+  side?: boolean | "wide";
   bare?: boolean;
   /** Its name for assistive tech, when it has no title. */
   label?: string;
@@ -291,7 +291,7 @@ export function Pane({
     if (getComputedStyle(el).overflowY === "auto") el.scrollTo(0, el.scrollHeight);
     else document.scrollingElement?.scrollTo(0, document.scrollingElement.scrollHeight);
   }, [endOn]);
-  const className = cx("fd-pane", side && "fd-pane-side", bare && "fd-pane-bare", endOn !== undefined && "fd-pane-thread");
+  const className = cx("fd-pane", side && "fd-pane-side", side === "wide" && "fd-pane-side-wide", bare && "fd-pane-bare", endOn !== undefined && "fd-pane-thread");
   const body = (
     <>
       {(title || aside) && (
@@ -774,8 +774,8 @@ export function SortableList({
     refocus.current = null;
     const row = listRef.current?.querySelector<HTMLElement>(`[data-sort-id="${CSS_ESCAPE(want.id)}"]`);
     const buttons = row ? [...row.querySelectorAll<HTMLButtonElement>("button[data-step]")] : [];
-    const same = buttons.find((b) => b.dataset.step === want.which && !b.disabled);
-    (same ?? buttons.find((b) => !b.disabled))?.focus();
+    const same = buttons.find((b) => b.dataset.step === want.which && !b.ariaDisabled);
+    (same ?? buttons.find((b) => !b.ariaDisabled))?.focus();
   });
   return (
     <DndContext
@@ -851,17 +851,9 @@ function SortableRow({
       </span>
       {entry.trailing && <span className="fd-sort-trailing">{entry.trailing}</span>}
       <span className="fd-sort-buttons">
-        <button type="button" className="fd-btn fd-btn-small" data-step="up" disabled={shown === 0} onClick={() => onStep(-1)} aria-label={`Move ${entry.name} up`}>
-          up
-        </button>
-        <button type="button" className="fd-btn fd-btn-small" data-step="down" disabled={shown === count - 1} onClick={() => onStep(1)} aria-label={`Move ${entry.name} down`}>
-          down
-        </button>
-        {onRemove && (
-          <button type="button" className="fd-btn fd-btn-small" onClick={() => onRemove(entry.id)} aria-label={`Remove ${entry.name}`}>
-            remove
-          </button>
-        )}
+        <IconButton icon="moveUp" small data-step="up" disabled={shown === 0} onClick={() => onStep(-1)} label={`move ${entry.name} up`} hint="Move up" />
+        <IconButton icon="moveDown" small data-step="down" disabled={shown === count - 1} onClick={() => onStep(1)} label={`move ${entry.name} down`} hint="Move down" />
+        {onRemove && <IconButton icon="close" small onClick={() => onRemove(entry.id)} label={`remove ${entry.name}`} hint="Take out" />}
       </span>
     </div>
   );
@@ -975,6 +967,41 @@ export function IconButton({
       </button>
       <div id={hintId} className="fd-hint" role={describes ? "tooltip" : undefined} {...({ popover: "hint" } as object)}>
         {describes ? hint : name}
+      </div>
+    </>
+  );
+}
+
+/** An IconButton that is a link (it goes somewhere, or downloads a file): its name in a hint the same way. */
+export function IconLink({
+  icon,
+  label,
+  hint,
+  variant,
+  small,
+  ...rest
+}: {
+  icon: IconName;
+  label: string;
+  hint?: string;
+  variant?: "default" | "primary" | "warn" | "danger";
+  small?: boolean;
+} & Omit<NoLook<AnchorHTMLAttributes<HTMLAnchorElement>>, "children" | "title" | "aria-label">) {
+  const hintId = useId();
+  const describes = hint !== undefined && hint !== label;
+  return (
+    <>
+      <a
+        {...rest}
+        {...({ interestfor: hintId } as object)}
+        aria-label={label}
+        aria-describedby={describes ? hintId : undefined}
+        className={cx(buttonClass({ variant }), "fd-btn-icon", small && "fd-btn-small")}
+      >
+        <Icon name={icon} />
+      </a>
+      <div id={hintId} className="fd-hint" role={describes ? "tooltip" : undefined} {...({ popover: "hint" } as object)}>
+        {describes ? hint : label}
       </div>
     </>
   );

@@ -547,7 +547,7 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 
 /* Sortable list: the number is the handle; the row that is moved lifts */
 .fd-sort { display: flex; flex-direction: column; }
-.fd-sort-item { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); min-height: var(--control); padding: var(--space-2) 14px var(--space-2) 0; border-top: 1px solid var(--line); background: var(--panel); }
+.fd-sort-item { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); min-height: var(--control); padding: var(--space-2) var(--space-5) var(--space-2) 0; border-top: 1px solid var(--line); background: var(--panel); }
 .fd-sort-item:first-child { border-top: 0; }
 .fd-sort-item:has(.fd-sort-handle:focus-visible) { outline: 2px solid var(--focus); outline-offset: -2px; }
 .fd-sort-dragging { z-index: 2; background: var(--raised); outline: 1px solid var(--ok-text); outline-offset: -1px; box-shadow: 0 6px 18px var(--backdrop); }
@@ -580,6 +580,7 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 .fd-panes { min-width: 0; display: flex; gap: var(--space-4); }
 .fd-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); }
 .fd-pane:not(.fd-pane-side) { flex: 1 1 0; }
+.fd-pane-side-wide { flex-basis: var(--pane-side-wide); }
 .fd-pane-side { flex: 0 0 var(--pane-side); }
 /* one pane alone (a width that shows only the list) takes the whole width */
 .fd-pane-side:only-child { flex: 1 1 auto; }
@@ -599,13 +600,13 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 .fd-head-sticky { position: sticky; top: 0; z-index: 3; margin: 0 calc(-1 * var(--fd-main-x)); padding: var(--fd-main-y) var(--fd-main-x) var(--space-4); border-bottom: 1px solid transparent; background: var(--bg) radial-gradient(var(--grid-dot) 1px, transparent 1px) 0 0 / 22px 22px fixed; interpolate-size: allow-keywords; }
 /* first in the main part, it reaches its top edge (a notice above it keeps it under the notice) */
 .fd-main > .fd-head-sticky:first-child { margin-top: calc(-1 * var(--fd-main-y)); }
-.fd-head-sticky .fd-head-note { overflow: hidden; }
+.fd-head-sticky :is(.fd-head-note, .fd-head-over .fd-meta) { overflow: hidden; }
 @supports ((animation-timeline: scroll()) and (animation-range: 0% 100%)) {
   .fd-head-sticky { animation: fd-head-compact linear both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
   .fd-head-sticky h1 { animation: fd-head-title linear both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
-  .fd-head-sticky .fd-head-note { animation: fd-head-note linear both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
+  .fd-head-sticky :is(.fd-head-note, .fd-head-over .fd-meta) { animation: fd-head-note linear both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
   @media (prefers-reduced-motion: reduce) {
-    .fd-head-sticky, .fd-head-sticky h1, .fd-head-sticky .fd-head-note { animation-timing-function: step-end; }
+    .fd-head-sticky, .fd-head-sticky h1, .fd-head-sticky :is(.fd-head-note, .fd-head-over .fd-meta) { animation-timing-function: step-end; }
   }
 }
 @keyframes fd-head-compact { to { padding-top: var(--space-3); padding-bottom: var(--space-3); border-bottom-color: var(--line); } }

@@ -81,7 +81,7 @@ export function DashboardPage() {
               {summaries.length > 0 ? "Turn one on, or create one, on the Jobs page." : "Create one on the Jobs page."}
             </Text>
             <Actions>
-              <LinkButton variant="primary" href="#/jobs">
+              <LinkButton variant="primary" icon="jobs" href="#/jobs">
                 open jobs
               </LinkButton>
             </Actions>
@@ -247,6 +247,7 @@ function SummaryCard({ job, state, running, paused, now }: { job: Job; state: Su
         <Actions>
           <Button
             variant="primary"
+            icon={running ? "running" : "run"}
             onClick={start}
             disabled={busy || running}
             title={`Runs its ${jobsWord} one after another, then the summary`}

@@ -1,5 +1,36 @@
 // Compositions of kit parts that the log views share.
-import { Status } from "../../kit";
+import type { ReactNode } from "react";
+import { PageHeader, Status, Tabs } from "../../kit";
+
+/** Which calls a list shows when it was opened from a chat or a job run. */
+export type CallsLink = { kind: string; id: string; turn?: string };
+
+/** The head of the Logs page: the tabs, and the filters of the open log under them (folded on a phone). */
+export function LogsHead({ tab, link, tools }: { tab: "llm" | "app"; link?: CallsLink | null; tools: ReactNode }) {
+  return (
+    <PageHeader
+      title="Logs"
+      note={
+        link ? (
+          <>
+            Calls belonging to {link.kind} {link.id} · <a href="#/logs/llm">show all</a>
+          </>
+        ) : undefined
+      }
+      tools={tools}
+      fold="filters"
+    >
+      <Tabs
+        label="Log type"
+        value={tab}
+        tabs={[
+          { key: "llm", label: "LLM calls", href: "#/logs/llm" },
+          { key: "app", label: "App log", href: "#/logs/app" },
+        ]}
+      />
+    </PageHeader>
+  );
+}
 
 /** The state of one LLM call: OK, failed or cancelled. */
 export function CallStatus({ status }: { status: string }) {

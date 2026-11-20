@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api";
-import { Actions, Button, Empty, ErrorText, Field, Input, Legend, Meta, Meter, Notice, Panel, Row, Select, Stack, Status, Table, Td, Text, TitleLink, Toolbar } from "../../kit";
+import { Actions, Button, Empty, ErrorText, Field, Input, Legend, Meta, Meter, Notice, Pane, Panel, Panes, Row, Select, Stack, Status, Table, Td, Text, TitleLink, Toolbar } from "../../kit";
 import { useStream } from "../../live";
 import { linkLabel, ms, purposeLabel, stamp, tokens } from "./format";
-import { CallStatus } from "./parts";
+import { CallStatus, LogsHead, type CallsLink } from "./parts";
 import type { LlmCallList, LlmCallSummary, TraceStats } from "./types";
 
 const PAGE = 50;
@@ -17,7 +17,7 @@ const RANGES: { key: string; label: string; seconds: number | null }[] = [
 const TOKEN_CELLS = 12;
 const TIME_CELLS = 16;
 
-export function LlmCallsList({ link }: { link: { kind: string; id: string; turn?: string } | null }) {
+export function LlmCallsList({ link }: { link: CallsLink | null }) {
   const [purpose, setPurpose] = useState("");
   const [status, setStatus] = useState("");
   const [range, setRange] = useState("all");
@@ -86,10 +86,10 @@ export function LlmCallsList({ link }: { link: { kind: string; id: string; turn?
   const maxMs = Math.max(0, ...items.map((c) => c.total_ms ?? 0));
   return (
     <>
-      {stats && !stats.enabled && <Notice>LLM call logging is switched off. New calls are not recorded.</Notice>}
-      {stats && stats.enabled && !stats.store_bodies && (
-        <Notice>Only metadata is stored (no prompts or answers). Turn on full bodies in the log settings to see what was sent.</Notice>
-      )}
+      <LogsHead
+        tab="llm"
+        link={link}
+        tools={
       <Toolbar>
         <Field label="search" flex="3 1 280px">
           <Input type="search" placeholder="Search prompts and answers" value={text} onChange={(e) => setText(e.target.value)} aria-label="Search in messages" />
@@ -116,7 +116,14 @@ export function LlmCallsList({ link }: { link: { kind: string; id: string; turn?
           </Select>
         </Field>
       </Toolbar>
-
+        }
+      />
+      <Panes>
+      <Pane bare label="LLM calls">
+      {stats && !stats.enabled && <Notice>LLM call logging is switched off. New calls are not recorded.</Notice>}
+      {stats && stats.enabled && !stats.store_bodies && (
+        <Notice>Only metadata is stored (no prompts or answers). Turn on full bodies in the log settings to see what was sent.</Notice>
+      )}
       {error && <ErrorText>{error}</ErrorText>}
       {data && items.length === 0 && (
         <Panel>
@@ -127,6 +134,7 @@ export function LlmCallsList({ link }: { link: { kind: string; id: string; turn?
         <Panel>
           <Table
             stack
+            stickyHead
             head={[
               "time",
               "purpose · model",
@@ -161,6 +169,8 @@ export function LlmCallsList({ link }: { link: { kind: string; id: string; turn?
           </Row>
         </Panel>
       )}
+      </Pane>
+      </Panes>
     </>
   );
 }

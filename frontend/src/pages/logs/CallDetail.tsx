@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../../api";
 import { bytes } from "../../fmt";
-import { Actions, Bar, Button, Code, Column, Empty, ErrorText, Fold, KeyValue, Labeled, Legend, LinkButton, Meta, Notice, PageHeader, Pad, Panel, Row, Split, Status, Text } from "../../kit";
+import { Actions, Bar, Button, Code, Column, Empty, ErrorText, Fold, IconButton, IconLink, KeyValue, Labeled, Legend, Meta, Notice, PageHeader, Pad, Panel, Row, Split, Status, Text } from "../../kit";
 import { approxTokens, linkHref, linkLabel, messageText, ms, prettyJson, purposeLabel, stamp, tokens } from "./format";
 import { CallStatus } from "./parts";
 import { TimelinePanel } from "./Timeline";
@@ -78,12 +78,10 @@ function Loaded({ call }: { call: LlmCall }) {
     <>
       <PageHeader title={purposeLabel(call.purpose)} back={BACK} meta={`call #${call.id}`}>
         <CallStatus status={call.status} />
-        <Button onClick={() => setFold({ open: true, n: (fold?.n ?? 0) + 1 })}>expand all</Button>
-        <Button onClick={() => setFold({ open: false, n: (fold?.n ?? 0) + 1 })}>collapse all</Button>
-        <Button onClick={copy}>{copied ? "copied" : "copy as JSON"}</Button>
-        <LinkButton href={`/api/logs/llm/${call.id}/export`} download>
-          download
-        </LinkButton>
+        <IconButton icon="expandAll" label="expand all" onClick={() => setFold({ open: true, n: (fold?.n ?? 0) + 1 })} />
+        <IconButton icon="collapseAll" label="collapse all" onClick={() => setFold({ open: false, n: (fold?.n ?? 0) + 1 })} />
+        <IconButton icon={copied ? "copied" : "copy"} label={copied ? "copied" : "copy as JSON"} onClick={copy} />
+        <IconLink icon="download" label="download" hint="Download this call as a JSON file" href={`/api/logs/llm/${call.id}/export`} download />
       </PageHeader>
 
       {call.error && (

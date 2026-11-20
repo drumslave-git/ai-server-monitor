@@ -17,7 +17,7 @@ export function Findings({ findings, runId, source }: { findings: RunFinding[]; 
           source={source}
           title={f.title}
           evidence={(f.evidence ?? []).length > 0 ? (f.evidence ?? []).join("\n") : undefined}
-          action={runId !== undefined ? <ExplainButton runId={runId} finding={index} /> : undefined}
+          action={runId !== undefined ? <ExplainButton small runId={runId} finding={index} /> : undefined}
         >
           {[f.detail, f.verified === false ? "Not confirmed by command output." : ""].filter(Boolean).join(" ") || undefined}
         </Finding>

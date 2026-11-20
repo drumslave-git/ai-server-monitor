@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api";
 import { clock } from "../../fmt";
-import { Axis, Button, Cells, Code, Column, Counter, Counters, Empty, ErrorText, Field, Inline, Input, Meta, Notice, Panel, Row, Select, Status, Switch, Table, Td, Text, Toolbar, type Cell } from "../../kit";
+import { Axis, Button, Cells, Code, Column, Counter, Counters, Empty, ErrorText, Field, Inline, Input, Meta, Notice, Pane, Panel, Panes, Row, Select, Status, Switch, Table, Td, Text, Toolbar, type Cell } from "../../kit";
 import { clockTime } from "./format";
+import { LogsHead } from "./parts";
 import type { AppLogList, AppLogRecord } from "./types";
 
 const MAX_ROWS = 1500;
@@ -110,6 +111,9 @@ export function AppLogView() {
 
   return (
     <>
+      <LogsHead
+        tab="app"
+        tools={
       <Toolbar>
         <Field label="search the log" flex="3 1 260px">
           <Input type="search" placeholder="Search messages" value={text} onChange={(e) => setText(e.target.value)} aria-label="Search the log" />
@@ -142,6 +146,10 @@ export function AppLogView() {
           </Inline>
         )}
       </Toolbar>
+        }
+      />
+      <Panes>
+      <Pane bare label="App log">
       {skipped > 0 && <Notice>The live view is rate-limited: {skipped.toLocaleString()} records were left out. Reload to see them all.</Notice>}
       {error && <ErrorText>{error}</ErrorText>}
       {loaded && rows.length === 0 && (
@@ -152,7 +160,7 @@ export function AppLogView() {
       {rows.length > 0 && <LoadedSummary rows={rows} debug={level === "DEBUG"} />}
       {rows.length > 0 && (
         <Panel>
-          <Table dense stack head={["time", "level", "logger", { label: "message", width: "100%" }]}>
+          <Table dense stack stickyHead head={["time", "level", "logger", { label: "message", width: "100%" }]}>
             <tbody>
               {rows.map((r) => (<LogRow key={`${r.seq ?? "s"}-${r.id ?? ""}-${r.ts}`} rec={r} />))}
             </tbody>
@@ -164,6 +172,8 @@ export function AppLogView() {
           )}
         </Panel>
       )}
+      </Pane>
+      </Panes>
     </>
   );
 }

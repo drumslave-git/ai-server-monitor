@@ -15,13 +15,15 @@ import {
   ErrorText,
   Field,
   Heading,
+  IconLink,
   Inline,
-  LinkButton,
   Meta,
   Notice,
   PageHeader,
   Pad,
+  Pane,
   Panel,
+  Panes,
   Row,
   Scroll,
   Select,
@@ -206,7 +208,7 @@ function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) 
         <Actions>
           {waiting.length > 0 && (
             <>
-              <Button variant="primary" disabled={busy} onClick={() => onDecide(batch, "approve")}>
+              <Button variant="primary" icon="approve" disabled={busy} onClick={() => onDecide(batch, "approve")}>
                 approve all{waiting.length > 1 ? ` (${waiting.length})` : ""}
               </Button>
               {batch.rest.length > 0 && (
@@ -299,6 +301,8 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
   return (
     <>
       <PageHeader title="Approvals and actions" />
+      <Panes>
+      <Pane bare label="Approvals and audit log">
       {shell && shell.policy !== "off" && !shell.available && (
         <Notice title="Changing shell commands are not available.">
           The chat cannot ask to run them until this is fixed:
@@ -314,9 +318,7 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
         <Panel
           title={`Approval #${extra.id}`}
           aside={
-            <LinkButton variant="link" href="#/approvals">
-              close
-            </LinkButton>
+            <IconLink small icon="close" label="close" hint="Close this approval" href="#/approvals" />
           }
         >
           <BatchCard batch={extra} now={now} focused={false} busy={busy === extra.id} onDecide={decide} onAudit={showAudit} />
@@ -391,7 +393,7 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
           {log.data && log.data.items.length === 0 ? (
             <Empty>No actions recorded{status || action || batch ? " for this filter" : ""}.</Empty>
           ) : (
-            <Table stack head={["time", "action", "status", "source", "detail"]}>
+            <Table stack stickyHead head={["time", "action", "status", "source", "detail"]}>
               <tbody>
                 {(log.data?.items ?? []).map((a) => (
                   <tr key={a.id}>
@@ -435,6 +437,8 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
             </Row>
           )}
         </Panel>
+      </Pane>
+      </Panes>
     </>
   );
 }
