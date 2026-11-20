@@ -27,6 +27,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import httpx
+import pyromark
 from telegram import (
     BotCommand,
     InlineKeyboardButton,
@@ -50,6 +51,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 from telegramify_markdown import RenderConfig, convert, split_entities
+from telegramify_markdown.converter import STANDARD_OPTIONS
 
 from ..actions import ActionError, Conflict, NotFound
 from ..actions.service import outcome_text
@@ -136,12 +138,35 @@ def md_code(text: str) -> str:
     return f"{fence} {text} {fence}"
 
 
+def _literal_html(markdown: str) -> str:
+    """`markdown` with its HTML escaped into literal text. telegramify-markdown drops HTML, and
+    a server's `<none>:<none>` or `<unknown>` has to show; what is code is left alone. The
+    package's own parser (pyromark, same options) decides what is HTML and what is code."""
+    if "<" not in markdown:
+        return markdown
+    source = markdown.encode("utf-8")  # pyromark's ranges count UTF-8 bytes
+    parts, cursor = [], 0
+    for event, span in pyromark.events_with_range(markdown, options=STANDARD_OPTIONS):
+        if isinstance(event, dict) and ("Html" in event or "InlineHtml" in event):
+            parts.append(source[cursor : span["start"]].decode("utf-8"))
+            parts.append(md_escape(source[span["start"] : span["end"]].decode("utf-8")))
+            cursor = span["end"]
+    parts.append(source[cursor:].decode("utf-8"))
+    return "".join(parts)
+
+
+def _convert(markdown: str) -> tuple[str, list[Any]]:
+    """Markdown → (text, entities). The package's LaTeX pass (`\\(…\\)` → math) is off: it
+    rewrites shell code such as `find \\( … \\)` inside code blocks."""
+    return convert(_literal_html(markdown), latex_escape=False, config=RENDER)
+
+
 def markdown_messages(
     markdown: str, limit: int = MESSAGE_LIMIT
 ) -> list[tuple[str, list[MessageEntity]]]:
     """Markdown → (text, entities) messages of at most `limit` UTF-16 units, converted and
     split by telegramify-markdown (a code block at a boundary can be cut into two blocks)."""
-    text, entities = convert(markdown, config=RENDER)
+    text, entities = _convert(markdown)
     return [
         (piece, _entities(piece_entities))
         for piece, piece_entities in split_entities(text, entities, limit)
@@ -1079,7 +1104,7 @@ class TelegramBot:
         keyboard: InlineKeyboardMarkup | None = None,
     ) -> None:
         """Replace a message's text with `text` (Markdown)."""
-        plain, entities = convert(text, config=RENDER)
+        plain, entities = _convert(text)
         try:
             await self.bot.edit_message_text(
                 plain,

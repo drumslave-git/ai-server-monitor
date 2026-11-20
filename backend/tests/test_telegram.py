@@ -24,6 +24,8 @@ from ai_server_monitor.outputs import telegram as telegram_module
 from ai_server_monitor.outputs.telegram import (
     ID_COOLDOWN,
     markdown_messages,
+    md_escape,
+    run_message,
     split_message,
 )
 
@@ -287,6 +289,43 @@ def test_offsets_count_utf16_units_after_cyrillic_and_emoji() -> None:
     assert pre["offset"] == utf16(text[:start])
     assert pre["length"] == utf16("df -h /")
     assert pre["offset"] != start  # the emoji is two units
+
+
+def test_tag_like_text_arrives_literally_and_code_stays_code() -> None:
+    assert entities("3 images tagged <none>:<none>") == ("3 images tagged <none>:<none>", [])
+    assert entities("title <b>x</b> & <full>") == ("title <b>x</b> & <full>", [])  # not bold
+    # a line holding only a tag is an HTML block to the parser: it shows too, with what follows
+    assert entities("Images:\n\n<none>\n- x") == ("Images:\n\n<none>\n- x", [])
+
+    text, found = entities("Tag `<none>` and <none> again")
+    assert text == "Tag <none> and <none> again"
+    assert found == [{"type": "code", "offset": 4, "length": 6}]  # exactly the span
+
+    text, found = entities('```html\n<a href="x">*not* emphasis</a>\n```')
+    assert text == '<a href="x">*not* emphasis</a>'
+    assert found == [{"type": "pre", "offset": 0, "length": utf16(text), "language": "html"}]
+
+    text, found = entities("Образ 💾 <none> и `<none>`")
+    assert text == "Образ 💾 <none> и <none>"
+    code = text.rindex("<none>")
+    assert found == [{"type": "code", "offset": utf16(text[:code]), "length": 6}]
+
+
+def test_long_evidence_is_cut_before_it_becomes_a_code_span() -> None:
+    evidence = "grep `x` " + "y" * 200  # backticks inside, longer than the line limit
+    finding = {"severity": "warn", "title": "t", "evidence": [evidence]}
+    text, found = entities(run_message("job", {"status": "warn", "findings": [finding]}))
+    [code] = [e for e in found if e["type"] == "code"]
+    line = text.splitlines()[-1]
+    assert line.endswith("…") and line.startswith("grep `x` ")  # cut, then wrapped: closed
+    start = utf16(text[: text.index(line)])
+    assert code == {"type": "code", "offset": start, "length": utf16(line)}
+
+
+def test_shell_code_is_not_read_as_latex() -> None:
+    block = "```bash\nfind /var/log \\( -name '*\\times*' \\) -delete\n```"
+    assert entities(block)[0] == "find /var/log \\( -name '*\\times*' \\) -delete"
+    assert entities(md_escape("failed (C:\\alpha) [x]"))[0] == "failed (C:\\alpha) [x]"
 
 
 def test_a_long_message_is_split_with_every_entity_inside_its_piece() -> None:
@@ -945,9 +984,8 @@ def test_summary_changed_sends_first_then_only_when_the_picture_changes(
         assert len(tg.texts()) == 2 and tg.texts()[1].startswith("🔴 Critical")
         run_job(client, "summary")
         last = tg.texts()[2]
-        # HTML in the model's text is dropped by telegramify-markdown (its text stays)
-        assert "• 🔴 x — 12 GB free" in last and "<b>" not in last
-        assert marked(tg.of("sendMessage")[-1], "bold") == ["Critical"]
+        assert "• 🔴 <b>x</b> — 12 GB free" in last  # HTML in the model's text shows as text
+        assert marked(tg.of("sendMessage")[-1], "bold") == ["Critical"]  # not "x"
 
 
 def test_summary_changed_does_not_resend_after_a_restart(
