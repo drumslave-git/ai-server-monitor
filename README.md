@@ -781,10 +781,12 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
   commands on upgrade; an edited one gets them with **reset to default**.
 - **An approval's "why" cut at 300 characters no longer shows a stray backtick** in Telegram: a
   code span the cut would break is left out whole.
-- Pages keep their header and actions in view; lists and content scroll on their own, and the
-  header turns compact as you scroll.
-- Icons with tooltips replace text buttons (run, copy, send, test, remove); MCP servers in
-  Settings are collapsible cards; phones get the bottom bar back.
+- Pages keep their header and actions in view under a compact sticky head, and lists and
+  content scroll on their own in panes, now on Dashboard, Jobs, Approvals and Logs too.
+- Small actions are icons with short hints instead of text buttons (run, copy, send, test,
+  remove); command blocks carry their run and copy icons on their first line. MCP servers in
+  Settings are collapsible cards, phones get the bottom bar back, and there is a new favicon
+  from the kit's mark.
 - The Docker image and CI turn off the IBM telemetry that the Carbon icons' install step runs
   (`IBM_TELEMETRY_DISABLED=true`).
 
