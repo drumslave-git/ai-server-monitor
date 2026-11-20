@@ -787,6 +787,11 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
   remove); command blocks carry their run and copy icons on their first line. MCP servers in
   Settings are collapsible cards, phones get the bottom bar back, and there is a new favicon
   from the kit's mark.
+- Logs show every filter text whole in the page head, and fields that do not fit wrap to a
+  further row; the App log and LLM calls tables are whole, and a card encloses its table when it
+  is scrolled sideways. In Jobs a running job shows a lamp, and the table heading scrolls away
+  with its rows. Hints stay inside their pane, and the MCP tools counters wrap on a narrow pane
+  instead of making it scroll sideways.
 - The Docker image and CI turn off the IBM telemetry that the Carbon icons' install step runs
   (`IBM_TELEMETRY_DISABLED=true`).
 
