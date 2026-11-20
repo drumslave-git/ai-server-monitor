@@ -46,14 +46,20 @@ class JobDef:
 HOUR = 3600
 
 DOCKER_UPDATES = (
+    'h=${DOCKER_HOST:-unix:///var/run/docker.sock}; s=; b=$h; case "$h" in '
+    "tcp://*) b=http://${h#tcp://};; unix://*) s=${h#unix://}; b=http://localhost;; esac; "
     "for i in $(docker ps --format '{{.Image}}' | sort -u); do "
     'l=$(docker image inspect --format \'{{join .RepoDigests " "}}\' "$i" 2>/dev/null); '
-    "r=$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' \"$i\" 2>&1 | tr -d '\"'); "
-    'case "$r" in sha256:*) case "$l" in *"$r"*) echo "current  $i";; *) echo "newer    $i";; esac;; '
+    'r=$(curl -sS ${s:+--unix-socket "$s"} "$b/distribution/$i/json" 2>&1); '
+    'd=$(echo "$r" | sed -n \'s/.*"Descriptor":{[^}]*"digest":"\\(sha256:[0-9a-f]*\\)".*/\\1/p\'); '
+    'case "$d" in sha256:*) case "$l" in *"$d"*) echo "current  $i";; *) echo "newer    $i";; esac;; '
     '*) echo "unknown  $i: $(echo "$r" | head -1)";; esac; done'
 )
 """One line per image of a running container: "current", "newer" (the registry has another
-digest for its tag) or "unknown" with the registry's error."""
+digest for its tag) or "unknown" with the first line of the answer. The registry's digest comes
+from the Docker daemon (Engine API `GET /distribution/<image>/json`, `Descriptor.digest`), asked
+with curl at the same $DOCKER_HOST the `docker` commands use: `tcp://` as http, `unix://` through
+the socket, unset as Docker's own default socket. Nothing is written on the host."""
 
 JOURNAL_COUNTS = "sort | uniq -c | sort -rn"
 
@@ -123,7 +129,8 @@ Run this ONE command; it prints one line per image:
 `{DOCKER_UPDATES}`
 "current": the registry has the same image. "newer": the registry has a different image for
 that tag (an update). "unknown": the registry could not be asked (the error follows; images
-built locally always show this).
+built locally always show this). An answer "403 Forbidden" comes from the Docker proxy: its
+service in the compose file lacks the line `DISTRIBUTION: 1`; say so in the finding.
 ok: always, unless no image could be checked at all (then: could not check, with the first
 error line).
 Each "newer" image is one info finding naming the image. Put the counts of current, newer and

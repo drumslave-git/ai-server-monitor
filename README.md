@@ -99,6 +99,7 @@ six or more tabs open the page stalls.
 | `# gpus: all` | Uncomment to make an NVIDIA GPU visible to the shell (`nvidia-smi`; needs the NVIDIA container runtime). |
 | `docker-proxy` (`tecnativa/docker-socket-proxy`) | Lets only GET requests through to the Docker socket (mounted `:ro`): containers can be listed, inspected, their logs read; nothing can be started, stopped or deleted. |
 | proxy env `CONTAINERS`, `IMAGES`, `INFO`, `SYSTEM` | The API sections allowed: containers (state, stats, logs), images, engine info, disk usage (`docker system df`). |
+| proxy env `DISTRIBUTION: 1` | Lets the `docker:updates` job ask Docker for the registry's digest of an image tag (`GET /distribution/<image>/json`; Docker contacts the registry, nothing is pulled). Without it every image shows as unknown with `403 Forbidden`. |
 
 The container needs Docker's default capabilities `CHROOT`, `SETUID` and `SETGID` for the
 shell sandbox: do not add `cap_drop: ALL`. Startup parameters that are not settings (the image
@@ -320,6 +321,7 @@ tested):
 - It **can** read every file (with `DAC_READ_SEARCH`; without it, what the `adm` and
   `systemd-journal` groups may read), `journalctl`, `ps`/`top` over all host processes, the
   host's listening ports from `/proc/1/net/tcp`, and `docker ps/logs/inspect/stats/system df`
+  and the registry digest of an image (`curl` to `/distribution/<image>/json`)
   through the proxy; pipes, subshells and redirection to `/dev/null` work. On systemd 257 or
   newer it reads the system state and the failed units from systemd's Varlink socket
   (`varlinkctl` on `/run/systemd/io.systemd.Manager`; measured on Ubuntu 26.04, systemd 259).
@@ -742,6 +744,20 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
   a tool call; the log shows each repeat as attempt 2, 3, … of the same call. The chat's own
   answer, shown word by word, is still not retried once its first words are shown: it ends with
   "The language model failed: Connection error." as before.
+- **Image update check (`docker:updates`) needs one compose line.** It now asks Docker itself
+  for the registry's digest of each image (through the Docker proxy, read-only) instead of
+  `docker buildx`, which failed on the read-only shell with `mkdir /.docker: read-only file
+  system`. Add this line to the `environment:` of the `docker-proxy` service in your
+  `compose.yaml`, next to `CONTAINERS: 1`, then `docker compose up -d`:
+
+  ```yaml
+        DISTRIBUTION: 1
+  ```
+
+  Without it every image shows as unknown with `403 Forbidden`. The check also needs `curl` on
+  the host (installed on a stock Ubuntu server). An unedited `docker:updates` job takes the new
+  command by itself on upgrade; if you edited it, press **reset to default** on its edit page
+  to get it.
 
 ## Troubleshooting
 
