@@ -211,23 +211,23 @@ export function McpToolsPage() {
           {notice && <Notice>{notice}</Notice>}
           {error && <ErrorText>{error}</ErrorText>}
           <Toolbar>
-            <Field label="search" flex="1 1 240px">
+            <Field label="search" flex="3 1 240px">
               <Input type="search" placeholder="Search tools and descriptions" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search tools and descriptions" />
             </Field>
-            <Field label="server" width="190px">
+            <Field label="server" flex="1 1 150px">
               <Select value={server} onChange={(e) => setServer(e.target.value)} aria-label="Server">
                 <option value="all">all servers</option>
                 {servers.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
               </Select>
             </Field>
-            <Field label="kind" width="190px">
+            <Field label="kind" flex="1 1 150px">
               <Select value={kind} onChange={(e) => setKind(e.target.value as Kind)} aria-label="Read or write">
                 <option value="all">read and write</option>
                 <option value="read">read</option>
                 <option value="write">write</option>
               </Select>
             </Field>
-            <Field label="state" width="190px">
+            <Field label="state" flex="1 1 150px">
               <Select value={onOff} onChange={(e) => setOnOff(e.target.value as OnOff)} aria-label="On or off">
                 <option value="all">on and off</option>
                 <option value="on">on</option>

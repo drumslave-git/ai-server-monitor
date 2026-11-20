@@ -206,7 +206,10 @@ function LoadedSummary({ rows, debug }: { rows: AppLogRecord[]; debug: boolean }
         </Counters>
         <Column gap={2} flex="1 1 420px">
           <Cells cells={cells} label={`Worst level logged in each stretch of ${cell}, from ${clock(from)} to ${clock(to)}`} />
-          <Axis labels={[clock(from), `one cell = ${cell} · colour = the worst level logged in it`, clock(to)]} />
+          <Axis labels={[clock(from), clock(to)]} />
+          <Meta>
+            one cell = {cell} · colour = the worst level logged in it
+          </Meta>
         </Column>
       </Inline>
     </Panel>

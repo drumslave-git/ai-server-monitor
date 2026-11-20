@@ -514,3 +514,15 @@ dialog.fd-dialog, dialog.fd-dialog * { box-sizing: border-box; }
 .fd-align-center { align-items: center; }
 .fd-align-end { align-items: flex-end; }
 .fd-align-baseline { align-items: baseline; }
+
+/* Stacked table: a cell that stood at the right edge (the row's button) stays at the end of its block;
+   a dense one (a log) leaves the column names out and keeps its lines close */
+@container (width < 640px) {
+  .fd-table-dense.fd-table-stack td::before { content: none; }
+  .fd-table-dense.fd-table-stack tr { gap: 2px var(--space-3); padding: var(--space-2) var(--space-4); }
+  .fd-table-stack td.fd-right { margin-left: auto; align-self: center; text-align: left; }
+}
+
+/* List item in a narrow list: what does not fit beside the title goes under it */
+.fd-item-main { flex-wrap: wrap; row-gap: var(--space-1); }
+.fd-item-body { flex: 1 1 120px; }
