@@ -402,7 +402,7 @@ values a fresh install starts with.
 | `llm.top_p` | number or auto | `auto` | Nucleus sampling: only the most likely words that together cover this share of the probability are considered. auto = not sent, the model's own default applies. |
 | `llm.top_k` | integer or auto | `auto` | Only the this-many most likely words are considered at each step (0 = no limit). auto = not sent, the model's own default applies. Not every endpoint honours it. |
 | `llm.timeout` | duration | `3m` | Per-request timeout. Local models on CPU can be slow. |
-| `llm.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up: no answer, a timeout, a temporary error of the endpoint (HTTP 408, 409, 429, 5xx), or an answer that breaks off part-way. A tool call the model asked for is never run again because of it. Not retried: the chat's own answer once its first words are shown. |
+| `llm.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up: no answer, a timeout, a temporary error of the endpoint (HTTP 408, 409, 429, 5xx), or an answer that breaks off part-way. A tool call the model asked for is never run again because of it. When the chat's own answer breaks off after its first words are shown, the chat drops them and the answer starts again. |
 | `llm.extra_body` | map | empty | Extra provider-specific request fields (JSON), passed through verbatim. |
 | `llm.structured_output` | json_schema / tool_call | `json_schema` | How the short helper calls get their structured answer: picking the MCP domains a chat question needs (worker model), marking the commands of an answer read-only or write and sorting MCP tools into domains (main model). json_schema = the request carries the JSON schema (response_format) and the endpoint holds the model to it; tool_call = the model is asked to call a final_result tool, which small models sometimes skip by answering in prose. Pick tool_call if the endpoint rejects response_format (the Test button says so). Chat answers and job runs are not affected. |
 
@@ -419,7 +419,7 @@ values a fresh install starts with.
 | `worker.top_p` | number or auto | `auto` | Nucleus sampling: only the most likely words that together cover this share of the probability are considered. auto = not sent, the model's own default applies. |
 | `worker.top_k` | integer or auto | `auto` | Only the this-many most likely words are considered at each step (0 = no limit). auto = not sent, the model's own default applies. Not every endpoint honours it. |
 | `worker.timeout` | duration | `3m` | Per-request timeout. Local models on CPU can be slow. |
-| `worker.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up: no answer, a timeout, a temporary error of the endpoint (HTTP 408, 409, 429, 5xx), or an answer that breaks off part-way. A tool call the model asked for is never run again because of it. Not retried: the chat's own answer once its first words are shown. |
+| `worker.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up: no answer, a timeout, a temporary error of the endpoint (HTTP 408, 409, 429, 5xx), or an answer that breaks off part-way. A tool call the model asked for is never run again because of it. When the chat's own answer breaks off after its first words are shown, the chat drops them and the answer starts again. |
 | `worker.extra_body` | map | empty | Extra provider-specific request fields (JSON), passed through verbatim. |
 | `worker.structured_output` | json_schema / tool_call | `json_schema` | How the short helper calls get their structured answer: picking the MCP domains a chat question needs (worker model), marking the commands of an answer read-only or write and sorting MCP tools into domains (main model). json_schema = the request carries the JSON schema (response_format) and the endpoint holds the model to it; tool_call = the model is asked to call a final_result tool, which small models sometimes skip by answering in prose. Pick tool_call if the endpoint rejects response_format (the Test button says so). Chat answers and job runs are not affected. |
 
@@ -767,6 +767,12 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
   could use up its whole output on thinking and end the run in `error`). *Updates: packages*
   prints the number of security updates the same way. An unedited job takes the new command by
   itself on upgrade; if you edited it, press **reset to default** on its edit page to get it.
+- **A chat answer that breaks off starts again.** When the connection to the model drops while
+  the chat's answer is being shown, the model request is made again (up to the model's
+  **Max retries**, with the same wait as other retries) and the stream sends `retry`
+  {attempt, of}: the client drops the text shown so far and the new answer follows. Tools
+  already run are not run again; the trace shows the attempts as attempt 2, 3 of the same call.
+  With **Max retries** 0, or once they are used up, the chat ends in `error` as before.
 
 ## Troubleshooting
 

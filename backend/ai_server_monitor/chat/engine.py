@@ -2,8 +2,8 @@
 
 The tool loop is the shared agent runtime (`agent/runtime.py`, Pydantic AI). This module owns
 the conversation around it: sessions and their lock, the history the model sees, what is
-stored, the SSE event stream (session, token, tool_call, tool_progress, tool_result, done,
-error, title) and the title of a new conversation. The model must support native tool calls.
+stored, the SSE event stream (session, token, retry, tool_call, tool_progress, tool_result,
+done, error, title) and the title of a new conversation. The model must support native tool calls.
 """
 
 from __future__ import annotations
@@ -512,6 +512,11 @@ class ChatEngine:
             kind = event["type"]
             if kind == "token":
                 streamed += event["text"]
+                yield event
+            elif kind == "retry":
+                # The model's answer broke off and is asked for again: the client drops the
+                # text of it shown so far, and so does this count of what went out.
+                streamed = ""
                 yield event
             elif kind == "tool_call":
                 streamed = ""

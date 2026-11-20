@@ -229,8 +229,9 @@ class LLMSettings(_Model):
     max_retries: int = Field(default=2, ge=0, le=10)
     """How many times a failed model request is retried before giving up: no answer, a
     timeout, a temporary error of the endpoint (HTTP 408, 409, 429, 5xx), or an answer that
-    breaks off part-way. A tool call the model asked for is never run again because of it. Not
-    retried: the chat's own answer once its first words are shown."""
+    breaks off part-way. A tool call the model asked for is never run again because of it. When
+    the chat's own answer breaks off after its first words are shown, the chat drops them and
+    the answer starts again."""
     extra_body: dict[str, Any] = Field(default_factory=dict)
     """Extra provider-specific request fields (JSON), passed through verbatim."""
     structured_output: Literal["json_schema", "tool_call"] = "json_schema"

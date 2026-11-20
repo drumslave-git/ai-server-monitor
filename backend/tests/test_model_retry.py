@@ -1,6 +1,7 @@
 """A model answer whose stream breaks off after the headers is retried with the profile's
 `max_retries` (the OpenAI SDK's own retries; `agent/models.py` `WholeBody`), and the call log
-numbers the attempts. The chat's own answer, shown as it arrives, is not retried."""
+numbers the attempts. The chat's own answer, shown as it arrives, is asked for again after a
+`retry` event (`Reopened`; the chat's side in `test_chat_retry.py`)."""
 
 from __future__ import annotations
 
@@ -130,19 +131,23 @@ async def test_an_answer_that_always_breaks_fails_after_the_configured_retries(
     assert all(r["error"] == "ReadError: connection reset by peer" for r in logged)
 
 
-async def test_the_chat_answer_shown_as_it_arrives_is_not_repeated(db: Database) -> None:
+async def test_the_chat_answer_shown_as_it_arrives_is_asked_again_after_a_retry_event(
+    db: Database,
+) -> None:
     endpoint = Endpoint(say("A long answer, shown word by word."), breaks={1})
     hub, tracing = await make(db, endpoint, retries=2)
     cfg = AgentConfig(model=hub.model("main"), instructions="test", tracing=tracing, live=True)
-    shown: list[str] = []
     try:
-        with pytest.raises(Exception, match="Connection error"):
-            async for event in run_agent(cfg, "hello"):
-                if event["type"] == "token":
-                    shown.append(event["text"])
+        events = [event async for event in run_agent(cfg, "hello")]
     finally:
         await hub.aclose()
-    assert endpoint.requests == 1
-    assert shown  # part of the answer had already been passed on
-    (row,) = await rows(tracing)
-    assert (row["attempt"], row["status"]) == (1, "error")
+    kinds = [e["type"] for e in events]
+    at = kinds.index("retry")
+    assert events[at] == {"type": "retry", "attempt": 2, "of": 3}
+    assert set(kinds[:at]) == {"token"}  # part of the answer had already been passed on
+    after = "".join(e["text"] for e in events[at:] if e["type"] == "token")
+    assert after == events[-1]["output"] == "A long answer, shown word by word."
+    assert endpoint.requests == 2
+    logged = await rows(tracing)
+    assert [(r["attempt"], r["status"]) for r in logged] == [(1, "error"), (2, "ok")]
+    assert logged[0]["group_id"] == logged[1]["group_id"]

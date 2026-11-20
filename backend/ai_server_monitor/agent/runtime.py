@@ -71,7 +71,7 @@ from pydantic_ai.usage import RunUsage
 
 from ..tracing import trace_scope
 from ..tracing.scope import current_scope
-from .models import live_answer
+from .models import AnswerRetry, live_answer
 from .prompts import STEP_LIMIT_NOTE, now_line
 from .safety import Scrubber, cap_text, shrink, wrap_untrusted
 
@@ -592,7 +592,10 @@ async def run_agent(
                 yield result_event(call_id, name, "", True)
                 continue
             event = item
-            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+            if isinstance(event, AnswerRetry):
+                # the answer broke off and is asked for again: its text so far is void
+                yield {"type": "retry", "attempt": event.attempt, "of": event.of}
+            elif isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
                 if event.part.content:
                     yield {"type": "token", "text": event.part.content, "step": run.steps}
             elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):

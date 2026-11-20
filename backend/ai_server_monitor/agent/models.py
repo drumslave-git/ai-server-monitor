@@ -7,23 +7,36 @@ each call lands in `llm_calls` (bodies, tokens, timing) whatever agent made it.
 Retries are the OpenAI SDK's own (`max_retries` of the profile, the SDK's waits between them).
 Its retry loop ends when the response headers are in, so `WholeBody` reads the whole answer
 before handing the response up: a streamed answer that breaks off is then a failed request the
-SDK repeats like any other. Only the chat's own answer is passed on as it arrives (`live`).
+SDK repeats like any other. Only the chat's own answer is passed on as it arrives (`live`); when
+it breaks off, `Reopened` asks for it again, and `AnswerRetry` tells the client to drop the text
+it has shown of it.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Iterator
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+import time
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import (
+    AbstractAsyncContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    contextmanager,
+)
 from contextvars import ContextVar
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
 from openai import AsyncOpenAI
+from openai._models import FinalRequestOptions
 from pydantic_ai import NativeOutput
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.exceptions import ModelConnectionError
+from pydantic_ai.messages import CustomEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.profiles import ModelProfile, merge_profile
@@ -33,7 +46,7 @@ from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 from pydantic_ai.settings import ModelSettings
 
 from ..config import LLMSettings, Settings
-from ..tracing.scope import trace_call
+from ..tracing.scope import CallGroup, trace_call
 
 log = logging.getLogger(__name__)
 
@@ -100,16 +113,166 @@ class HubModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
         run_context: Any = None,
     ) -> AsyncIterator[StreamedResponse]:
+        opener = super().request_stream
+
+        def open_stream() -> AbstractAsyncContextManager[StreamedResponse]:
+            return opener(messages, model_settings, model_request_parameters, run_context)
+
+        # The HTTP request, with its retries, is made when the stream is opened; the group is
+        # set only around that, never while the caller holds the stream.
+        retries = self.client.max_retries
+        if _live.get() and retries > 0:
+            reopened = await Reopened.start(open_stream, retries, self._retry_wait)
+            try:
+                yield reopened
+            finally:
+                await reopened.release()
+            return
         async with AsyncExitStack() as stack:
-            # The HTTP request, with its retries, is made when the stream is opened; the group
-            # is set only around that, never while the caller holds the stream.
             with trace_call():
-                stream = await stack.enter_async_context(
-                    super().request_stream(
-                        messages, model_settings, model_request_parameters, run_context
-                    )
-                )
+                stream = await stack.enter_async_context(open_stream())
             yield stream
+
+    def _retry_wait(self, retry: int) -> float:
+        """The OpenAI SDK's own wait before its `retry`-th retry (1, 2, ...) of a request: 0.5 s,
+        doubling up to 8 s, less up to a quarter at random."""
+        client = self.client
+        options = FinalRequestOptions(method="post", url="/chat/completions")
+        return client._calculate_retry_timeout(client.max_retries - retry + 1, options)
+
+
+@dataclass(kw_only=True)
+class AnswerRetry(CustomEvent):
+    """The live answer broke off and is asked for again: drop the text shown of it so far; the
+    new attempt's text follows. `attempt` counts from 1 (the first request); `of` is how many
+    there may be (1 + `max_retries`)."""
+
+    attempt: int
+    of: int
+
+
+class Reopened(StreamedResponse):
+    """The live answer's stream (see `live_answer`), asked for again when it breaks off part-way
+    (`ModelConnectionError` while reading it), at most `max_retries` times, with the SDK's wait
+    before each. Each new request is the same call of the trace (attempt 2, 3, ...), and one
+    `AnswerRetry` comes before its events. Only this model request is repeated: the tools of a
+    response run once it is complete, so none has run for one that broke off. The response,
+    usage and state are those of the last request."""
+
+    def __init__(
+        self,
+        first: StreamedResponse,
+        stack: AsyncExitStack,
+        group: CallGroup,
+        open_stream: Callable[[], AbstractAsyncContextManager[StreamedResponse]],
+        retries: int,
+        wait: Callable[[int], float],
+    ):
+        super().__init__(model_request_parameters=first.model_request_parameters)
+        self._inner = first
+        self._stack = stack
+        self._group = group
+        self._open = open_stream
+        self._retries = retries
+        self._wait = wait
+
+    @classmethod
+    async def start(
+        cls,
+        open_stream: Callable[[], AbstractAsyncContextManager[StreamedResponse]],
+        retries: int,
+        wait: Callable[[int], float],
+    ) -> Reopened:
+        stack = AsyncExitStack()
+        try:
+            with trace_call() as group:
+                first = await stack.enter_async_context(open_stream())
+        except BaseException:
+            await stack.aclose()
+            raise
+        return cls(first, stack, group, open_stream, retries, wait)
+
+    async def release(self) -> None:
+        await self._stack.aclose()
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        # The inner streams add the final-result and part-end events and guard their own
+        # cancellation: their events are passed on as they are.
+        if self._event_iterator is None:
+            self._event_iterator = self._events()
+        return self._event_iterator
+
+    async def _events(self) -> AsyncIterator[Any]:
+        attempt = 1
+        while True:
+            try:
+                async for event in self._inner:
+                    if self._first_chunk_monotonic is None:
+                        self._first_chunk_monotonic = time.perf_counter()
+                    self.final_result_event = self._inner.final_result_event
+                    yield event
+            except ModelConnectionError:
+                if attempt > self._retries or self._cancelled or self._inner.cancelled:
+                    raise
+                attempt += 1
+                self.final_result_event = None
+                yield AnswerRetry(attempt=attempt, of=self._retries + 1)
+                await self._reopen(attempt - 1)
+                continue
+            self._finished = True
+            return
+
+    async def _reopen(self, retry: int) -> None:
+        log.info("the live answer broke off: asking again (retry %d of %d)", retry, self._retries)
+        await self._stack.aclose()
+        await asyncio.sleep(self._wait(retry))
+        self._stack = AsyncExitStack()
+        with trace_call(self._group):
+            stream = await self._stack.enter_async_context(self._open())
+        if self._request_deadline is not None:
+            stream._enforce_request_deadline(self._request_deadline)
+        self._inner = stream
+
+    async def _get_event_iterator(self) -> AsyncIterator[Any]:  # pragma: no cover
+        raise NotImplementedError("__aiter__ passes the inner stream's events on")
+        yield
+
+    def _enforce_request_deadline(self, deadline: Any) -> None:
+        super()._enforce_request_deadline(deadline)
+        self._inner._enforce_request_deadline(deadline)
+
+    async def cancel(self) -> None:
+        self._cancelled = True
+        await self._inner.cancel()
+
+    async def close_stream(self) -> None:
+        await self._inner.close_stream()
+
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        return self._inner.get_stream_cancel_errors()
+
+    def get(self) -> ModelResponse:
+        return self._inner.get()
+
+    @property
+    def usage(self) -> Any:
+        return self._inner.usage
+
+    @property
+    def model_name(self) -> str:
+        return self._inner.model_name
+
+    @property
+    def provider_name(self) -> str | None:
+        return self._inner.provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        return self._inner.provider_url
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._inner.timestamp
 
 
 def helper_output(model: Any, output_type: Any) -> Any:
@@ -155,7 +318,7 @@ class WholeBody(httpx.AsyncBaseTransport):
     """Reads the whole response body before returning the response, so an answer whose body
     breaks off fails inside the OpenAI SDK's retry loop and is repeated like a request that got
     no headers. Not under `live_answer()`: there the stream is passed on untouched (the chat's
-    answer), and a break ends the request with the error, as before. A request without
+    answer, shown as it arrives) and `Reopened` asks again when it breaks off. A request without
     streaming is read whole by httpx anyway; this only reads it a step earlier."""
 
     def __init__(self, inner: httpx.AsyncBaseTransport):

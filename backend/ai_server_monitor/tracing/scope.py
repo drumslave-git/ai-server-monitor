@@ -88,10 +88,11 @@ def current_group() -> CallGroup | None:
 
 
 @contextmanager
-def trace_call() -> Iterator[CallGroup]:
+def trace_call(group: CallGroup | None = None) -> Iterator[CallGroup]:
     """Wrap one logical call (including its retries) so attempts are numbered and the wait
-    between them shows up as queue time. Optional: without it every request is its own call."""
-    group = CallGroup()
+    between them shows up as queue time. Optional: without it every request is its own call.
+    `group`: go on with that call (a request made again later counts on as its attempts)."""
+    group = group or CallGroup()
     token = _group.set(group)
     try:
         yield group
