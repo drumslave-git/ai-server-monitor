@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, ApiError, type ActionRecord, type ApprovalBatch } from "../api";
-import { Actions, Button, Code, ErrorText, Lamp, Meta, Panel, Status, type Tone } from "../kit";
+import { Actions, Approval, Button, Code, Column, ErrorText, Inline, Lamp, Meta, Scroll, Stack, Status, Text, type Tone } from "../kit";
 import { useStream } from "../live";
 import { usePoll } from "../ui";
 import { HostCommand } from "./HostCommand";
@@ -127,54 +127,42 @@ function ApprovalCard({ batch, onChange }: { batch: ApprovalBatch; onChange: () 
   const tone = batchDot(batch);
   // The kit's Approval, with the list of items between its title and its buttons; the stripe
   // stays only while something waits.
+  const list = (
+    <Column gap={2}>
+      {visible.map((item) =>
+        command ? (
+          <HostCommand key={item.id} item={item} />
+        ) : (
+          <Inline key={item.id} nowrap align="baseline" gap={2}>
+            {many && <Lamp tone={statusDot(item.status)} blink={item.status === "approved"} title={STATUS_TEXT[item.status] ?? item.status} />}
+            <Stack>
+              <Text kind="data" wrap>
+                {callArguments(item, perItem ? shared : []) || item.target}
+              </Text>
+              {many && !["pending", "executed"].includes(item.status) && !failure(item) && <Meta>{STATUS_TEXT[item.status] ?? item.status}</Meta>}
+              {failure(item) && <ErrorText>{failure(item)}</ErrorText>}
+            </Stack>
+          </Inline>
+        ),
+      )}
+    </Column>
+  );
   return (
-    <Panel inset hazard={waiting ? "warn" : undefined}>
-      <div className="fd-approval-body">
-        <strong>
-          {command ? (
-            <>{many ? `${batch.total} commands` : "Command"} to run as root on the host</>
-          ) : (
-            <>
-              <span className="fd-mono">{batch.action}</span> {batch.summary}
-            </>
-          )}
-        </strong>
-        {batch.covered.length > 0 && (
-          <p className="fd-dim">
-            Approved for this whole answer: later calls of {batch.covered.join(", ")} run without asking and are listed here.
-          </p>
-        )}
-        {perItem && (
-          <p>
-            <span className="fd-dim">Each with </span>
-            <Code inline>{callArguments(batch.items[0], Object.keys(given(batch.items[0])).filter((k) => !shared.includes(k)))}</Code>
-          </p>
-        )}
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8, ...(all ? { maxHeight: "50vh", overflow: "auto" } : {}) }}>
-          {visible.map((item) =>
-            command ? (
-              <HostCommand key={item.id} item={item} />
-            ) : (
-              <div key={item.id} style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
-                {many && <Lamp tone={statusDot(item.status)} blink={item.status === "approved"} title={STATUS_TEXT[item.status] ?? item.status} />}
-                <div className="fd-stack fd-wrap" style={{ minWidth: 0 }}>
-                  <span className="data">{callArguments(item, perItem ? shared : []) || item.target}</span>
-                  {many && !["pending", "executed"].includes(item.status) && !failure(item) && <Meta>{STATUS_TEXT[item.status] ?? item.status}</Meta>}
-                  {failure(item) && <ErrorText>{failure(item)}</ErrorText>}
-                </div>
-              </div>
-            ),
-          )}
-        </div>
-        {batch.items.length > SHOWN && (
-          <Actions>
-            <Button variant="link" aria-expanded={all} onClick={() => setAll(!all)}>
-              {all ? `show only the first ${SHOWN}` : `show ${batch.items.length - SHOWN} more`}
-            </Button>
-          </Actions>
-        )}
-        {error && <ErrorText>{error}</ErrorText>}
-        <div className="fd-approval-actions">
+    <Approval
+      inset
+      decided={!waiting}
+      title={
+        command ? (
+          <>{many ? `${batch.total} commands` : "Command"} to run as root on the host</>
+        ) : (
+          <>
+            <Text kind="label">{batch.action}</Text> {batch.summary}
+          </>
+        )
+      }
+      note={batch.covered.length > 0 ? `Approved for this whole answer: later calls of ${batch.covered.join(", ")} run without asking and are listed here.` : undefined}
+      actions={
+        <>
           {waiting > 0 && (
             <>
               <Button variant="primary" disabled={busy} onClick={() => decide("approve")}>
@@ -200,8 +188,24 @@ function ApprovalCard({ batch, onChange }: { batch: ApprovalBatch; onChange: () 
               : (STATUS_TEXT[batch.items[0]?.status ?? ""] ?? settled)}{" "}
             · <a href={`#/approvals/${batch.id}`}>open in Approvals</a>
           </Status>
-        </div>
-      </div>
-    </Panel>
+        </>
+      }
+    >
+      {perItem && (
+        <Text block>
+          <Text dim>Each with </Text>
+          <Code inline>{callArguments(batch.items[0], Object.keys(given(batch.items[0])).filter((k) => !shared.includes(k)))}</Code>
+        </Text>
+      )}
+      {all ? <Scroll max="50vh">{list}</Scroll> : list}
+      {batch.items.length > SHOWN && (
+        <Actions>
+          <Button variant="link" aria-expanded={all} onClick={() => setAll(!all)}>
+            {all ? `show only the first ${SHOWN}` : `show ${batch.items.length - SHOWN} more`}
+          </Button>
+        </Actions>
+      )}
+      {error && <ErrorText>{error}</ErrorText>}
+    </Approval>
   );
 }

@@ -3,7 +3,7 @@
 
 /* Shell */
 .fd, .fd * { box-sizing: border-box; }
-.fd { display: flex; flex-wrap: wrap; min-height: 100vh; background: var(--bg) radial-gradient(var(--grid-dot) 1px, transparent 1px) 0 0 / 22px 22px; color: var(--text); font: 400 14px/1.5 var(--font-sans); }
+.fd { display: flex; flex-wrap: wrap; min-height: 100vh; overflow-wrap: break-word; background: var(--bg) radial-gradient(var(--grid-dot) 1px, transparent 1px) 0 0 / 22px 22px; color: var(--text); font: 400 14px/1.5 var(--font-sans); }
 .fd a:not([class]) { color: var(--ok-text); }
 .fd a:not([class]):hover { color: var(--text); }
 .fd :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -52,8 +52,8 @@
 .fd-panel { min-width: 0; background: var(--panel); border: 1px solid var(--line); }
 .fd-panel-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-4); padding: var(--space-4) var(--space-5); }
 .fd-panel-head h2 { margin: 0; font: 600 16px/1.4 var(--font-sans); }
-.fd-panel-pad { padding: var(--space-4) var(--space-5); }
-.fd-panel-head + .fd-panel-pad { padding-top: 0; }
+.fd-panel-pad { min-width: 0; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4) var(--space-5); }
+.fd-panel-head + .fd-panel-pad, .fd-panel-head + .fd-live:empty + .fd-panel-pad { padding-top: 0; }
 .fd-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); padding: 14px var(--space-5); border-top: 1px solid var(--line); }
 .fd-hazard { height: 10px; background: repeating-linear-gradient(135deg, var(--warn) 0 10px, transparent 10px 20px); }
 .fd-hazard-crit { background: repeating-linear-gradient(135deg, var(--crit) 0 10px, transparent 10px 20px); }
@@ -149,10 +149,12 @@
 
 /* List item */
 .fd-list { display: flex; flex-direction: column; }
-.fd-item { display: flex; align-items: center; gap: 14px; min-height: var(--control); padding: var(--space-2) 14px; border-top: 1px solid var(--line); color: var(--text); text-decoration: none; }
+.fd-item { display: flex; align-items: center; border-top: 1px solid var(--line); }
 .fd-item:first-child { border-top: 0; }
 .fd-item:hover { background: var(--raised); }
-.fd-item[aria-current="true"] { background: var(--raised); box-shadow: inset 0 0 0 1px var(--ok-text); }
+.fd-item-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; min-height: var(--control); padding: var(--space-2) 14px; border: 0; border-radius: 0; background: transparent; color: var(--text); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
+.fd .fd-item-main:focus-visible { outline-offset: -2px; }
+.fd-item-action { flex: none; padding-right: 14px; }
 .fd-item-index { font: 400 12px var(--font-mono); color: var(--dim); }
 .fd-item-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .fd-item-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -220,9 +222,8 @@
 /* Panel on the page ground: a card inside a panel */
 .fd-panel-inset { background: var(--bg); }
 
-/* Selected and current rows */
-.fd-row[aria-current="true"] { background: var(--raised); }
-.fd-table tr[aria-selected="true"] { outline: 1px solid var(--ok-text); outline-offset: -1px; }
+/* Selected and current rows: the raised ground in a lime frame, the same for a list item, a panel row and a table row */
+.fd-item-on, .fd-row[aria-current="true"], .fd-table tr[aria-selected="true"] { background: var(--raised); outline: 1px solid var(--ok-text); outline-offset: -1px; }
 .fd-table-dense td { padding-top: 6px; padding-bottom: 6px; }
 
 /* Tabs that are links */
@@ -316,6 +317,8 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 /* Save bar: unsaved changes of a form */
 .fd-savebar { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px var(--space-4); padding: var(--space-3) var(--space-5); border: 1px solid var(--line-strong); background: var(--panel); }
 
+.fd-savebar > .fd-status:first-child { margin-right: auto; }
+
 /* Table on a phone: scrolls inside its wrap; buttons in a cell stay on one line */
 .fd-table td .fd-btn { white-space: nowrap; }
 .fd-table tr.fd-off td { color: var(--dim); }
@@ -372,7 +375,6 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 
 /* A vertical stack with the panel gap */
 .fd-col { min-width: 0; display: flex; flex-direction: column; gap: var(--space-4); }
-.fd-col-tight { gap: var(--space-2); }
 
 /* Code that scrolls inside a height limit */
 .fd-code-scroll { overflow: auto; }
@@ -387,14 +389,128 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 .fd-pre-line { white-space: pre-line; }
 .fd-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 
-/* Dialog */
-dialog.fd-dialog { width: min(560px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-0); background: var(--panel); color: var(--text); font: 400 14px/1.5 var(--font-sans); }
-dialog.fd-dialog::backdrop { background: rgba(10, 14, 13, 0.7); }
+/* Dialog: a modal window; the page behind it does not scroll with it */
+dialog.fd-dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-0); background: var(--panel); color: var(--text); font: 400 14px/1.5 var(--font-sans); }
+dialog.fd-dialog:modal { overscroll-behavior: contain; }
+dialog.fd-dialog::backdrop { background: var(--backdrop); overflow: hidden; overscroll-behavior: contain; }
 dialog.fd-dialog, dialog.fd-dialog * { box-sizing: border-box; }
+.fd-dialog-body { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-5); }
+.fd-dialog-body > h2 { font: 600 18px/1.3 var(--font-sans); }
 
 /* Checkbox with some of its items selected */
 .fd-check input:indeterminate { border-color: var(--ok); background: var(--bg) linear-gradient(var(--ok), var(--ok)) center / 8px 2px no-repeat; }
 
-/* List item that is a button */
-button.fd-item { width: 100%; border: 0; border-top: 1px solid var(--line); background: transparent; font: inherit; text-align: left; cursor: pointer; }
-button.fd-item:first-child { border-top: 0; }
+
+/* ---- parts added when the pages stopped writing classes and styles themselves ---- */
+
+/* Text styles as kit classes */
+.fd-data { font: 400 13px/1.5 var(--font-mono); }
+.fd-label { font: 500 13px/1.5 var(--font-mono); }
+.fd-heading { font: 600 16px/1.4 var(--font-sans); overflow-wrap: anywhere; }
+.fd-keep { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Section head: title and note at the left, buttons at the right */
+.fd-section-text { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+
+/* Row variants */
+.fd-row-col { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: var(--space-3); }
+.fd-row-col > * { min-width: 0; }
+.fd-row-sticky { position: sticky; bottom: 0; z-index: 1; background: var(--panel); }
+.fd-panel-inset .fd-row-sticky { background: var(--bg); }
+
+/* Split whose children are all as tall as the tallest */
+.fd-split-stretch { align-items: stretch; }
+
+/* Inline: small things on one wrapping line */
+.fd-inline { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.fd-inline-between { justify-content: space-between; }
+.fd-flex-nowrap { flex-wrap: nowrap; }
+
+/* Scroll inside a height limit; a heading over what it names; a live region */
+.fd-scroll { min-width: 0; overflow: auto; }
+.fd-labeled { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.fd-live:empty { display: none; }
+
+/* Button that deletes for good */
+.fd-btn-danger { border-color: var(--crit-text); color: var(--crit-text); }
+.fd-btn-danger:hover { border-color: var(--crit-text); background: var(--crit); color: var(--on-fill); }
+.fd-btn-danger[disabled]:hover { background: var(--raised); color: var(--crit-text); }
+
+/* A disabled switch dims the text beside it too */
+.fd-switch:disabled + span { color: var(--dim); }
+
+/* The room of a checkbox with nothing to tick */
+.fd-check-blank { flex: none; width: 18px; }
+
+/* Joined controls: their borders overlap, the one in use lies on top */
+.fd-joined { min-width: 0; display: flex; flex-wrap: wrap; padding: 0 1px 1px 0; }
+.fd-joined > * { margin: 0 -1px -1px 0; }
+.fd-joined > .fd-input, .fd-joined > .fd-select { flex: 1 1 120px; width: auto; min-width: 0; }
+.fd-joined > :hover, .fd-joined > :focus-visible { position: relative; z-index: 1; }
+
+/* A value where a control would stand */
+.fd-field-value { display: flex; align-items: center; min-height: var(--control); font: 400 13px/1.5 var(--font-mono); overflow-wrap: anywhere; }
+
+/* Chip: one of several chosen things with its remove button */
+.fd-chip { display: inline-flex; align-items: stretch; min-height: 30px; border: 1px solid var(--line-strong); font: 500 12px/1.5 var(--font-mono); }
+.fd-chip > span { display: flex; align-items: center; padding: 0 var(--space-2); }
+.fd-chip > button { padding: 0 var(--space-2); border: 0; border-left: 1px solid var(--line-strong); border-radius: 0; background: var(--raised); color: var(--dim); font: inherit; cursor: pointer; }
+.fd-chip > button:hover { color: var(--text); }
+
+/* List item: its own control (delete) shows while the row is pointed at, focused or selected; always where nothing can point */
+.fd-item-action { opacity: 0; }
+.fd-item:hover .fd-item-action, .fd-item:focus-within .fd-item-action, .fd-item-on .fd-item-action { opacity: 1; }
+@media (hover: none) { .fd-item-action { opacity: 1; } }
+
+/* Fold head: one line, a long title or meta is cut */
+.fd-fold > summary > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fd-fold > summary > span:not(.fd-meta):not(.fd-tag) { flex: 0 1 auto; }
+.fd-fold > summary > .fd-meta { flex: 1 1 0; }
+
+/* Bar: the wait before the span began, hollow like a hollow lamp */
+.fd-bar-queued { box-shadow: inset 0 0 0 1px var(--dim); }
+
+/* Message of the owner that takes the whole message width (a command and its output) */
+.fd-msg-wide { width: min(760px, 100%); }
+.fd-msg-wide .fd-msg-body { align-self: stretch; min-width: 0; }
+
+/* The words of a test's outcome */
+.fd-testline-text { flex: 1 1 320px; min-width: 0; overflow-wrap: anywhere; }
+
+/* Table: the wrap is the container its stacked layout asks about */
+.fd-table-wrap { container-type: inline-size; }
+.fd-table th { font-weight: 400; }
+@container (width < 640px) {
+  .fd-table-stack, .fd-table-stack tbody { display: block; }
+  .fd-table-stack { min-width: 0 !important; }
+  .fd-table-stack thead { display: none; }
+  .fd-table-stack tr { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-2) var(--space-5); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line); }
+  .fd-table-stack tbody:first-of-type tr:first-child { border-top: 0; }
+  .fd-table-stack td, .fd-table-stack td:first-child, .fd-table-stack td:last-child { display: block; min-width: 0 !important; padding: 0; border: 0; }
+  .fd-table-stack td.fd-fill, .fd-table-stack td.fd-wrap, .fd-table-stack tr.fd-group td { flex: 1 1 100%; width: auto; max-width: none; }
+  .fd-table-stack td.fd-nowrap { white-space: normal; }
+  .fd-table-stack td:empty { display: none; }
+  .fd-table-stack td::before { display: block; font: 400 12px/1.5 var(--font-mono); color: var(--dim); }
+  .fd-table-stack td:nth-child(1)::before { content: var(--fd-l1, none); }
+  .fd-table-stack td:nth-child(2)::before { content: var(--fd-l2, none); }
+  .fd-table-stack td:nth-child(3)::before { content: var(--fd-l3, none); }
+  .fd-table-stack td:nth-child(4)::before { content: var(--fd-l4, none); }
+  .fd-table-stack td:nth-child(5)::before { content: var(--fd-l5, none); }
+  .fd-table-stack td:nth-child(6)::before { content: var(--fd-l6, none); }
+  .fd-table-stack td:nth-child(7)::before { content: var(--fd-l7, none); }
+  .fd-table-stack td:nth-child(8)::before { content: var(--fd-l8, none); }
+  .fd-table-stack tr.fd-group td::before { content: none; }
+}
+
+/* Spacing and alignment a layout component is asked for (last, so they win over the component's own) */
+.fd-gap-0 { gap: 0; }
+.fd-gap-1 { gap: var(--space-1); }
+.fd-gap-2 { gap: var(--space-2); }
+.fd-gap-3 { gap: var(--space-3); }
+.fd-gap-4 { gap: var(--space-4); }
+.fd-gap-5 { gap: var(--space-5); }
+.fd-gap-6 { gap: var(--space-6); }
+.fd-align-start { align-items: flex-start; }
+.fd-align-center { align-items: center; }
+.fd-align-end { align-items: flex-end; }
+.fd-align-baseline { align-items: baseline; }

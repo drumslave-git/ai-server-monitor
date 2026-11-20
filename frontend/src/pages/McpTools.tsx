@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../api";
 import type { components } from "../api-types";
-import { Description } from "../components/McpTools";
 import { ago } from "../fmt";
 import { errorText } from "../jobs";
 import {
@@ -9,25 +8,35 @@ import {
   Button,
   Cells,
   Checkbox,
+  Clamp,
+  Column,
   Counter,
   Counters,
+  Dialog,
   Empty,
   ErrorText,
   Field,
+  Inline,
   Input,
   Legend,
+  List,
   ListItem,
   Meta,
   Notice,
   PageHeader,
+  Pad,
   Panel,
   Select,
   Split,
+  Stack,
   Status,
   Switch,
   Table,
   Tag,
+  Td,
+  Text,
   Toolbar,
+  Tr,
   type Cell,
 } from "../kit";
 
@@ -51,16 +60,6 @@ const NEW_DOMAIN = "__new__";
 /** The "Not sorted" group's key among the closed names (no domain can be called this). */
 const UNSORTED = "(not sorted)";
 const CLOSED_KEY = "asm.mcp-tools.collapsed";
-
-const SUMMARY: CSSProperties = { display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: "var(--space-4) var(--space-5)", padding: "var(--space-4) var(--space-5)" };
-const STRIP: CSSProperties = { flex: "1 1 380px", minWidth: 0, display: "flex", flexDirection: "column", gap: "var(--space-2)" };
-const RIGHT: CSSProperties = { marginLeft: "auto" };
-const OPEN: CSSProperties = { flex: "3 1 560px", minWidth: 0, display: "flex", flexDirection: "column", gap: "var(--space-4)" };
-const NOTE: CSSProperties = { padding: "0 var(--space-5) var(--space-4)" };
-const UNDER: CSSProperties = { display: "flex", flexDirection: "column", gap: "var(--space-1)" };
-const BESIDE: CSSProperties = { display: "flex", alignItems: "center", gap: "var(--space-2)" };
-const DIALOG: CSSProperties = { width: "min(440px, calc(100vw - 32px))" };
-const DIALOG_BODY: CSSProperties = { display: "flex", flexDirection: "column", gap: "var(--space-4)", padding: "var(--space-5)" };
 
 function readClosed(): Set<string> {
   try {
@@ -163,14 +162,7 @@ export function McpToolsPage() {
     entries.push({ key: String(d.id), name: d.name, domain: d, rows, all: tools.filter((t) => t.domain_id === d.id) });
   }
   const open = entries.filter((e) => isOpen(e.name));
-  /** A line of the list was chosen: its domain opens or closes. */
-  const pick = (e: MouseEvent<HTMLElement>) => {
-    const item = (e.target as HTMLElement).closest("a");
-    if (!item) return;
-    e.preventDefault();
-    const entry = entries[Array.from(e.currentTarget.children).indexOf(item)];
-    if (entry) toggled(entry.name, !isOpen(entry.name));
-  };
+
   /** One cell per tool: read and on, then write and on, then off. */
   const cells: Cell[] = [...Array<Cell>(on - writesOn).fill("ok"), ...Array<Cell>(writesOn).fill("warn"), ...Array<Cell>(tools.length - on).fill("")];
 
@@ -185,15 +177,15 @@ export function McpToolsPage() {
         <Notice title="No MCP server is configured.">Add one under Settings → MCP servers.</Notice>
       ) : (
         <>
-          <Panel>
-            <div style={SUMMARY}>
+          <Panel pad>
+            <Inline align="end" gap={4}>
               <Counters flush flex="0 1 720px">
                 <Counter size="sm" value={tools.length} label={`tool${tools.length === 1 ? "" : "s"} on ${plural(nServers, "server")}`} />
                 <Counter size="sm" value={page.domains.length} label={`domain${page.domains.length === 1 ? "" : "s"}`} />
                 <Counter size="sm" value={on} label="on" tone={on ? "ok" : "off"} />
                 <Counter size="sm" value={writes} label="write" tone={writes ? "warn" : "off"} />
               </Counters>
-              <div style={STRIP}>
+              <Column gap={2} flex="1 1 380px">
                 <Cells cells={cells} label={`${plural(tools.length, "tool")}: ${on - writesOn} read and on, ${writesOn} write and on, ${tools.length - on} off`} />
                 <Legend>
                   <span>one cell = one tool</span>
@@ -201,8 +193,8 @@ export function McpToolsPage() {
                   <Status tone="warn" plain>write, on</Status>
                   <Status tone="off" hollow plain>off</Status>
                 </Legend>
-              </div>
-            </div>
+              </Column>
+            </Inline>
           </Panel>
           {page.sorting && (
             <Notice title={<Status tone="info" blink>sorting tools into domains…</Status>}>
@@ -210,10 +202,10 @@ export function McpToolsPage() {
             </Notice>
           )}
           {down.map((s) => (
-            <Notice key={s.name}>
-              <span className="fd-t-warn">
+            <Notice key={s.name} tone="warn">
+              <Text tone="warn">
                 Server <strong>{s.name}</strong> could not be listed{s.listed_ts ? ` ${ago(s.listed_ts)}` : ""}: {s.error}. Its tools are shown as last listed.
-              </span>
+              </Text>
             </Notice>
           ))}
           {notice && <Notice>{notice}</Notice>}
@@ -242,8 +234,7 @@ export function McpToolsPage() {
                 <option value="off">off</option>
               </Select>
             </Field>
-            <div style={RIGHT}>
-              <Actions>
+            <Actions toEnd>
                 <Button
                   disabled={filtering}
                   title={filtering ? "While searching or filtering, every domain with matches is open" : undefined}
@@ -257,8 +248,7 @@ export function McpToolsPage() {
                 <Button disabled={toOff.length === 0} onClick={() => switchAll(toOff, false)} title={filtering ? "Switches off every tool the search and filters show" : "Switches off every tool"}>
                   {filtering ? "deselect shown" : "deselect all"} ({toOff.length})
                 </Button>
-              </Actions>
-            </div>
+            </Actions>
           </Toolbar>
           {filtering && shown.length === 0 && (
             <Panel>
@@ -268,14 +258,21 @@ export function McpToolsPage() {
           {entries.length > 0 && (
             <Split>
               <Panel flex="1 1 300px">
-                <nav className="fd-list" aria-label="Domains" onClick={pick}>
+                <List label="Domains">
                   {entries.map((e) => (
-                    <ListItem key={e.key} mono href="#/mcp" selected={isOpen(e.name)} title={e.domain ? e.name : "not sorted"} trailing={e.domain ? counts(e) : <Meta tone="warn">{counts(e)}</Meta>} />
+                    <ListItem
+                      key={e.key}
+                      mono
+                      expanded={isOpen(e.name)}
+                      onClick={() => toggled(e.name, !isOpen(e.name))}
+                      title={e.domain ? e.name : "not sorted"}
+                      trailing={e.domain ? counts(e) : <Meta tone="warn">{counts(e)}</Meta>}
+                    />
                   ))}
-                </nav>
+                </List>
               </Panel>
               {open.length > 0 && (
-                <div style={OPEN}>
+                <Column flex="3 1 560px">
                   {open.map((e) =>
                     e.domain && e.all.length === 0 ? (
                       <EmptyDomain key={e.key} domain={e.domain} act={act} />
@@ -294,7 +291,7 @@ export function McpToolsPage() {
                       </Section>
                     ),
                   )}
-                </div>
+                </Column>
               )}
             </Split>
           )}
@@ -368,19 +365,13 @@ function Section({
       }
     >
       {description && (
-        <div style={NOTE}>
-          <p className={domain ? "fd-dim" : "fd-t-warn"}>{description}</p>
-        </div>
+        <Pad>
+          <Text block dim={Boolean(domain)} tone={domain ? undefined : "warn"}>
+            {description}
+          </Text>
+        </Pad>
       )}
-      <Table>
-        <thead>
-          <tr>
-            <th>on</th>
-            <th>tool</th>
-            <th>what it does</th>
-            <th>domain</th>
-          </tr>
-        </thead>
+      <Table stack head={["on", "tool", { label: "what it does", minWidth: "260px" }, "domain"]}>
         <tbody>{children}</tbody>
       </Table>
       {editing && domain && <DomainEdit domain={domain} act={act} onClose={() => setEditing(false)} />}
@@ -401,9 +392,11 @@ function EmptyDomain({ domain, act }: { domain: Domain; act: Act }) {
       }
     >
       {domain.description && (
-        <div style={NOTE}>
-          <p className="fd-dim">{domain.description}</p>
-        </div>
+        <Pad>
+          <Text block dim>
+            {domain.description}
+          </Text>
+        </Pad>
       )}
       {editing && <DomainEdit domain={domain} act={act} onClose={() => setEditing(false)} />}
     </Panel>
@@ -420,12 +413,10 @@ function DomainEdit({
 }: {
   domain?: Domain; act: Act; onClose: () => void; onCreated?: (d: Domain) => Promise<unknown>;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
   const [name, setName] = useState(domain?.name ?? "");
   const [description, setDescription] = useState(domain?.description ?? "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { ref.current?.showModal(); }, []);
   const trimmed = name.trim();
   const problem = !trimmed ? null : !NAME_OK.test(trimmed) ? "Only lowercase letters, digits and hyphens; start with a letter or digit" : null;
   const valid = trimmed !== "" && problem === null && (domain !== undefined || description.trim() !== "");
@@ -446,9 +437,7 @@ function DomainEdit({
     run(api.del(`/api/mcp/domains/${domain.id}`));
   };
   return (
-    <dialog ref={ref} className="fd-dialog" style={DIALOG} onClose={onClose}>
-      <div style={DIALOG_BODY}>
-        <h2 className="heading">{domain ? `Domain ${domain.name}` : "New domain"}</h2>
+    <Dialog title={domain ? `Domain ${domain.name}` : "New domain"} onClose={onClose}>
         <Field
           label="name"
           help={problem ? undefined : `Lowercase letters, digits and hyphens · ${length}`}
@@ -466,15 +455,12 @@ function DomainEdit({
           </Button>
           <Button onClick={onClose}>cancel</Button>
           {domain && (
-            <span style={RIGHT}>
-              <Button onClick={remove} disabled={busy || domain.used_by.length > 0} title={domain.used_by.length ? `Used by ${domain.used_by.join(", ")}` : undefined}>
-                delete domain
-              </Button>
-            </span>
+            <Button variant="danger" toEnd onClick={remove} disabled={busy || domain.used_by.length > 0} title={domain.used_by.length ? `Used by ${domain.used_by.join(", ")}` : undefined}>
+              delete domain
+            </Button>
           )}
         </Actions>
-      </div>
-    </dialog>
+    </Dialog>
   );
 }
 
@@ -491,27 +477,33 @@ function ToolRow({
     else if (value) void act(api.patch(path, { domain_id: Number(value) })).catch(() => undefined);
   };
   return (
-    <tr className={tool.enabled ? undefined : "fd-off"}>
-      <td>
+    <Tr off={!tool.enabled}>
+      <Td>
         <Switch checked={tool.enabled} onChange={(to) => void act(api.patch(path, { enabled: to }))} label={`${tool.name} on`} title={tool.enabled ? "Turn off" : "Turn on"} />
-      </td>
-      <td>
-        <div style={UNDER}>
-          <span className="label fd-nowrap">{tool.tool}</span>
-          <span className="fd-nowrap" style={BESIDE}>
+      </Td>
+      <Td>
+        <Stack gap={1}>
+          <Text kind="label" nowrap>
+            {tool.tool}
+          </Text>
+          <Inline nowrap gap={2}>
             <Tag tone={tool.kind === "write" ? "warn" : undefined}>{tool.kind}</Tag>
             <Tag>{tool.server}</Tag>
             {state && !state.enabled && <Status tone="off" hollow>server off</Status>}
             {state?.error && <Status tone="crit">unreachable</Status>}
-          </span>
-        </div>
-      </td>
-      <td style={{ minWidth: "260px" }}>
-        <Description text={tool.description} />
-        {reason && <p className="fd-t-warn fd-wrap">{tool.sort_error ?? "Not sorted yet: it is sorted at the next listing."}</p>}
-      </td>
-      <td>
-        <Select style={{ width: "190px" }} value="" onChange={(e) => move(e.target.value)} aria-label={`Move ${tool.tool} to another domain`}>
+          </Inline>
+        </Stack>
+      </Td>
+      <Td>
+        <Clamp>{tool.description}</Clamp>
+        {reason && (
+          <Text block wrap tone="warn">
+            {tool.sort_error ?? "Not sorted yet: it is sorted at the next listing."}
+          </Text>
+        )}
+      </Td>
+      <Td>
+        <Select width="190px" value="" onChange={(e) => move(e.target.value)} aria-label={`Move ${tool.tool} to another domain`}>
           <option value="">move to…</option>
           {domains.filter((d) => d.id !== tool.domain_id).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           <option value={NEW_DOMAIN}>new domain…</option>
@@ -519,18 +511,16 @@ function ToolRow({
         {creating && (
           <DomainEdit act={act} onClose={() => setCreating(false)} onCreated={(d) => api.patch(path, { domain_id: d.id })} />
         )}
-      </td>
-    </tr>
+      </Td>
+    </Tr>
   );
 }
 
 type SortResult = { sorted: number; error: string | null; unreachable: Record<string, string> };
 
 function SortDialog({ page, onClose, onDone, onStart }: { page: Page; onClose: () => void; onDone: (text: string) => void; onStart: () => void }) {
-  const ref = useRef<HTMLDialogElement>(null);
   const [server, setServer] = useState("");
   const [mine, setMine] = useState(false);
-  useEffect(() => { ref.current?.showModal(); }, []);
   const byHand = page.tools.filter((t) => t.set_by === "owner" && t.domain_id != null && (!server || t.server === server)).length;
   const start = () => {
     onStart();
@@ -545,19 +535,19 @@ function SortDialog({ page, onClose, onDone, onStart }: { page: Page; onClose: (
     );
   };
   return (
-    <dialog ref={ref} className="fd-dialog" style={DIALOG} onClose={onClose}>
-      <div style={DIALOG_BODY}>
-        <h2 className="heading">Sort into domains</h2>
-        <p className="fd-dim">The main model sorts the tools again; domain names and descriptions you wrote stay.</p>
+    <Dialog title="Sort into domains" onClose={onClose}>
+        <Text block dim>
+          The main model sorts the tools again; domain names and descriptions you wrote stay.
+        </Text>
         <Field label="servers">
           <Select value={server} onChange={(e) => setServer(e.target.value)}>
             <option value="">all enabled servers</option>
             {page.servers.filter((s) => s.enabled).map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
           </Select>
         </Field>
-        <p>
+        <Text block>
           {byHand === 0 ? "You placed no tool by hand." : `${byHand} tool${byHand === 1 ? "" : "s"} you placed by hand stay${byHand === 1 ? "s" : ""} where ${byHand === 1 ? "it is" : "they are"}.`}
-        </p>
+        </Text>
         <Checkbox checked={mine} onChange={setMine} disabled={byHand === 0} label="Also re-sort the tools I placed by hand" />
         <Actions>
           <Button variant="primary" onClick={start}>
@@ -565,7 +555,6 @@ function SortDialog({ page, onClose, onDone, onStart }: { page: Page; onClose: (
           </Button>
           <Button onClick={onClose}>cancel</Button>
         </Actions>
-      </div>
-    </dialog>
+    </Dialog>
   );
 }

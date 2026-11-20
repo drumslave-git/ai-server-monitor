@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useAutomation } from "../automation";
 import { ExplainButton } from "../components/Explain";
 import { Findings } from "../components/Findings";
@@ -6,16 +6,16 @@ import { api } from "../api";
 import type { components } from "../api-types";
 import { ago, clock, until } from "../fmt";
 import {
-  originText,
   cronText,
   errorText,
   logsHref,
-  MODEL_TEXT,
+  MODEL_WORD,
+  originWord,
   runJob,
-  scheduleText,
+  scheduleWord,
   STATUS_LEVEL,
-  STATUS_TEXT,
-  TRIGGER_TEXT,
+  STATUS_WORD,
+  TRIGGER_WORD,
   UNITS,
   useRunning,
   type Job,
@@ -24,10 +24,14 @@ import {
 import {
   Axis,
   Button,
+  Chip,
   Code,
+  Column,
   Empty,
   ErrorText,
   Field,
+  FieldValue,
+  Inline,
   Input,
   KeyValue,
   LinkButton,
@@ -39,6 +43,7 @@ import {
   Panel,
   Row,
   Schedule,
+  Scroll,
   Segmented,
   Select,
   Split,
@@ -46,8 +51,11 @@ import {
   Status,
   Switch,
   Table,
-  Tag,
+  Td,
+  Text,
   Textarea,
+  TitleLink,
+  Tr,
   useFieldId,
   type Choice,
   type Tone,
@@ -69,15 +77,6 @@ export function JobsPage({ params }: { params: string[] }) {
   if (slug) return <JobDetail slug={slug} runId={sub === "runs" && /^\d+$/.test(id ?? "") ? Number(id) : null} />;
   return <JobList />;
 }
-
-/** The texts of jobs.ts start with a capital; inside a line of lowercase words they do not.
- *  A name in capitals at the start (OK) keeps its case. */
-const lower = (s: string) => (/^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s);
-
-// Placement of parts the kit has no layout component for.
-const column: CSSProperties = { display: "flex", flexDirection: "column", gap: "var(--space-4)" };
-const fieldRow: CSSProperties = { display: "flex", flexWrap: "wrap", gap: "var(--space-4) var(--space-5)" };
-const controlRow: CSSProperties = { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "var(--space-2) var(--space-3)" };
 
 // ---------------------------------------------------------------- list
 
@@ -117,79 +116,71 @@ function JobList() {
         </Panel>
       ) : (
         <Panel>
-          <Table>
-            <thead>
-              <tr>
-                <th>on</th>
-                <th>job</th>
-                <th>schedule</th>
-                <th>last result</th>
-                <th>next run</th>
-                <th />
-              </tr>
-            </thead>
+          <Table stack head={["on", "job", "schedule", "last result", "next run", ""]}>
             <tbody>
               {items.map((job) => {
                 const run = job.last_run;
                 const isRunning = running.has(job.slug);
                 return (
-                  <tr key={job.slug} className={job.enabled ? undefined : "fd-off"}>
-                    <td>
+                  <Tr key={job.slug} off={!job.enabled}>
+                    <Td>
                       <Switch checked={job.enabled} onChange={() => void toggle(job)} label={`${job.name} enabled`} title={job.enabled ? "Turn off" : "Turn on"} />
-                    </td>
-                    <td>
+                    </Td>
+                    <Td>
                       <Stack>
-                        <a className="fd-title-link" href={`#/jobs/${job.slug}`}>
-                          {job.name}
-                        </a>
-                        <Meta>{lower(originText(job))}</Meta>
+                        <TitleLink href={`#/jobs/${job.slug}`}>{job.name}</TitleLink>
+                        <Meta>{originWord(job)}</Meta>
                       </Stack>
-                    </td>
-                    <td>
+                    </Td>
+                    <Td>
                       <Stack>
-                        <span className="data">{lower(scheduleText(job))}</span>
-                        <Meta>{lower(MODEL_TEXT[job.model])} model</Meta>
+                        <Text kind="data">{scheduleWord(job)}</Text>
+                        <Meta>{MODEL_WORD[job.model]} model</Meta>
                       </Stack>
-                    </td>
-                    <td>
+                    </Td>
+                    <Td>
                       <Stack>
                         {isRunning ? (
                           <Status tone="info" blink>
                             running
                           </Status>
                         ) : run ? (
-                          <Status tone={STATUS_LEVEL[run.status]}>{lower(STATUS_TEXT[run.status])}</Status>
+                          <Status tone={STATUS_LEVEL[run.status]}>{STATUS_WORD[run.status]}</Status>
                         ) : (
                           <Status tone="off" hollow>
                             never run
                           </Status>
                         )}
                         {run && !isRunning && (
-                          <Meta>
-                            <span title={run.finished ? clock(run.finished) : undefined}>{ago(run.finished, now)}</span>
-                          </Meta>
+                          <Meta title={run.finished ? clock(run.finished) : undefined}>{ago(run.finished, now)}</Meta>
                         )}
                       </Stack>
-                    </td>
-                    <td className="fd-nowrap">
+                    </Td>
+                    <Td nowrap>
                       {!job.enabled ? (
-                        <span className="data fd-dim">off</span>
+                        <Text kind="data" dim>
+                          off
+                        </Text>
                       ) : auto?.paused ? (
-                        <span className="data fd-dim">paused</span>
+                        <Text kind="data" dim>
+                          paused
+                        </Text>
                       ) : job.next_run ? (
-                        <span className="data" title={clock(job.next_run)}>
+                        <Text kind="data" title={clock(job.next_run)}>
                           {until(job.next_run, now)}
-                        </span>
+                        </Text>
                       ) : (
-                        <span className="data fd-dim">—</span>
+                        <Text kind="data" dim>
+                          —
+                        </Text>
                       )}
-                    </td>
-                    <td className="fd-right">
+                    </Td>
+                    <Td right>
                       <Button onClick={() => void start(job)} disabled={isRunning} aria-label={`Run ${job.name} now`}>
                         run now
                       </Button>
-                    </td>
-                  </tr>
+                    </Td>
+                  </Tr>
                 );
               })}
             </tbody>
@@ -333,7 +324,7 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
           </Button>
         )}
         {job && !job.builtin && (
-          <Button onClick={remove} disabled={busy}>
+          <Button variant="danger" onClick={remove} disabled={busy}>
             delete
           </Button>
         )}
@@ -343,10 +334,9 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
         </Button>
       </PageHeader>
       {error && <ErrorText>{error}</ErrorText>}
-      <form id={formId} className="fd-split" style={{ alignItems: "stretch" }} onSubmit={submit}>
+      <Split stretch id={formId} onSubmit={submit}>
         <Panel pad flex="5 1 520px">
-          <div style={column}>
-            <div style={fieldRow}>
+            <Inline align="start" gap={4}>
               <Field label="name" flex="2 1 260px">
                 <Input id="job-name" value={name} onChange={(e) => onName(e.target.value)} required maxLength={80} />
               </Field>
@@ -366,43 +356,35 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
                 </Field>
               ) : (
                 <Field label="slug" group flex="1 1 180px" help="Its id in links, logs and metrics.">
-                  <span className="data" style={{ display: "flex", alignItems: "center", minHeight: "var(--control)" }}>
-                    {job.slug}
-                  </span>
+                  <FieldValue>{job.slug}</FieldValue>
                 </Field>
               )}
-            </div>
+            </Inline>
             <Field label="prompt" help="What the model checks, with which commands, and when a result counts as warning or critical. Keep the topic narrow.">
               <Textarea id="job-prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} required rows={16} />
             </Field>
-          </div>
         </Panel>
 
         <Panel pad flex="4 1 420px">
-          <div style={column}>
             <Field label="schedule" group help="Cron times use the time zone set in Settings → General (the host's by default).">
-              <div style={controlRow}>
-                <div style={{ flex: "1 1 180px" }}>
-                  <Segmented label="Schedule type" options={MODES} value={mode} onChange={setMode} />
-                </div>
+              <Inline>
+                <Segmented flex="1 1 180px" label="Schedule type" options={MODES} value={mode} onChange={setMode} />
                 {mode === "interval" ? (
-                  <div style={{ flex: "1 1 200px", display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-                    <span className="data">every</span>
-                    <Input type="number" min={1} step={1} value={n} onChange={(e) => setN(e.target.value)} required aria-label="Interval" style={{ width: "76px" }} />
-                    <Select value={unit} onChange={(e) => setUnit(e.target.value as Unit)} aria-label="Unit" style={{ flex: "1 1 104px" }}>
+                  <Inline nowrap gap={2} flex="1 1 200px">
+                    <Text kind="data">every</Text>
+                    <Input type="number" min={1} step={1} value={n} onChange={(e) => setN(e.target.value)} required aria-label="Interval" width="76px" />
+                    <Select value={unit} onChange={(e) => setUnit(e.target.value as Unit)} aria-label="Unit" flex="1 1 104px">
                       {[...UNITS].reverse().map((u) => (
                         <option key={u.key} value={u.key}>
                           {Number(n) === 1 ? u.key.slice(0, -1) : u.key}
                         </option>
                       ))}
                     </Select>
-                  </div>
+                  </Inline>
                 ) : (
-                  <div style={{ flex: "1 1 200px" }}>
-                    <Input value={cron} onChange={(e) => setCron(e.target.value)} required aria-label="Cron expression" placeholder="0 6 * * *" invalid={!cronWords} />
-                  </div>
+                  <Input flex="1 1 200px" value={cron} onChange={(e) => setCron(e.target.value)} required aria-label="Cron expression" placeholder="0 6 * * *" invalid={!cronWords} />
                 )}
-              </div>
+              </Inline>
               {mode === "cron" &&
                 (cronWords ? <Meta>{cronWords}</Meta> : <Meta tone="crit">Not a cron expression this page can read: minute hour day month weekday.</Meta>)}
               {mode === "interval" && <IntervalPreview every={intervalS} />}
@@ -417,7 +399,7 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
 
             <DomainsField prompt={prompt} value={domains} onChange={setDomains} />
 
-            <div style={fieldRow}>
+            <Inline align="start" gap={4}>
               <Field label="enabled" group flex="0 0 76px">
                 <Switch checked={enabled} onChange={setEnabled} label="Enabled" />
               </Field>
@@ -427,7 +409,7 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
               <Field label="step limit" flex="1 1 140px" help="Most tool-use rounds per run. Empty: the default from Settings → Jobs.">
                 <Input id="job-steps" type="number" min={1} max={60} step={1} value={steps} onChange={(e) => setSteps(e.target.value)} placeholder="Default" />
               </Field>
-            </div>
+            </Inline>
 
             {job && (
               <Meta>
@@ -435,9 +417,8 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
                 <span title={clock(job.created)}>{ago(job.created)}</span>, changed <span title={clock(job.updated)}>{ago(job.updated)}</span>.
               </Meta>
             )}
-          </div>
         </Panel>
-      </form>
+      </Split>
     </>
   );
 }
@@ -453,7 +434,7 @@ function IntervalPreview({ every }: { every: number }) {
   const count = valid ? Math.floor((PREVIEW_SLOTS * PREVIEW_SLOT_S) / every) : 0;
   const runs = `${count} run${count === 1 ? "" : "s"}`;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+    <Column gap={1}>
       <Schedule
         runs={[]}
         now={now}
@@ -466,7 +447,7 @@ function IntervalPreview({ every }: { every: number }) {
       />
       <Axis labels={["now", "+6 h", "+12 h", "+18 h", "+24 h"]} />
       <Meta>{runs} in the next 24 h · one cell = 30 minutes</Meta>
-    </div>
+    </Column>
   );
 }
 
@@ -505,25 +486,22 @@ function DomainsField({ prompt, value, onChange }: { prompt: string; value: stri
   return (
     <Field label="domains" group help="MCP tools the runs get: exactly the enabled tools of these domains. Empty: the shell only." error={note ?? undefined}>
       {value.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0 var(--space-3)" }}>
+        <Inline gap={2}>
           {value.map((name) => (
-            <span key={name} style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)" }}>
-              <Tag>{name}</Tag>
-              <Button variant="link" aria-label={`Remove ${name}`} onClick={() => onChange(value.filter((v) => v !== name))}>
-                remove
-              </Button>
-            </span>
+            <Chip key={name} label={`Remove ${name}`} onRemove={() => onChange(value.filter((v) => v !== name))}>
+              {name}
+            </Chip>
           ))}
-        </div>
+        </Inline>
       )}
-      <div style={controlRow}>
+      <Inline>
         <Select
           id="job-domains"
           aria-label="Add domain"
           value=""
           disabled={free.length === 0}
           onChange={(e) => e.target.value && onChange([...value, e.target.value].sort())}
-          style={{ flex: "1 1 200px" }}
+          flex="1 1 200px"
         >
           <option value="">{free.length ? "Add domain…" : known.length ? "All added" : "No domains yet"}</option>
           {free.map((d) => (
@@ -539,7 +517,7 @@ function DomainsField({ prompt, value, onChange }: { prompt: string; value: stri
         >
           {busy ? "classifying…" : "classify"}
         </Button>
-      </div>
+      </Inline>
       <Meta>
         {value.length === 0
           ? "This job uses only the shell."
@@ -587,7 +565,7 @@ function JobDetail({ slug, runId }: { slug: string; runId: number | null }) {
         back={{ label: "jobs", href: "#/jobs" }}
         meta={
           <>
-            {j.enabled ? lower(scheduleText(j)) : "disabled"} · {lower(MODEL_TEXT[j.model])} model · {lower(originText(j))}
+            {j.enabled ? scheduleWord(j) : "disabled"} · {MODEL_WORD[j.model]} model · {originWord(j)}
             {j.enabled && j.next_run && (
               <>
                 {" · "}
@@ -617,7 +595,7 @@ function JobDetail({ slug, runId }: { slug: string; runId: number | null }) {
             </Panel>
           ) : null}
           <Panel title="Runs" meta="bar = how long the run took" flex="2 1 420px">
-            <div style={{ maxHeight: "70vh", overflow: "auto" }}>
+            <Scroll max="70vh">
               <List>
                 {items.map((r) => (
                   <ListItem
@@ -631,18 +609,18 @@ function JobDetail({ slug, runId }: { slug: string; runId: number | null }) {
                     }
                     meta={
                       <>
-                        {lower(STATUS_TEXT[r.status])}
+                        {STATUS_WORD[r.status]}
                         {r.duration_s != null && ` · ${seconds(r.duration_s)}`}
                         {tokenSum(r) > 0 && ` · ${tokenSum(r).toLocaleString()} tokens`}
                       </>
                     }
-                    trailing={lower(TRIGGER_TEXT[r.trigger])}
+                    trailing={TRIGGER_WORD[r.trigger]}
                   >
                     <Meter value={r.duration_s ?? 0} max={longest} count={12} tone={cellTone(STATUS_LEVEL[r.status])} />
                   </ListItem>
                 ))}
               </List>
-            </div>
+            </Scroll>
           </Panel>
         </Split>
       )}
@@ -671,9 +649,9 @@ function RunView({ run, now }: { run: JobRun; now: number }) {
       "started",
       <>
         <span title={new Date(run.started * 1000).toLocaleString()}>{clock(run.started)}</span>
-        <span className="fd-dim">
-          {" "}· {ago(run.started, now)} · {lower(TRIGGER_TEXT[run.trigger])}
-        </span>
+        <Text dim>
+          {" "}· {ago(run.started, now)} · {TRIGGER_WORD[run.trigger]}
+        </Text>
       </>,
     ],
     ["duration", run.duration_s != null ? seconds(run.duration_s) : running ? "still running" : "—"],
@@ -682,14 +660,14 @@ function RunView({ run, now }: { run: JobRun; now: number }) {
       <>
         {run.model ?? "—"}
         {run.steps != null && (
-          <span className="fd-dim">
+          <Text dim>
             {" "}· {run.steps} step{run.steps === 1 ? "" : "s"}
-          </span>
+          </Text>
         )}
         {tokenSum(run) > 0 && (
-          <span className="fd-dim">
+          <Text dim>
             {" "}· {(run.prompt_tokens ?? 0).toLocaleString()} in, {(run.completion_tokens ?? 0).toLocaleString()} out
-          </span>
+          </Text>
         )}
       </>,
     ],
@@ -700,11 +678,11 @@ function RunView({ run, now }: { run: JobRun; now: number }) {
       <>
         {run.mcp.domains.length ? run.mcp.domains.join(", ") : "—"}
         {Object.entries(run.mcp.unreachable ?? {}).map(([server, why]) => (
-          <span key={server} className="fd-dim">
+          <Text key={server} dim>
             {" "}· server {server} unreachable: {why}
-          </span>
+          </Text>
         ))}
-        {(run.mcp.unsorted ?? []).length > 0 && <span className="fd-dim"> · not sorted, not given: {(run.mcp.unsorted ?? []).join(", ")}</span>}
+        {(run.mcp.unsorted ?? []).length > 0 && <Text dim> · not sorted, not given: {(run.mcp.unsorted ?? []).join(", ")}</Text>}
       </>,
     ]);
   return (
@@ -712,7 +690,7 @@ function RunView({ run, now }: { run: JobRun; now: number }) {
       flex={RUN_FLEX}
       title={
         <Status tone={STATUS_LEVEL[run.status]} blink={running}>
-          {lower(STATUS_TEXT[run.status])}
+          {STATUS_WORD[run.status]}
         </Status>
       }
       aside={
@@ -724,13 +702,15 @@ function RunView({ run, now }: { run: JobRun; now: number }) {
         </>
       }
     >
-      <Row>
-        <div style={{ ...column, flex: "1 1 100%", minWidth: 0 }}>
-          <KeyValue items={facts} />
-          {run.error && <Code wrap>{run.error}</Code>}
-          {running && <p className="fd-dim">The model is working on it. This view updates when it ends.</p>}
-          {run.summary && <Markdown text={run.summary} />}
-        </div>
+      <Row column gap={4}>
+        <KeyValue items={facts} />
+        {run.error && <Code wrap>{run.error}</Code>}
+        {running && (
+          <Text block dim>
+            The model is working on it. This view updates when it ends.
+          </Text>
+        )}
+        {run.summary && <Markdown text={run.summary} />}
       </Row>
       {run.findings.length > 0 && <Findings findings={run.findings} runId={run.id} />}
       {!running && !run.summary && !run.error && run.findings.length === 0 && <Empty>The run left no summary.</Empty>}

@@ -5,7 +5,7 @@ import { HostCommand } from "../components/HostCommand";
 import { RunnableMarkdown } from "../components/RunnableMarkdown";
 import { ago } from "../fmt";
 import { takeExplain, type ExplainRequest } from "../components/Explain";
-import { Button, Code, Command, Empty, ErrorText, Field, Fold, LinkButton, ListItem, Message, Meta, PageHeader, Panel, Split, Status, Textarea, type Tone } from "../kit";
+import { Button, Code, Column, Command, Empty, ErrorText, Field, Fold, Inline, LinkButton, List, ListItem, Message, Meta, PageHeader, Pad, Panel, Row, Split, Status, Text, Textarea, type Tone } from "../kit";
 import { useStream } from "../live";
 import { useNow, usePoll } from "../ui";
 
@@ -399,7 +399,7 @@ export function ChatPage() {
         {(!onePane || !showThread) && (
           <Panel flex="1 1 240px">
             {sessions.data && items.length === 0 && <Empty>No conversations yet.</Empty>}
-            <nav className="fd-list" aria-label="Conversations">
+            <List label="Conversations">
               {items.map((s) => (
                 <ListItem
                   key={s.id}
@@ -407,28 +407,20 @@ export function ChatPage() {
                   selected={s.id === routeId}
                   title={s.title || "Untitled"}
                   meta={`${s.channel === "telegram" ? "Telegram · " : ""}${ago(s.updated, now)} · ${s.messages} messages`}
-                >
-                  <Button
-                    variant="link"
-                    aria-label={`Delete conversation: ${s.title || "Untitled"}`}
-                    onClick={(e) => {
-                      // (the button stands inside the row's link)
-                      e.preventDefault();
-                      e.stopPropagation();
-                      void remove(s.id);
-                    }}
-                  >
-                    delete
-                  </Button>
-                </ListItem>
+                  action={
+                    <Button variant="link" aria-label={`Delete conversation: ${s.title || "Untitled"}`} onClick={() => void remove(s.id)}>
+                      delete
+                    </Button>
+                  }
+                />
               ))}
-            </nav>
+            </List>
           </Panel>
         )}
         {(!onePane || showThread) && (
           <Panel flex="3 1 300px">
             {(loadError || turns.length > 0) && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "20px 24px" }}>
+              <Pad>
                 {loadError && <ErrorText>{loadError}</ErrorText>}
                 {turns.map((t, i) =>
                   t.role === "user" ? (
@@ -439,14 +431,16 @@ export function ChatPage() {
                     <AssistantMessage key={i} turn={t} onRun={busy ? undefined : runCommand} />
                   ),
                 )}
-              </div>
+              </Pad>
             )}
             {turns.length === 0 && !busy && (
               <Empty>Ask about the server: what is using the disk, why a container restarted, what changed since yesterday.</Empty>
             )}
-            <form
-              className="fd-row"
-              style={{ flexWrap: "nowrap", alignItems: "flex-end", gap: 12 }}
+            <Row
+              sticky
+              nowrap
+              align="end"
+              gap={3}
               onSubmit={(e) => {
                 e.preventDefault();
                 void send();
@@ -476,7 +470,7 @@ export function ChatPage() {
                   send
                 </Button>
               )}
-            </form>
+            </Row>
             <div ref={bottom} />
           </Panel>
         )}
@@ -489,18 +483,18 @@ function UserMessage({ text, explain }: { text: string; explain?: ExplainNote })
   // (a typed message keeps its line breaks)
   if (!explain)
     return (
-      <Message who="you">
-        <p className="fd-code-wrap">{text}</p>
+      <Message who="you" typed>
+        {text}
       </Message>
     );
   return (
     <Message who="you">
-      <p>{explain.label}</p>
+      <Text block>{explain.label}</Text>
       {explain.source && (
         <Fold inline title="source data">
-          <div style={{ maxHeight: 320, overflow: "auto" }}>
-            <Code wrap>{explain.source}</Code>
-          </div>
+          <Code wrap maxHeight={320}>
+            {explain.source}
+          </Code>
         </Fold>
       )}
     </Message>
@@ -518,34 +512,25 @@ function RunCard({ run }: { run: CommandRun }) {
   const failed = run.stopped === "error";
   const where = run.mode === "write" ? "as root (it can change the server)" : "in the read-only shell";
   // The owner's side of the thread, as wide as a message.
-  const card = { alignSelf: "flex-end", width: "min(760px, 100%)", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 } as const;
   if (run.stopped === "running")
     return (
-      <div style={card}>
-        <Status tone="info" blink>
-          running this command…
-        </Status>
-        <Panel inset pad width="100%">
-          <Command wrap>{run.command}</Command>
-        </Panel>
-      </div>
+      <Message who="you" says="running this command…" running wide>
+        <Command wrap>{run.command}</Command>
+      </Message>
     );
   return (
-    <div style={card}>
-      <Status tone="info">you ran this command {where}</Status>
-      <Panel inset pad width="100%">
-        <HostCommand
-          item={{
-            args: { command: run.command },
-            reason: null,
-            status: failed ? "failed" : "executed",
-            result: failed
-              ? { error: `Could not run: ${run.output}` }
-              : { exit_code: run.exit_code, duration_s: run.duration_s, stopped: run.stopped, truncated: run.truncated, output: run.output },
-          }}
-        />
-      </Panel>
-    </div>
+    <Message who="you" says={`you ran this command ${where}`} wide>
+      <HostCommand
+        item={{
+          args: { command: run.command },
+          reason: null,
+          status: failed ? "failed" : "executed",
+          result: failed
+            ? { error: `Could not run: ${run.output}` }
+            : { exit_code: run.exit_code, duration_s: run.duration_s, stopped: run.stopped, truncated: run.truncated, output: run.output },
+        }}
+      />
+    </Message>
   );
 }
 
@@ -567,26 +552,26 @@ function AssistantMessage({
         turn.tools
           .filter((t) => t.ok === undefined)
           .map((t) => (
-            <div key={t.id + t.name} style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "2px 8px" }}>
+            <Inline key={t.id + t.name} align="baseline" gap={2}>
               <Status tone="info" blink>
                 running {displayName(t.name)}
                 {t.elapsed ? ` for ${running(t.elapsed)}` : "…"}
               </Status>
               <Meta>(big scans and slow services take a while)</Meta>
-            </div>
+            </Inline>
           ))}
       {turn.tools.length > 0 && (
         <Fold inline title={`used ${turn.tools.length === 1 ? "a tool" : `${turn.tools.length} tools`}: ${names.join(", ")}`}>
           {turn.tools.map((t) => (
-            <div key={t.id + t.name} className="fd-wrap" style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+            <Column key={t.id + t.name} gap={1}>
               <Status tone={t.ok === undefined ? "off" : t.ok ? "ok" : "crit"}>{displayName(t.name)}</Status>
               {typeof t.args === "object" && t.args !== null && Object.keys(t.args).length > 0 && <Meta>{JSON.stringify(t.args)}</Meta>}
               {t.preview && (
-                <div style={{ maxHeight: 120, overflow: "auto" }}>
-                  <Code wrap>{t.preview}</Code>
-                </div>
+                <Code wrap maxHeight={120}>
+                  {t.preview}
+                </Code>
               )}
-            </div>
+            </Column>
           ))}
         </Fold>
       )}

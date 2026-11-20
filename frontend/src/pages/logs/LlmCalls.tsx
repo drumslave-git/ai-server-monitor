@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api";
-import { Actions, Button, Empty, ErrorText, Field, Input, Legend, Meta, Meter, Notice, Panel, Row, Select, Stack, Status, Table, Toolbar } from "../../kit";
+import { Actions, Button, Empty, ErrorText, Field, Input, Legend, Meta, Meter, Notice, Panel, Row, Select, Stack, Status, Table, Td, Text, TitleLink, Toolbar } from "../../kit";
 import { useStream } from "../../live";
 import { linkLabel, ms, purposeLabel, stamp, tokens } from "./format";
 import { CallStatus } from "./parts";
@@ -125,23 +125,26 @@ export function LlmCallsList({ link }: { link: { kind: string; id: string; turn?
       )}
       {items.length > 0 && (
         <Panel>
-          <Table>
-            <thead>
-              <tr>
-                <th>time</th>
-                <th>purpose · model</th>
-                <th style={{ minWidth: 260 }}>prompt or answer · where it ran</th>
-                <th>status</th>
-                <th>tokens in → out · bar = in</th>
-                <th>
+          <Table
+            stack
+            head={[
+              "time",
+              "purpose · model",
+              { label: "prompt or answer · where it ran", minWidth: "260px" },
+              "status",
+              "tokens in → out · bar = in",
+              {
+                label: "time: first token, total",
+                head: (
                   <Legend>
                     <span>time</span>
                     <Status tone="info" plain>first token</Status>
                     <Status tone="ok" plain>total</Status>
                   </Legend>
-                </th>
-              </tr>
-            </thead>
+                ),
+              },
+            ]}
+          >
             <tbody>
               {items.map((c) => (<CallRow key={c.id} call={c} maxTokens={maxTokens} maxMs={maxMs} />))}
             </tbody>
@@ -151,12 +154,10 @@ export function LlmCallsList({ link }: { link: { kind: string; id: string; turn?
               {offset + 1}–{offset + items.length} of {data?.total}
               {data && !data.complete && " · search covers the newest 2,000 calls"}
             </Meta>
-            <div style={{ marginLeft: "auto" }}>
-              <Actions>
-                <Button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>newer</Button>
-                <Button disabled={!data || offset + PAGE >= data.total} onClick={() => setOffset(offset + PAGE)}>older</Button>
-              </Actions>
-            </div>
+            <Actions toEnd>
+              <Button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>newer</Button>
+              <Button disabled={!data || offset + PAGE >= data.total} onClick={() => setOffset(offset + PAGE)}>older</Button>
+            </Actions>
           </Row>
         </Panel>
       )}
@@ -169,45 +170,45 @@ function CallRow({ call: c, maxTokens, maxMs }: { call: LlmCallSummary; maxToken
   const preview = c.status !== "ok" && c.error ? c.error : c.response_preview || c.request_preview || "";
   return (
     <tr>
-      <td className="fd-nowrap">
+      <Td nowrap>
         <Meta>{stamp(c.ts)}</Meta>
-      </td>
-      <td>
+      </Td>
+      <Td>
         <Stack>
-          <strong className="fd-nowrap">
+          <Text kind="label" nowrap>
             {purposeLabel(c.purpose).toLowerCase()}
             {c.attempt > 1 && ` · retry ${c.attempt}`}
             {c.tool_calls_count > 0 && ` · ${c.tool_calls_count} tool call${c.tool_calls_count === 1 ? "" : "s"}`}
-          </strong>
+          </Text>
           <Meta>{c.model ?? "—"}</Meta>
         </Stack>
-      </td>
-      <td className={c.status === "error" ? "fd-fill fd-t-crit" : "fd-fill"}>
+      </Td>
+      <Td fill tone={c.status === "error" ? "crit" : undefined}>
         <Stack>
           {/* The row's way into the call: its preview, or its number when nothing was stored to preview. */}
-          <a className="fd-title-link fd-truncate" href={`#/logs/llm/${c.id}`}>
+          <TitleLink truncate href={`#/logs/llm/${c.id}`}>
             {preview || `call #${c.id}`}
-          </a>
+          </TitleLink>
           {label && <Meta>{label}</Meta>}
         </Stack>
-      </td>
-      <td>
+      </Td>
+      <Td>
         <CallStatus status={c.status} />
-      </td>
-      <td className="fd-nowrap">
-        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      </Td>
+      <Td nowrap>
+        <Stack gap={1}>
           <Meter value={c.prompt_tokens ?? 0} max={maxTokens} count={TOKEN_CELLS} tone="text" />
           <Meta>{tokens(c)}</Meta>
-        </div>
-      </td>
-      <td className="fd-nowrap">
-        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+        </Stack>
+      </Td>
+      <Td nowrap>
+        <Stack gap={1}>
           <Meter value={c.total_ms ?? 0} inner={c.ttft_ms ?? undefined} innerTone="info" max={maxMs} count={TIME_CELLS} tone="ok" />
           <Meta>
             first {ms(c.ttft_ms)} · total {ms(c.total_ms)}
           </Meta>
-        </div>
-      </td>
+        </Stack>
+      </Td>
     </tr>
   );
 }

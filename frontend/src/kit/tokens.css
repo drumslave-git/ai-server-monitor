@@ -22,6 +22,7 @@
   --fill-edge: rgba(10, 14, 13, 0);
   --grid-dot: rgba(255, 255, 255, 0.055);
   --focus: #e8f1ec;
+  --backdrop: rgba(10, 14, 13, 0.7);
 
   --space-1: 4px;
   --space-2: 8px;

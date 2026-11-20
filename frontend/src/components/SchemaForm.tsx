@@ -1,7 +1,7 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { McpToolPicker, mcpTools } from "./McpTools";
 import { api, type ConnectionTestResult, type Json, type JsonObject, type JsonSchema } from "../api";
-import { Actions, Button, ErrorText, Field as KitField, FormGrid, Input, Panel, Row, Segmented, Select, Status, Switch, Textarea } from "../kit";
+import { Button, Column, ErrorText, Field as KitField, FormGrid, Input, Joined, Live, Meta, Pad, Panel, SectionHead, Segmented, Select, Switch, TestLine, Text, Textarea } from "../kit";
 
 /* Renders a form from the backend's pydantic JSON schema, so every setting the backend
    defines shows up here without UI changes. Field help comes from `description`.
@@ -80,19 +80,6 @@ export function defaultFor(schema: JsonSchema, defs: Record<string, JsonSchema>)
   if (s.type === "integer" || s.type === "number") return 0;
   return "";
 }
-
-// ---- placement (the look comes from the kit) --------------------------------
-
-/** The inside of a group's panel: its blocks under each other. */
-const BODY: CSSProperties = { display: "flex", flexDirection: "column", gap: "var(--space-4)", minWidth: 0, padding: "0 var(--space-5) var(--space-4)" };
-const HEADING: CSSProperties = { display: "flex", flexDirection: "column", gap: "var(--space-1)", minWidth: 0 };
-/** A field or a line that takes the whole width of its grid. */
-const WIDE: CSSProperties = { gridColumn: "1 / -1", minWidth: 0 };
-const BESIDE: CSSProperties = { display: "flex", flexWrap: "wrap", gap: "var(--space-2)", minWidth: 0 };
-const SHARE: CSSProperties = { flex: "1 1 120px", minWidth: 0 };
-const UNDER: CSSProperties = { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "var(--space-2)", minWidth: 0 };
-const WHOLE: CSSProperties = { width: "100%" };
-const PICKER: CSSProperties = { padding: "0 var(--space-5) var(--space-4)" };
 
 // ---- the mapping: schema node → kind → kit control ---------------------------
 
@@ -181,10 +168,10 @@ export function ObjectFields({ schema, value, onChange, path, ctx, inset }: Omit
     const field = <Field key={key} name={key} schema={prop} value={obj[key] ?? null} onChange={(v) => onChange({ ...obj, [key]: v })} path={fieldPath} ctx={ctx} inset={inset} />;
     if (isBlock(kindOf(prop, ctx.defs))) {
       closeGrid();
-      if (note) blocks.push(<p key={`${key}-note`} className="fd-sub">{note}</p>);
+      if (note) blocks.push(<Meta key={`${key}-note`} block>{note}</Meta>);
       blocks.push(field);
     } else {
-      if (note) cells.push(<p key={`${key}-note`} className="fd-sub" style={WIDE}>{note}</p>);
+      if (note) cells.push(<Meta key={`${key}-note`} block span="all">{note}</Meta>);
       cells.push(field);
     }
   }
@@ -374,12 +361,11 @@ function Cell({
 }) {
   const id = useId();
   const error = ctx.errors[path];
-  const field = (
-    <KitField label={fieldLabel(name)} help={description} error={error} group={group} htmlFor={group ? undefined : id}>
+  return (
+    <KitField label={fieldLabel(name)} help={description} error={error} group={group} htmlFor={group ? undefined : id} span={wide ? "all" : undefined}>
       {children(id, Boolean(error))}
     </KitField>
   );
-  return wide ? <div style={WIDE}>{field}</div> : field;
 }
 
 function Group({ title, description, error, actions, below, inset, children }: {
@@ -388,11 +374,11 @@ function Group({ title, description, error, actions, below, inset, children }: {
   return (
     <Panel inset={inset} title={title} aside={actions}>
       {below}
-      <div style={BODY}>
-        {description && <p className="fd-dim">{description}</p>}
+      <Pad>
+        {description && <Text block dim>{description}</Text>}
         {error && <ErrorText>{error}</ErrorText>}
         {children}
-      </div>
+      </Pad>
     </Panel>
   );
 }
@@ -425,7 +411,7 @@ function OptionalGroup({ title, spec, inner, value, onChange, path, ctx, inset }
             )
           }
         >
-          {enabled ? <ObjectFields schema={inner} value={value} onChange={onChange} path={path} ctx={ctx} inset /> : <p className="fd-dim">Not configured.</p>}
+          {enabled ? <ObjectFields schema={inner} value={value} onChange={onChange} path={path} ctx={ctx} inset /> : <Text block dim>Not configured.</Text>}
         </Group>
       )}
     </Tested>
@@ -436,7 +422,7 @@ function ListOfObjects({ title, spec, item, value, onChange, path, ctx, inset }:
   const list = (value as Json[]) ?? [];
   const update = (i: number, v: Json) => onChange(list.map((x, j) => (j === i ? v : x)));
   const add = <Button onClick={() => onChange([...list, defaultFor({ ...item, default: undefined }, ctx.defs)])}>add</Button>;
-  const none = list.length === 0 && <p className="fd-dim">None.</p>;
+  const none = list.length === 0 && <Text block dim>None.</Text>;
   const entries = list.map((entry, i) => (
     <Tested key={i} spec={spec} value={entry} index={i} onEdit={(v) => update(i, v)}>
       {(buttons, result) => (
@@ -451,9 +437,9 @@ function ListOfObjects({ title, spec, item, value, onChange, path, ctx, inset }:
           }
         >
           {result}
-          <div style={BODY}>
+          <Pad>
             <ObjectFields schema={item} value={entry} onChange={(v) => update(i, v)} path={`${path}.${i}`} ctx={ctx} inset />
-          </div>
+          </Pad>
         </Panel>
       )}
     </Tested>
@@ -469,34 +455,13 @@ function ListOfObjects({ title, spec, item, value, onChange, path, ctx, inset }:
   }
   return (
     <>
-      <div className="fd-section-head">
-        <div style={HEADING}>
-          <h2>{title}</h2>
-          {spec.description && <p className="fd-dim">{spec.description}</p>}
-        </div>
-        <Actions>{add}</Actions>
-      </div>
+      <SectionHead title={title} note={spec.description}>
+        {add}
+      </SectionHead>
       {ctx.errors[path] && <ErrorText>{ctx.errors[path]}</ErrorText>}
       {none}
       {entries}
     </>
-  );
-}
-
-/** One line of a test's outcome, or the line shown while it runs. */
-export function TestLine({ ok, running, children }: { ok?: boolean; running?: boolean; children?: ReactNode }) {
-  if (running) {
-    return (
-      <Row>
-        <Status tone="info" blink>testing…</Status>
-      </Row>
-    );
-  }
-  return (
-    <Row>
-      <Status tone={ok ? "ok" : "crit"}>{ok ? "ok" : "failed"}</Status>
-      <span className="fd-wrap" style={{ flex: "1 1 320px", minWidth: 0 }}>{children}</span>
-    </Row>
   );
 }
 
@@ -557,15 +522,15 @@ function Tested({ spec, value, index, onEdit, children }: {
   );
   const tools = kind === "mcp" && onEdit ? mcpTools(result) : null;
   const shown = (
-    <div role="status" aria-live="polite">
+    <Live>
       {running !== null && <TestLine running />}
       {result && <TestLine ok={result.ok}>{result.message}</TestLine>}
       {tools && onEdit && (
-        <div style={PICKER}>
+        <Pad>
           <McpToolPicker tools={tools} value={value as JsonObject} onChange={onEdit} />
-        </div>
+        </Pad>
       )}
-    </div>
+    </Live>
   );
   return <>{children(buttons, shown)}</>;
 }
@@ -573,19 +538,18 @@ function Tested({ spec, value, index, onEdit, children }: {
 function SecretInput({ id, invalid, value, onChange }: { id: string; invalid: boolean; value: string; onChange: (v: Json) => void }) {
   const isStored = value === SECRET_MASK;
   return (
-    <span style={BESIDE}>
+    <Joined>
       <Input
         id={id}
         type="password"
         autoComplete="new-password"
-        style={SHARE}
         invalid={invalid}
         value={isStored ? "" : value}
         placeholder={isStored ? "Saved — type to replace" : "Not set"}
         onChange={(e) => onChange(e.target.value === "" && isStored ? SECRET_MASK : e.target.value)}
       />
       {isStored && <Button onClick={() => onChange("")}>clear</Button>}
-    </span>
+    </Joined>
   );
 }
 
@@ -603,16 +567,16 @@ function KeyValueInput({ value, onChange }: { value: Record<string, string>; onC
   const rows = Object.entries(value);
   const set = (next: [string, string][]) => onChange(Object.fromEntries(next));
   return (
-    <div style={UNDER}>
+    <Column gap={2} align="start">
       {rows.map(([k, v], i) => (
-        <div key={i} style={{ ...BESIDE, ...WHOLE }}>
-          <Input style={SHARE} value={k} placeholder="name" onChange={(e) => set(rows.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} />
-          <Input style={SHARE} value={v} placeholder="value" onChange={(e) => set(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
+        <Joined key={i} width="100%">
+          <Input value={k} placeholder="name" onChange={(e) => set(rows.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} />
+          <Input value={v} placeholder="value" onChange={(e) => set(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
           <Button onClick={() => set(rows.filter((_, j) => j !== i))}>remove</Button>
-        </div>
+        </Joined>
       ))}
       <Button onClick={() => set([...rows, [`query_${rows.length + 1}`, ""]])}>add</Button>
-    </div>
+    </Column>
   );
 }
 
@@ -637,7 +601,7 @@ function JsonInput({ id, invalid, value, onChange }: { id: string; invalid: bool
           }
         }}
       />
-      {error && <span className="fd-field-error">{error}</span>}
+      {error && <Text tone="crit">{error}</Text>}
     </>
   );
 }

@@ -1,14 +1,7 @@
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, ApiError, type FieldError, type JsonObject, type LlmTestResult, type ModelInfo, type SettingsDoc } from "../api";
-import { ObjectFields, resolve, TestLine, type FormContext } from "../components/SchemaForm";
-import { Button, Count, ErrorText, ListItem, Meta, PageHeader, Panel, SaveBar, Split, Status } from "../kit";
-
-/** The section's form beside the list of sections: its blocks under each other. */
-const FORM: CSSProperties = { flex: "5 1 560px", minWidth: 0, display: "flex", flexDirection: "column", gap: "var(--space-4)" };
-const HEADING: CSSProperties = { display: "flex", flexDirection: "column", gap: "var(--space-1)", minWidth: 0 };
-const TEXT: CSSProperties = { maxWidth: "820px" };
-const NOTE: CSSProperties = { padding: "0 var(--space-5) var(--space-4)" };
-const LEFT: CSSProperties = { marginRight: "auto" };
+import { ObjectFields, resolve, type FormContext } from "../components/SchemaForm";
+import { Button, Column, Count, ErrorText, List, ListItem, Live, Meta, Pad, PageHeader, Panel, SaveBar, SectionHead, Split, Status, TestLine, Text } from "../kit";
 
 function modelDefaultsLine(info: ModelInfo): string {
   const p = info.parameters;
@@ -139,13 +132,6 @@ export function SettingsPage() {
     }
   };
 
-  /** A section of the list was chosen: the page stays, the address follows (see the effect above). */
-  const pick = (e: MouseEvent<HTMLElement>) => {
-    const key = (e.target as HTMLElement).closest("a")?.getAttribute("href")?.split("/")[2];
-    if (!key) return;
-    e.preventDefault();
-    setSection(key);
-  };
 
   /** Discard and save: in the page's head, and again in the bar that stays in view while there are changes. */
   const buttons = (
@@ -164,20 +150,29 @@ export function SettingsPage() {
       <PageHeader title="Settings">{buttons}</PageHeader>
       <Split>
         <Panel flex="1 1 210px">
-          <nav className="fd-list" aria-label="Settings sections" onClick={pick}>
+          <List label="Settings sections">
             {Object.entries(doc.sections).map(([key, title], i) => (
-              <ListItem key={key} mono index={String.fromCharCode(97 + i)} title={title.toLowerCase()} href={`#/settings/${key}`} selected={key === section}>
+              <ListItem
+                key={key}
+                mono
+                index={String.fromCharCode(97 + i)}
+                title={title.toLowerCase()}
+                href={`#/settings/${key}`}
+                selected={key === section}
+                // the page stays, the address follows (see the effect above)
+                onClick={(e) => {
+                  e.preventDefault();
+                  setSection(key);
+                }}
+              >
                 {errorCount(key) > 0 && <Count tone="crit">{errorCount(key)}</Count>}
               </ListItem>
             ))}
-          </nav>
+          </List>
         </Panel>
 
-        <form id={formId} style={FORM} onSubmit={(e) => { e.preventDefault(); void save(); }}>
-          <div style={HEADING}>
-            <h2 className="heading">{doc.sections[section]}</h2>
-            {sectionSchema.description && <p className="fd-dim" style={TEXT}>{sectionSchema.description}</p>}
-          </div>
+        <Column id={formId} flex="5 1 560px" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+          <SectionHead title={doc.sections[section]} note={sectionSchema.description} />
           <ObjectFields
             schema={sectionSchema}
             value={values[section]}
@@ -194,13 +189,11 @@ export function SettingsPage() {
 
           {(dirty || status) && (
             <SaveBar>
-              <span style={LEFT}>
-                {status ? <Status tone={status.kind === "ok" ? "ok" : "crit"}>{status.text}</Status> : <Status tone="warn">unsaved changes</Status>}
-              </span>
+              {status ? <Status tone={status.kind === "ok" ? "ok" : "crit"}>{status.text}</Status> : <Status tone="warn">unsaved changes</Status>}
               {buttons}
             </SaveBar>
           )}
-        </form>
+        </Column>
       </Split>
     </>
   );
@@ -256,14 +249,16 @@ function LlmTest({ profile, llm, onModels }: { profile: string; llm: JsonObject;
         </Button>
       }
     >
-      <div style={NOTE}>
-        <p className="fd-dim">Checks the endpoint and model, then runs one tool call and one structured answer with the values above (saved or not).</p>
-      </div>
-      <div role="status" aria-live="polite">
+      <Pad>
+        <Text block dim>
+          Checks the endpoint and model, then runs one tool call and one structured answer with the values above (saved or not).
+        </Text>
+      </Pad>
+      <Live>
         {running && <TestLine running />}
         {result && <TestLine ok={result.ok}>{result.text}</TestLine>}
         {result?.structured && <TestLine ok={result.structured.ok}>{result.structured.text}</TestLine>}
-      </div>
+      </Live>
     </Panel>
   );
 }

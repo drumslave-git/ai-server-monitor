@@ -10,12 +10,19 @@ import "@fontsource/ibm-plex-mono/500.css";
 import "./tokens.css";
 import "./kit.css";
 import {
+  useEffect,
   useId,
+  useLayoutEffect,
+  useRef,
+  useState,
   type AnchorHTMLAttributes,
   type ButtonHTMLAttributes,
   type CSSProperties,
+  type FormEvent,
   type InputHTMLAttributes,
+  type MouseEvent,
   type ReactNode,
+  type Ref,
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
 } from "react";
@@ -29,12 +36,23 @@ const cx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boo
 const TONE_WORD: Record<Tone, string> = { ok: "ok", warn: "warning", crit: "critical", info: "info", off: "" };
 const toneText = (tone: Tone | undefined) => (tone ? `fd-t-${tone}` : undefined);
 
-/** Where a block sits in its parent's flex or grid: the only layout a component takes from outside. */
-type Place = { flex?: string; width?: string; span?: number };
-function place({ flex, width, span }: Place): CSSProperties | undefined {
-  if (!flex && !width && !span) return undefined;
-  return { flex, width, gridColumn: span ? `span ${span}` : undefined };
+/** Where a block sits in its parent's flex or grid: the only layout a component takes from outside.
+ *  flex and width as in CSS; span: how many columns of a FormGrid it takes ("all": the whole line);
+ *  toEnd: pushed to the far end of its row. */
+type Place = { flex?: string; width?: string; span?: number | "all"; toEnd?: boolean };
+function place({ flex, width, span, toEnd }: Place): CSSProperties | undefined {
+  if (!flex && !width && !span && !toEnd) return undefined;
+  return { flex, width, gridColumn: span === "all" ? "1 / -1" : span ? `span ${span}` : undefined, marginLeft: toEnd ? "auto" : undefined };
 }
+
+/** A step of the spacing scale (tokens.css): 1 = 4px, 2 = 8px, 3 = 12px, 4 = 16px, 5 = 20px, 6 = 24px. */
+type Gap = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+const gapClass = (gap: Gap | undefined) => (gap === undefined ? undefined : `fd-gap-${gap}`);
+type Align = "start" | "center" | "end" | "baseline";
+const alignClass = (align: Align | undefined) => (align ? `fd-align-${align}` : undefined);
+
+/** With onSubmit the block is a form (id lets a button outside it submit it). */
+type AsForm = { id?: string; onSubmit?: (e: FormEvent<HTMLFormElement>) => void };
 
 // ---- layout ----------------------------------------------------------------
 
@@ -122,6 +140,20 @@ export function PageHeader({
   );
 }
 
+/** A section of the page (note: a line under the title; children: its buttons). */
+export function SectionHead({ title, note, children }: { title: ReactNode; note?: ReactNode; children?: ReactNode }) {
+  return (
+    <div className="fd-section-head">
+      <div className="fd-section-text">
+        <h2>{title}</h2>
+        {note && <p className="fd-head-note">{note}</p>}
+      </div>
+      {children && <div className="fd-actions">{children}</div>}
+    </div>
+  );
+}
+
+/** A box on the page. Its body is ruled lines (Row, Table, Fold, Finding, List) and padded parts (Pad), in any order. */
 export function Panel({
   title,
   meta,
@@ -129,9 +161,12 @@ export function Panel({
   hazard,
   pad,
   inset,
+  id,
   children,
   ...where
 }: {
+  /** An anchor to scroll to. */
+  id?: string;
   title?: ReactNode;
   /** A mono line beside the title. */
   meta?: ReactNode;
@@ -139,14 +174,14 @@ export function Panel({
   aside?: ReactNode;
   /** The stripe for something that waits on the owner. */
   hazard?: "warn" | "crit";
-  /** Pad the body (for prose and forms; rows and tables bring their own padding). */
+  /** The whole body is one Pad (prose, a form). */
   pad?: boolean;
   /** Sit on the page ground: a card inside another panel. */
   inset?: boolean;
   children?: ReactNode;
 } & Place) {
   return (
-    <section className={cx("fd-panel", inset && "fd-panel-inset")} style={place(where)}>
+    <section id={id} className={cx("fd-panel", inset && "fd-panel-inset")} style={place(where)}>
       {hazard && <Hazard tone={hazard} />}
       {(title || aside) && (
         <div className="fd-panel-head">
@@ -155,15 +190,62 @@ export function Panel({
           {aside && <div className="fd-panel-aside">{aside}</div>}
         </div>
       )}
-      {pad ? <div className="fd-panel-pad">{children}</div> : children}
+      {pad ? <Pad>{children}</Pad> : children}
     </section>
   );
 }
 
-/** One line of a panel, ruled off from the one above. */
-export function Row({ current, children }: { current?: boolean; children: ReactNode }) {
+/** A padded part of a panel: its children under each other. Under the panel's head it needs no top padding. */
+export function Pad({ gap, children, ...where }: { gap?: Gap; children: ReactNode } & Place) {
   return (
-    <div className="fd-row" aria-current={current ? "true" : undefined}>
+    <div className={cx("fd-panel-pad", gapClass(gap))} style={place(where)}>
+      {children}
+    </div>
+  );
+}
+
+/** One line of a panel, ruled off from the one above. Its children stand side by side and wrap.
+ *  column: under each other instead. sticky: stays at the foot of the window while its panel is in view
+ *  (the composer of a thread). label names it for assistive tech: an article of its own. */
+export function Row({
+  current,
+  column,
+  gap,
+  align,
+  nowrap,
+  sticky,
+  label,
+  ref,
+  id,
+  onSubmit,
+  children,
+}: {
+  current?: boolean;
+  column?: boolean;
+  gap?: Gap;
+  align?: Align;
+  nowrap?: boolean;
+  sticky?: boolean;
+  label?: string;
+  ref?: Ref<HTMLElement>;
+  children: ReactNode;
+} & AsForm) {
+  const className = cx("fd-row", column && "fd-row-col", nowrap && "fd-flex-nowrap", sticky && "fd-row-sticky", gapClass(gap), alignClass(align));
+  const current_ = current ? "true" : undefined;
+  if (onSubmit)
+    return (
+      <form id={id} className={className} aria-current={current_} onSubmit={onSubmit}>
+        {children}
+      </form>
+    );
+  if (label)
+    return (
+      <article ref={ref} id={id} className={className} aria-current={current_} aria-label={label}>
+        {children}
+      </article>
+    );
+  return (
+    <div ref={ref as Ref<HTMLDivElement>} id={id} className={className} aria-current={current_}>
       {children}
     </div>
   );
@@ -224,18 +306,102 @@ export function Hero({
 }
 
 /** Buttons side by side. */
-export function Actions({ children }: { children: ReactNode }) {
-  return <div className="fd-actions">{children}</div>;
+export function Actions({ children, ...where }: { children: ReactNode } & Place) {
+  return (
+    <div className="fd-actions" style={place(where)}>
+      {children}
+    </div>
+  );
 }
 
 /** What the marks of a strip mean: a row of plain Status items. */
-export function Legend({ children }: { children: ReactNode }) {
-  return <div className="fd-legend">{children}</div>;
+export function Legend({ children, ...where }: { children: ReactNode } & Place) {
+  return (
+    <div className="fd-legend" style={place(where)}>
+      {children}
+    </div>
+  );
 }
 
-/** Children side by side that wrap on a narrow screen (panels in a row, a list beside its detail). */
-export function Split({ children }: { children: ReactNode }) {
-  return <div className="fd-split">{children}</div>;
+/** Children side by side that wrap on a narrow screen (panels in a row, a list beside its detail).
+ *  stretch: all as tall as the tallest. */
+export function Split({ stretch, id, onSubmit, children }: { stretch?: boolean; children: ReactNode } & AsForm) {
+  const className = cx("fd-split", stretch && "fd-split-stretch");
+  if (onSubmit)
+    return (
+      <form id={id} className={className} onSubmit={onSubmit}>
+        {children}
+      </form>
+    );
+  return (
+    <div id={id} className={className}>
+      {children}
+    </div>
+  );
+}
+
+/** Small things side by side on one line that wraps: controls, a status beside its note, fields in a row.
+ *  between: the first at the start, the last at the end. */
+export function Inline({
+  gap,
+  align,
+  between,
+  nowrap,
+  children,
+  ...where
+}: { gap?: Gap; align?: Align; between?: boolean; nowrap?: boolean; children: ReactNode } & Place) {
+  return (
+    <div className={cx("fd-inline", between && "fd-inline-between", nowrap && "fd-flex-nowrap", gapClass(gap), alignClass(align))} style={place(where)}>
+      {children}
+    </div>
+  );
+}
+
+/** Content that scrolls inside a height limit (CSS length) instead of stretching the page. */
+export function Scroll({ max, children }: { max: string; children: ReactNode }) {
+  return (
+    <div className="fd-scroll" style={{ maxHeight: max }}>
+      {children}
+    </div>
+  );
+}
+
+/** A small heading over what it names. */
+export function Labeled({ label, children, ...where }: { label: ReactNode; children: ReactNode } & Place) {
+  return (
+    <div className="fd-labeled" style={place(where)}>
+      <h3 className="fd-sub">{label}</h3>
+      {children}
+    </div>
+  );
+}
+
+/** A part of the page whose changes are read out (a test's result appearing). Empty, it takes no room. */
+export function Live({ children }: { children?: ReactNode }) {
+  return (
+    <div className="fd-live" role="status" aria-live="polite">
+      {children}
+    </div>
+  );
+}
+
+/** A window over the page that must be answered: its title, then fields and an Actions row.
+ *  It is open while it is rendered; onClose is called when it closes (Esc included). */
+export function Dialog({ title, onClose, children }: { title: ReactNode; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    const dialog = ref.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  }, []);
+  return (
+    <dialog ref={ref} className="fd-dialog" aria-labelledby={titleId} onClose={onClose}>
+      <div className="fd-dialog-body">
+        <h2 id={titleId}>{title}</h2>
+        {children}
+      </div>
+    </dialog>
+  );
 }
 
 /** Controls in a row above a list: filters, a search box, bulk buttons. */
@@ -250,17 +416,20 @@ export function FormGrid({ children }: { children: ReactNode }) {
 
 // ---- controls ---------------------------------------------------------------
 
-type ButtonLook = { variant?: "default" | "primary" | "warn" | "link"; block?: boolean };
+type ButtonLook = { variant?: "default" | "primary" | "warn" | "danger" | "link"; block?: boolean };
 const buttonClass = ({ variant, block }: ButtonLook) =>
-  cx("fd-btn", variant === "primary" && "fd-btn-primary", variant === "warn" && "fd-btn-warn", variant === "link" && "fd-btn-link", block && "fd-btn-block");
+  cx("fd-btn", variant && variant !== "default" && `fd-btn-${variant}`, block && "fd-btn-block");
+/** What a control takes from the page: everything of its element except the look. */
+type NoLook<T> = Omit<T, "className" | "style">;
 
-/** Labels are lowercase verbs. Primary at most once per panel; warn is for something that changes the server. */
-export function Button({ variant, block, type = "button", ...rest }: ButtonLook & ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button {...rest} type={type} className={buttonClass({ variant, block })} />;
+/** Labels are lowercase verbs. Primary at most once per panel; warn is for something that changes the server;
+ *  danger deletes something for good. */
+export function Button({ variant, block, type = "button", toEnd, ...rest }: ButtonLook & Pick<Place, "toEnd"> & NoLook<ButtonHTMLAttributes<HTMLButtonElement>>) {
+  return <button {...rest} type={type} className={buttonClass({ variant, block })} style={place({ toEnd })} />;
 }
 
 /** A link that looks like a button. */
-export function LinkButton({ variant, block, ...rest }: ButtonLook & AnchorHTMLAttributes<HTMLAnchorElement>) {
+export function LinkButton({ variant, block, ...rest }: ButtonLook & NoLook<AnchorHTMLAttributes<HTMLAnchorElement>>) {
   return <a {...rest} className={buttonClass({ variant, block })} />;
 }
 
@@ -325,6 +494,11 @@ export function Checkbox({
   );
 }
 
+/** Only the room of a checkbox: a line with nothing to tick among lines that have one. */
+export function CheckboxBlank() {
+  return <span className="fd-check-blank" aria-hidden />;
+}
+
 /** A labelled control with its help line. group: the control is a set of buttons, not one input. */
 export function Field({
   label,
@@ -364,16 +538,43 @@ export function Field({
   );
 }
 
-export function Input({ invalid, ...rest }: { invalid?: boolean } & InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...rest} className="fd-input" aria-invalid={invalid || undefined} />;
+export function Input({ invalid, flex, width, ...rest }: { invalid?: boolean } & Pick<Place, "flex" | "width"> & Omit<NoLook<InputHTMLAttributes<HTMLInputElement>>, "width">) {
+  return <input {...rest} className="fd-input" style={place({ flex, width })} aria-invalid={invalid || undefined} />;
 }
 
-export function Textarea({ invalid, ...rest }: { invalid?: boolean } & TextareaHTMLAttributes<HTMLTextAreaElement>) {
+export function Textarea({ invalid, ...rest }: { invalid?: boolean } & NoLook<TextareaHTMLAttributes<HTMLTextAreaElement>>) {
   return <textarea {...rest} className="fd-textarea" aria-invalid={invalid || undefined} />;
 }
 
-export function Select({ invalid, ...rest }: { invalid?: boolean } & SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select {...rest} className="fd-select" aria-invalid={invalid || undefined} />;
+export function Select({ invalid, flex, width, ...rest }: { invalid?: boolean } & Pick<Place, "flex" | "width"> & NoLook<SelectHTMLAttributes<HTMLSelectElement>>) {
+  return <select {...rest} className="fd-select" style={place({ flex, width })} aria-invalid={invalid || undefined} />;
+}
+
+/** Controls joined into one line: the inputs share the width, a button stands at the end
+ *  (a secret with "clear", a name and its value with "remove"). */
+export function Joined({ children, ...where }: { children: ReactNode } & Place) {
+  return (
+    <div className="fd-joined" style={place(where)}>
+      {children}
+    </div>
+  );
+}
+
+/** A value shown where a control would stand: it cannot be changed here. */
+export function FieldValue({ children }: { children: ReactNode }) {
+  return <span className="fd-field-value">{children}</span>;
+}
+
+/** One of several chosen things, with the button that takes it away. label names that button for assistive tech. */
+export function Chip({ children, onRemove, label }: { children: ReactNode; onRemove: () => void; label: string }) {
+  return (
+    <span className="fd-chip">
+      <span>{children}</span>
+      <button type="button" aria-label={label} onClick={onRemove}>
+        remove
+      </button>
+    </span>
+  );
 }
 
 export type Choice<T extends string> = { value: T; label: ReactNode };
@@ -385,13 +586,14 @@ export function Segmented<T extends string>({
   onChange,
   label,
   disabled,
+  ...where
 }: {
   options: Choice<T>[];
   value: T;
   onChange: (value: T) => void;
   label: string;
   disabled?: boolean;
-}) {
+} & Place) {
   // A radio group: Tab reaches the chosen option, the arrow keys move the choice.
   const move = (step: number) => {
     const i = options.findIndex((o) => o.value === value);
@@ -402,6 +604,7 @@ export function Segmented<T extends string>({
       className="fd-seg"
       role="radiogroup"
       aria-label={label}
+      style={place(where)}
       onKeyDown={(e) => {
         if (disabled) return;
         if (e.key === "ArrowRight" || e.key === "ArrowDown") move(1);
@@ -517,14 +720,21 @@ export function Count({ tone, children }: { tone?: "warn" | "crit"; children: Re
 }
 
 /** A name in a table row or list that opens the thing it names. mono for machine names and commands. */
-export function TitleLink({ mono, truncate, ...rest }: { mono?: boolean; truncate?: boolean } & AnchorHTMLAttributes<HTMLAnchorElement>) {
+export function TitleLink({ mono, truncate, ...rest }: { mono?: boolean; truncate?: boolean } & NoLook<AnchorHTMLAttributes<HTMLAnchorElement>>) {
   return <a {...rest} className={cx("fd-title-link", mono && "fd-mono", truncate && "fd-truncate")} />;
 }
 
-/** Children under each other with the panel gap (tight: the small gap). */
-export function Column({ tight, children, ...where }: { tight?: boolean; children: ReactNode } & Place) {
+/** Children under each other with the panel gap, or the gap given. */
+export function Column({ gap, align, id, onSubmit, children, ...where }: { gap?: Gap; align?: "start" | "end"; children: ReactNode } & AsForm & Place) {
+  const className = cx("fd-col", gapClass(gap), alignClass(align));
+  if (onSubmit)
+    return (
+      <form id={id} className={className} style={place(where)} onSubmit={onSubmit}>
+        {children}
+      </form>
+    );
   return (
-    <div className={cx("fd-col", tight && "fd-col-tight")} style={place(where)}>
+    <div id={id} className={className} style={place(where)}>
       {children}
     </div>
   );
@@ -593,6 +803,7 @@ export function Meter({
   tone = "ok",
   inner,
   innerTone = "info",
+  fluid,
   label,
   ...where
 }: {
@@ -603,6 +814,8 @@ export function Meter({
   tone?: Tone | "text";
   inner?: number;
   innerTone?: Exclude<Tone, "off"> | "text";
+  /** The cells share the width given instead of keeping their own. */
+  fluid?: boolean;
   label?: string;
 } & Place) {
   const fill = (v: number | undefined) => (v && v > 0 && max > 0 ? Math.max(1, Math.min(count, Math.round((v / max) * count))) : 0);
@@ -610,7 +823,7 @@ export function Meter({
   const b = fill(inner);
   const filled: Cell = tone === "off" ? "" : tone;
   const cells: Cell[] = Array.from({ length: count }, (_, i) => (i < b ? innerTone : i < a ? filled : ""));
-  return <Cells cells={cells} size="sm" fixed label={label} {...where} />;
+  return <Cells cells={cells} size="sm" fixed={!fluid} label={label} {...where} />;
 }
 
 export type ScheduleRun = { at: number; tone: Tone };
@@ -696,8 +909,9 @@ export function Lane({
   );
 }
 
-/** One span from start to end on an axis of length total (same unit for all).
- *  inner is a point between them: the part before it is drawn in innerTone (waiting, then working). */
+/** One span from start to end on an axis of length total (same unit for all). Up to three parts:
+ *  queued is where a wait before start began (drawn hollow, like a hollow lamp), inner is a point
+ *  between start and end: the part before it is drawn in innerTone (waiting, then working). */
 export function Bar({
   start,
   end,
@@ -705,6 +919,7 @@ export function Bar({
   tone = "ok",
   inner,
   innerTone = "info",
+  queued,
   size,
   label,
   ...where
@@ -715,6 +930,7 @@ export function Bar({
   tone?: Exclude<Cell, "next" | "now" | "">;
   inner?: number;
   innerTone?: Exclude<Cell, "next" | "now" | "">;
+  queued?: number;
   size?: "sm";
   label?: string;
 } & Place) {
@@ -722,6 +938,7 @@ export function Bar({
   const a = Math.max(0, start);
   const b = Math.min(span, end);
   const m = inner === undefined ? a : Math.max(a, Math.min(b, inner));
+  const q = queued === undefined ? a : Math.max(0, Math.min(a, queued));
   const pct = (v: number) => `${(v / span) * 100}%`;
   return (
     <div
@@ -731,6 +948,7 @@ export function Bar({
       aria-hidden={label ? undefined : true}
       style={place(where)}
     >
+      {a > q && <span className="fd-bar-fill fd-bar-queued" style={{ left: pct(q), width: pct(a - q) }} />}
       {m > a && <span className={`fd-bar-fill fd-cell-${innerTone}`} style={{ left: pct(a), width: pct(m - a) }} />}
       <span className={`fd-bar-fill fd-cell-${tone}`} style={{ left: pct(m), width: `max(2px, ${pct(b - m)})` }} />
     </div>
@@ -779,7 +997,8 @@ export function Command({ comment, wrap, action, children, ...where }: { comment
   );
 }
 
-/** A section that opens. inline: a small one inside running text. Leave open undefined to let the reader toggle it. */
+/** A section that opens. inline: a small one inside running text. Leave open undefined to let the reader toggle it.
+ *  Its head is one line: a long title or meta is cut with an ellipsis. */
 export function Fold({
   title,
   meta,
@@ -822,15 +1041,21 @@ export function List({ label, children }: { label?: string; children: ReactNode 
   return <div className="fd-list">{children}</div>;
 }
 
-/** A row that can be chosen: a conversation, a settings section, a domain. Extra controls go in as children. */
+/** A row that can be chosen: a conversation, a settings section, a domain, a run.
+ *  With href it is a link (onClick may take the click over); with onClick alone it is a button, and
+ *  expanded says whether what it opens is open. children are marks inside the row (a Meter, a Count);
+ *  action is a control of its own beside it (delete), shown while the row is pointed at, focused or selected. */
 export function ListItem({
   title,
   meta,
   index,
   trailing,
   selected,
+  expanded,
   href,
+  onClick,
   mono,
+  action,
   children,
 }: {
   title: ReactNode;
@@ -838,13 +1063,16 @@ export function ListItem({
   index?: ReactNode;
   trailing?: ReactNode;
   selected?: boolean;
-  href: string;
+  expanded?: boolean;
+  href?: string;
+  onClick?: (e: MouseEvent<HTMLElement>) => void;
   /** Machine names (domains, sections) in mono. */
   mono?: boolean;
+  action?: ReactNode;
   children?: ReactNode;
 }) {
-  return (
-    <a className={cx("fd-item", mono && "fd-item-mono")} href={href} aria-current={selected ? "true" : undefined}>
+  const body = (
+    <>
       {index && <span className="fd-item-index">{index}</span>}
       <span className="fd-item-body">
         <span className="fd-item-title">{title}</span>
@@ -852,7 +1080,21 @@ export function ListItem({
       </span>
       {trailing && <span className="fd-meta">{trailing}</span>}
       {children}
-    </a>
+    </>
+  );
+  return (
+    <div className={cx("fd-item", mono && "fd-item-mono", (selected || expanded) && "fd-item-on")}>
+      {href !== undefined ? (
+        <a className="fd-item-main" href={href} onClick={onClick} aria-current={selected ? "true" : undefined}>
+          {body}
+        </a>
+      ) : (
+        <button type="button" className="fd-item-main" onClick={onClick} aria-expanded={expanded} aria-current={selected ? "true" : undefined}>
+          {body}
+        </button>
+      )}
+      {action && <span className="fd-item-action">{action}</span>}
+    </div>
   );
 }
 
@@ -888,54 +1130,170 @@ export function Finding({
   );
 }
 
-/** One turn of a conversation. who "you" is the owner; anything else is the speaker's name. */
-export function Message({ who, meta, children }: { who: string; meta?: ReactNode; children: ReactNode }) {
+/** One turn of a conversation. who "you" is the owner; anything else is the speaker's name.
+ *  says replaces the name with what the speaker is doing ("you ran this command"); running: the speaker
+ *  is still at it (the lamp blinks). typed: the body is text as it was typed and keeps its line breaks.
+ *  wide: the owner's turn takes the whole width of a message (a command and its output). */
+export function Message({
+  who,
+  says,
+  running,
+  meta,
+  typed,
+  wide,
+  children,
+}: {
+  who: string;
+  says?: ReactNode;
+  running?: boolean;
+  meta?: ReactNode;
+  typed?: boolean;
+  wide?: boolean;
+  children: ReactNode;
+}) {
   const you = who === "you";
   return (
-    <div className={cx("fd-msg", you && "fd-msg-you")}>
+    <div className={cx("fd-msg", you && "fd-msg-you", wide && "fd-msg-wide")}>
       <div className="fd-msg-who">
-        {you ? <span className="fd-meta">you</span> : <Status tone="ok">{who}</Status>}
+        {you && !says && !running ? (
+          <span className="fd-meta">you</span>
+        ) : (
+          <Status tone={running || you ? "info" : "ok"} blink={running}>
+            {says ?? who}
+          </Status>
+        )}
         {meta && <span className="fd-meta">{meta}</span>}
       </div>
-      <div className="fd-msg-body">{children}</div>
+      <div className={cx("fd-msg-body", typed && "fd-keep")}>{children}</div>
     </div>
   );
 }
 
-/** Something that waits for the owner's yes: the hazard stripe, what will happen, and the buttons (children). */
+/** Something that asks for the owner's yes: the hazard stripe while it waits, what will happen (title,
+ *  command, note, and children for a list of items), then the buttons and the state (actions).
+ *  decided: nothing waits any more, the stripe is gone. */
 export function Approval({
   title,
   command,
   note,
+  decided,
   inset,
+  actions,
   children,
   ...where
-}: { title: ReactNode; command?: ReactNode; note?: ReactNode; inset?: boolean; children: ReactNode } & Place) {
+}: {
+  title: ReactNode;
+  command?: ReactNode;
+  note?: ReactNode;
+  decided?: boolean;
+  inset?: boolean;
+  actions?: ReactNode;
+  children?: ReactNode;
+} & Place) {
   return (
     <section className={cx("fd-panel", inset && "fd-panel-inset")} style={place(where)}>
-      <Hazard />
+      {!decided && <Hazard />}
       <div className="fd-approval-body">
         <strong>{title}</strong>
         {command && <Code wrap>{command}</Code>}
-        {note && <p>{note}</p>}
-        <div className="fd-approval-actions">{children}</div>
+        {note && <p className="fd-dim">{note}</p>}
+        {children}
+        {actions && <div className="fd-approval-actions">{actions}</div>}
       </div>
     </section>
   );
 }
 
-/** A table that scrolls inside itself on a narrow screen. Rows are plain tr/td; a chosen row takes aria-selected. */
-export function Table({ dense, children }: { dense?: boolean; children: ReactNode }) {
+/** A column of a Table: its heading (head, when the heading is more than the label), and its width. */
+export type TableColumn = string | { label: string; head?: ReactNode; width?: string; minWidth?: string };
+
+/** A table. head names its columns; the body is tbody elements of Tr and Td.
+ *  On a narrow screen it scrolls inside itself; with stack each row becomes a block there instead,
+ *  every cell under the name of its column. minWidth keeps the scrolling kind from squeezing its columns. */
+export function Table({
+  dense,
+  head,
+  stack,
+  minWidth,
+  children,
+}: {
+  dense?: boolean;
+  head?: TableColumn[];
+  stack?: boolean;
+  minWidth?: string;
+  children: ReactNode;
+}) {
+  const columns = (head ?? []).map((c) => (typeof c === "string" ? { label: c } : c));
+  // the names of the columns for the stacked rows (kit.css reads --fd-l1 … --fd-l8)
+  const labels = Object.fromEntries(columns.map((c, i) => [`--fd-l${i + 1}`, JSON.stringify(c.label)]));
   return (
     <div className="fd-table-wrap">
-      <table className={cx("fd-table", dense && "fd-table-dense")}>{children}</table>
+      <table className={cx("fd-table", dense && "fd-table-dense", stack && "fd-table-stack")} style={{ minWidth, ...labels }}>
+        {columns.length > 0 && (
+          <thead>
+            <tr>
+              {columns.map((c, i) => (
+                <th key={i} scope="col" style={c.width || c.minWidth ? { width: c.width, minWidth: c.minWidth } : undefined}>
+                  {c.head ?? c.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+        )}
+        {children}
+      </table>
     </div>
   );
 }
 
-/** Two lines in one table cell. */
-export function Stack({ children }: { children: ReactNode }) {
-  return <div className="fd-stack">{children}</div>;
+/** A row of a Table. off: what it stands for is switched off. group: a heading row over the rows after it. */
+export function Tr({ off, selected, group, children }: { off?: boolean; selected?: boolean; group?: boolean; children: ReactNode }) {
+  return (
+    <tr className={cx(off && "fd-off", group && "fd-group") || undefined} aria-selected={selected ? "true" : undefined}>
+      {children}
+    </tr>
+  );
+}
+
+/** A cell of a Table. fill: it takes the width the other columns leave (a line that is cut with an ellipsis).
+ *  wrap: long words break. right: its content stands at the right edge. */
+export function Td({
+  nowrap,
+  wrap,
+  right,
+  fill,
+  tone,
+  minWidth,
+  colSpan,
+  children,
+}: {
+  nowrap?: boolean;
+  wrap?: boolean;
+  right?: boolean;
+  fill?: boolean;
+  tone?: Tone;
+  minWidth?: string;
+  colSpan?: number;
+  children?: ReactNode;
+}) {
+  return (
+    <td
+      className={cx(nowrap && "fd-nowrap", wrap && "fd-wrap", right && "fd-right", fill && "fd-fill", toneText(tone)) || undefined}
+      style={minWidth ? { minWidth } : undefined}
+      colSpan={colSpan}
+    >
+      {children}
+    </td>
+  );
+}
+
+/** A few lines under each other, close together (two lines in a table cell). */
+export function Stack({ gap, children, ...where }: { gap?: 1 | 2; children: ReactNode } & Place) {
+  return (
+    <div className={cx("fd-stack", gapClass(gap))} style={place(where)}>
+      {children}
+    </div>
+  );
 }
 
 /** Facts as name and value pairs. */
@@ -962,10 +1320,116 @@ export function SaveBar({ children }: { children: ReactNode }) {
   return <div className="fd-savebar">{children}</div>;
 }
 
-/** Text helpers: the few cases where prose needs a kit style without a component of its own. */
-export function Meta({ children, tone }: { children: ReactNode; tone?: Tone }) {
-  return <span className={cx("fd-meta", toneText(tone))}>{children}</span>;
+/** One line of an outcome: ok or failed, and what was said. running: the line shown while it is awaited. */
+export function TestLine({ ok, running, children }: { ok?: boolean; running?: boolean; children?: ReactNode }) {
+  if (running)
+    return (
+      <Row>
+        <Status tone="info" blink>
+          testing…
+        </Status>
+      </Row>
+    );
+  return (
+    <Row>
+      <Status tone={ok ? "ok" : "crit"}>{ok ? "ok" : "failed"}</Status>
+      <span className="fd-testline-text">{children}</span>
+    </Row>
+  );
 }
+
+/** Text written by a model or a person as Markdown, already turned into safe HTML by the caller.
+ *  onClick hears clicks on what is inside (the run buttons of commands). */
+export function Prose({ html, onClick }: { html: string; onClick?: (e: MouseEvent<HTMLDivElement>) => void }) {
+  return <div className="fd-md" onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/** Text that shows its first three lines until the reader asks for the rest; opened, it keeps its line breaks. */
+export function Clamp({ children }: { children: string }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [open, setOpen] = useState(false);
+  const [long, setLong] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el && !open) setLong(el.scrollHeight > el.clientHeight + 1);
+  }, [children, open]);
+  if (!children) return null;
+  return (
+    <>
+      <p ref={ref} className={cx("fd-dim fd-wrap", open ? "fd-pre-line" : "fd-clamp")}>
+        {children}
+      </p>
+      {(long || open) && (
+        <Button variant="link" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? "show less" : "show more"}
+        </Button>
+      )}
+    </>
+  );
+}
+
+/** Text helpers: the cases where words need a kit style without a component of their own. */
+
+/** The small dim mono line: when, how many, where from. block: a line of its own. */
+export function Meta({ children, tone, title, block, ...where }: { children: ReactNode; tone?: Tone; title?: string; block?: boolean } & Place) {
+  const className = cx("fd-meta", toneText(tone));
+  if (block)
+    return (
+      <p className={className} title={title} style={place(where)}>
+        {children}
+      </p>
+    );
+  return (
+    <span className={className} title={title} style={place(where)}>
+      {children}
+    </span>
+  );
+}
+
+/** Words in a kit text style. kind: "data" is something a machine said (mono), "label" a name (mono, heavier).
+ *  dim and tone colour it. block: a paragraph of its own. wrap: long words break; nowrap: it stays on one line;
+ *  keep: it keeps the line breaks it was written with. */
+export function Text({
+  kind,
+  dim,
+  tone,
+  block,
+  wrap,
+  nowrap,
+  keep,
+  title,
+  children,
+  ...where
+}: {
+  kind?: "data" | "label";
+  dim?: boolean;
+  tone?: Tone;
+  block?: boolean;
+  wrap?: boolean;
+  nowrap?: boolean;
+  keep?: boolean;
+  title?: string;
+  children: ReactNode;
+} & Place) {
+  const className = cx(kind && `fd-${kind}`, dim && "fd-dim", toneText(tone), wrap && "fd-wrap", nowrap && "fd-nowrap", keep && "fd-keep") || undefined;
+  if (block)
+    return (
+      <p className={className} title={title} style={place(where)}>
+        {children}
+      </p>
+    );
+  return (
+    <span className={className} title={title} style={place(where)}>
+      {children}
+    </span>
+  );
+}
+
+/** The title of a thing inside a panel (an approval, a card). */
+export function Heading({ children }: { children: ReactNode }) {
+  return <h3 className="fd-heading">{children}</h3>;
+}
+
 export function ErrorText({ children }: { children: ReactNode }) {
   return (
     <p className="fd-error" role="alert">

@@ -2,7 +2,7 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { useEffect, useState } from "react";
-import type { Tone } from "./kit";
+import { Prose, type Tone } from "./kit";
 
 /** A status level; the kit calls it a tone. */
 export type Level = Tone;
@@ -46,5 +46,5 @@ export function usePoll<T>(load: () => Promise<T>, intervalMs: number) {
 
 export function Markdown({ text }: { text: string }) {
   const html = DOMPurify.sanitize(marked.parse(text, { async: false, gfm: true }) as string);
-  return <div className="fd-md" dangerouslySetInnerHTML={{ __html: html }} />;
+  return <Prose html={html} />;
 }

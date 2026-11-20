@@ -1,6 +1,7 @@
 import DOMPurify from "dompurify";
 import { Marked, type Tokens } from "marked";
 import { useMemo, type MouseEvent } from "react";
+import { Prose } from "../kit";
 
 /** Code blocks with these tags get run buttons. */
 const SHELLS = new Set(["bash", "sh", "shell", "zsh", "console"]);
@@ -119,5 +120,5 @@ export function RunnableMarkdown({ text, onRun }: { text: string; onRun?: (comma
       button.textContent = button.dataset.label ?? "run";
     }
   };
-  return <div className="fd-md" onClick={click} dangerouslySetInnerHTML={{ __html: html }} />;
+  return <Prose html={html} onClick={click} />;
 }

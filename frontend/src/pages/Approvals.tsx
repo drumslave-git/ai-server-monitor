@@ -8,20 +8,28 @@ import {
   Actions,
   Button,
   Checkbox,
+  CheckboxBlank,
+  Column,
   Counter,
   Empty,
   ErrorText,
   Field,
+  Heading,
+  Inline,
   LinkButton,
   Meta,
   Notice,
   PageHeader,
+  Pad,
   Panel,
   Row,
+  Scroll,
   Select,
   Stack,
   Status,
   Table,
+  Td,
+  Text,
   Toolbar,
   type Tone,
 } from "../kit";
@@ -100,33 +108,66 @@ function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) 
   const visible = all ? batch.items : batch.items.slice(0, SHOWN);
   const hidden = batch.items.length - visible.length;
   const selectable = waiting.length > 1;
+  const list = (
+    <Column gap={2}>
+      {visible.map((item) => (
+        <Inline key={item.id} nowrap gap={3} align={item.status === "pending" ? "center" : "start"}>
+          {selectable &&
+            (item.status === "pending" ? (
+              <Checkbox hideLabel label={`Select ${item.target ?? item.id}`} checked={selected.has(item.id)} onChange={() => toggle(item.id)} />
+            ) : (
+              <CheckboxBlank />
+            ))}
+          <Column gap={0} flex="1">
+            {item.action === "host_command" ? (
+              <HostCommand item={item} />
+            ) : (
+              <Stack>
+                <Text kind="label" wrap dim={item.status !== "pending"}>
+                  {item.target}
+                </Text>
+                {callArguments(item) && (
+                  <Text kind="data" wrap dim={item.status !== "pending"}>
+                    {callArguments(item)}
+                  </Text>
+                )}
+                {item.reason && item.status === "pending" && <Text dim>{item.reason}</Text>}
+                {item.status !== "pending" && <Text dim>{describe(item)}</Text>}
+              </Stack>
+            )}
+          </Column>
+          {item.status !== "pending" && <ActionStatus status={item.status} />}
+        </Inline>
+      ))}
+    </Column>
+  );
 
   return (
-    <Row current={focused}>
-      <article ref={ref} aria-label={batch.title} style={{ flex: "1 1 100%", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+    <Row current={focused} column label={batch.title} ref={ref}>
         <Meta>
           #{batch.id} · from {batch.source} · requested {ago(batch.ts, now)}
           {waiting.length > 0 && <> · expires {until(batch.expires_at, now)}</>}
         </Meta>
-        <h3 className="heading fd-wrap">{batch.title}</h3>
+        <Heading>{batch.title}</Heading>
         {batch.covered.length > 0 && (
-          <p className="fd-dim">
+          <Text block dim>
             Approved for the whole run: later requests of {batch.covered.join(", ")} run without asking and are listed here.
-          </p>
+          </Text>
         )}
         {done.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 16px" }}>
+          <Inline gap={4}>
             {done.map(([status, n]) => (
               <ActionStatus key={status} status={status} count={n} />
             ))}
             {batch.queued > 0 && <Meta>{paused ? "approved; waiting because automation is paused, it runs after the resume" : batch.queue_note.replace(/^, /, "")}</Meta>}
-          </div>
+          </Inline>
         )}
 
         {selectable && (
           <Toolbar>
             <Checkbox
               checked={chosen.length === waiting.length}
+              some={chosen.length > 0}
               onChange={(checked) => setSelected(checked ? new Set(waitingIds) : new Set())}
               label={chosen.length ? `${chosen.length} of ${waiting.length} selected` : `select all ${waiting.length}`}
             />
@@ -153,35 +194,7 @@ function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) 
           </Toolbar>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8, ...(all ? { maxHeight: "60vh", overflow: "auto" } : {}) }}>
-          {visible.map((item) => (
-            <div
-              key={item.id}
-              className={item.status === "pending" ? undefined : "fd-dim"}
-              style={{ display: "flex", alignItems: item.status === "pending" ? "center" : "flex-start", gap: 12 }}
-            >
-              {selectable &&
-                (item.status === "pending" ? (
-                  <Checkbox hideLabel label={`Select ${item.target ?? item.id}`} checked={selected.has(item.id)} onChange={() => toggle(item.id)} />
-                ) : (
-                  <span aria-hidden style={{ flex: "none", width: 18 }} />
-                ))}
-              <div className="fd-wrap" style={{ flex: 1, minWidth: 0 }}>
-                {item.action === "host_command" ? (
-                  <HostCommand item={item} />
-                ) : (
-                  <Stack>
-                    <span className="label">{item.target}</span>
-                    {callArguments(item) && <span className="data">{callArguments(item)}</span>}
-                    {item.reason && item.status === "pending" && <span className="fd-dim">{item.reason}</span>}
-                    {item.status !== "pending" && <span className="fd-dim">{describe(item)}</span>}
-                  </Stack>
-                )}
-              </div>
-              {item.status !== "pending" && <ActionStatus status={item.status} />}
-            </div>
-          ))}
-        </div>
+        {all ? <Scroll max="60vh">{list}</Scroll> : list}
         {batch.items.length > SHOWN && (
           <Actions>
             <Button variant="link" aria-expanded={all} onClick={() => setAll(!all)}>
@@ -219,7 +232,6 @@ function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) 
             show in the audit log
           </Button>
         </Actions>
-      </article>
     </Row>
   );
 }
@@ -290,10 +302,12 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
       {shell && shell.policy !== "off" && !shell.available && (
         <Notice title="Changing shell commands are not available.">
           The chat cannot ask to run them until this is fixed:
-          <p className="fd-dim">{shell.reason ?? "The host shell could not be reached."}</p>
-          <p className="fd-dim">
+          <Text block dim>
+            {shell.reason ?? "The host shell could not be reached."}
+          </Text>
+          <Text block dim>
             Turn them off in <a href="#/settings/approvals">Settings → Approvals</a> to hide this note.
-          </p>
+          </Text>
         </Notice>
       )}
       {extra && (
@@ -309,8 +323,8 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
         </Panel>
       )}
       <Panel hazard={batches.length ? "warn" : undefined}>
-        <div style={{ display: "flex", flexWrap: "wrap" }}>
-          <div style={{ padding: "20px 24px 24px" }}>
+        <Inline align="start" gap={0}>
+          <Pad>
             <Counter
               value={pending.data ? batches.length : "—"}
               tone={batches.length ? "warn" : "off"}
@@ -323,8 +337,8 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
                   : ""
               }
             />
-          </div>
-          <div style={{ flex: "1 1 560px", minWidth: 0 }}>
+          </Pad>
+          <Column gap={0} flex="1 1 560px">
             {error && (
               <Row>
                 <ErrorText>{error}</ErrorText>
@@ -345,12 +359,12 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
                 />
               ))
             )}
-          </div>
-        </div>
+          </Column>
+        </Inline>
       </Panel>
 
-      <div id="audit-log">
         <Panel
+          id="audit-log"
           title="Audit log"
           aside={
             <Toolbar>
@@ -377,23 +391,24 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
           {log.data && log.data.items.length === 0 ? (
             <Empty>No actions recorded{status || action || batch ? " for this filter" : ""}.</Empty>
           ) : (
-            <Table>
-              <thead>
-                <tr><th>time</th><th>action</th><th>status</th><th>source</th><th>detail</th></tr>
-              </thead>
+            <Table stack head={["time", "action", "status", "source", "detail"]}>
               <tbody>
                 {(log.data?.items ?? []).map((a) => (
                   <tr key={a.id}>
-                    <td><span className="data fd-nowrap">{clock(a.ts)}</span></td>
-                    <td>
+                    <Td nowrap>
+                      <Text kind="data">{clock(a.ts)}</Text>
+                    </Td>
+                    <Td>
                       <Stack>
                         <Meta>{a.action}</Meta>
-                        <span className="data">{a.target}</span>
+                        <Text kind="data">{a.target}</Text>
                       </Stack>
-                    </td>
-                    <td><ActionStatus status={a.status} /></td>
-                    <td>
-                      <span className="data fd-nowrap">
+                    </Td>
+                    <Td>
+                      <ActionStatus status={a.status} />
+                    </Td>
+                    <Td nowrap>
+                      <Text kind="data">
                         {a.source}
                         {a.decided_by ? ` · ${a.decided_by}` : ""}
                         {a.batch_id && !batch ? (
@@ -404,9 +419,9 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
                             </Button>
                           </>
                         ) : null}
-                      </span>
-                    </td>
-                    <td className="fd-wrap">{describe(a)}</td>
+                      </Text>
+                    </Td>
+                    <Td wrap>{describe(a)}</Td>
                   </tr>
                 ))}
               </tbody>
@@ -420,7 +435,6 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
             </Row>
           )}
         </Panel>
-      </div>
     </>
   );
 }

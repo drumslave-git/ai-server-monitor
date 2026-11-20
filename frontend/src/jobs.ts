@@ -15,13 +15,16 @@ export const STATUS_LEVEL: Record<RunStatus, Level> = { ok: "ok", warn: "warn", 
 export const STATUS_TEXT: Record<RunStatus, string> = { ok: "OK", warn: "Warning", crit: "Critical", error: "Error", running: "Running" };
 export const SEVERITY_LEVEL: Record<Finding["severity"], Level> = { info: "info", warn: "warn", crit: "crit" };
 export const SEVERITY_TEXT: Record<Finding["severity"], string> = { info: "Info", warn: "Warning", crit: "Critical" };
-export const TRIGGER_TEXT: Record<JobRun["trigger"], string> = { schedule: "Scheduled", manual: "Manual", llm: "By the LLM" };
-/** "Builtin", "Builtin, edited", "Custom, made by the LLM". */
-export function originText(job: Pick<Job, "builtin" | "edited" | "created_by">): string {
-  if (job.builtin) return job.edited ? "Builtin, edited" : "Builtin";
-  return job.created_by === "llm" ? "Custom, made by the LLM" : "Custom, made by a user";
+
+// Texts inside a line of lowercase words (a table cell, a meta line). Names keep their capitals.
+export const STATUS_WORD: Record<RunStatus, string> = { ok: "OK", warn: "warning", crit: "critical", error: "error", running: "running" };
+export const TRIGGER_WORD: Record<JobRun["trigger"], string> = { schedule: "scheduled", manual: "manual", llm: "by the LLM" };
+export const MODEL_WORD: Record<Job["model"], string> = { worker: "worker", main: "main" };
+/** "builtin", "builtin, edited", "custom, made by the LLM". */
+export function originWord(job: Pick<Job, "builtin" | "edited" | "created_by">): string {
+  if (job.builtin) return job.edited ? "builtin, edited" : "builtin";
+  return job.created_by === "llm" ? "custom, made by the LLM" : "custom, made by a user";
 }
-export const MODEL_TEXT: Record<Job["model"], string> = { worker: "Worker", main: "Main" };
 
 export const UNITS = [
   { key: "days", s: 86400 },
@@ -50,10 +53,16 @@ export function cronText(cron: string): string | null {
   }
 }
 
-export function scheduleText(job: Pick<Job, "interval_s" | "cron">): string {
-  if (job.interval_s) return capitalize(intervalText(job.interval_s));
-  if (job.cron) return cronText(job.cron) ?? job.cron;
-  return "No schedule";
+
+/** "every 30 minutes", "at 06:00", "no schedule": the schedule inside a line of lowercase words.
+ *  (cronstrue starts its sentence with a capital; a cron expression it cannot read is shown as written) */
+export function scheduleWord(job: Pick<Job, "interval_s" | "cron">): string {
+  if (job.interval_s) return intervalText(job.interval_s);
+  if (job.cron) {
+    const words = cronText(job.cron);
+    return words ? words.charAt(0).toLowerCase() + words.slice(1) : job.cron;
+  }
+  return "no schedule";
 }
 
 export const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api";
 import { clock } from "../../fmt";
-import { Axis, Button, Cells, Code, Counter, Counters, Empty, ErrorText, Field, Input, Meta, Notice, Panel, Row, Select, Status, Switch, Table, Toolbar, type Cell } from "../../kit";
+import { Axis, Button, Cells, Code, Column, Counter, Counters, Empty, ErrorText, Field, Inline, Input, Meta, Notice, Panel, Row, Select, Status, Switch, Table, Td, Text, Toolbar, type Cell } from "../../kit";
 import { clockTime } from "./format";
-import { Scroll } from "./parts";
 import type { AppLogList, AppLogRecord } from "./types";
 
 const MAX_ROWS = 1500;
@@ -133,14 +132,14 @@ export function AppLogView() {
           </Select>
         </Field>
         {source === "memory" && (
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "var(--space-3)" }}>
+          <Inline>
             <Switch checked={live} onChange={setLive} label="Live" text="live" />
             {live && (
               <Status tone={connected ? "ok" : "off"} hollow={!connected}>
                 {connected ? "connected" : "not connected"}
               </Status>
             )}
-          </div>
+          </Inline>
         )}
       </Toolbar>
       {skipped > 0 && <Notice>The live view is rate-limited: {skipped.toLocaleString()} records were left out. Reload to see them all.</Notice>}
@@ -153,15 +152,7 @@ export function AppLogView() {
       {rows.length > 0 && <LoadedSummary rows={rows} debug={level === "DEBUG"} />}
       {rows.length > 0 && (
         <Panel>
-          <Table dense>
-            <thead>
-              <tr>
-                <th>time</th>
-                <th>level</th>
-                <th>logger</th>
-                <th style={{ width: "100%" }}>message</th>
-              </tr>
-            </thead>
+          <Table dense stack head={["time", "level", "logger", { label: "message", width: "100%" }]}>
             <tbody>
               {rows.map((r) => (<LogRow key={`${r.seq ?? "s"}-${r.id ?? ""}-${r.ts}`} rec={r} />))}
             </tbody>
@@ -206,57 +197,59 @@ function LoadedSummary({ rows, debug }: { rows: AppLogRecord[]; debug: boolean }
   const cell = per === 1 ? "one minute" : `${per} minutes`;
   return (
     <Panel title="Loaded records" meta={`${rows.length.toLocaleString()} on this page, counted by level`} pad>
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: "var(--space-4) var(--space-6)" }}>
-        <Counters>
+      <Inline align="end" gap={5}>
+        <Counters flush>
           {debug && <Counter size="sm" value={counts.off} label="debug" tone="off" />}
           <Counter size="sm" value={counts.info} label="info" tone={counts.info ? "info" : "off"} />
           <Counter size="sm" value={counts.warn} label="warn" tone={counts.warn ? "warn" : "off"} />
           <Counter size="sm" value={counts.crit} label="error" tone={counts.crit ? "crit" : "off"} />
         </Counters>
-        <div style={{ flex: "1 1 420px", minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+        <Column gap={2} flex="1 1 420px">
           <Cells cells={cells} label={`Worst level logged in each stretch of ${cell}, from ${clock(from)} to ${clock(to)}`} />
           <Axis labels={[clock(from), `one cell = ${cell} · colour = the worst level logged in it`, clock(to)]} />
-        </div>
-      </div>
+        </Column>
+      </Inline>
     </Panel>
   );
 }
 
 function LogRow({ rec }: { rec: AppLogRecord }) {
   const [open, setOpen] = useState(false);
-  const message = <span className="data fd-code-wrap">{rec.message}</span>;
+  const message = (
+    <Text kind="data" keep>
+      {rec.message}
+    </Text>
+  );
   return (
     <tr>
-      <td className="fd-nowrap">
+      <Td nowrap>
         <Meta>{clockTime(rec.ts)}</Meta>
-      </td>
-      <td className="fd-nowrap">
+      </Td>
+      <Td nowrap>
         <Status tone={levelTone(rec.levelno)}>{rec.level === "WARNING" ? "WARN" : rec.level}</Status>
-      </td>
-      <td className="fd-nowrap">
-        <span className="fd-meta" title={rec.logger}>
-          {rec.logger.replace(/^ai_server_monitor\./, "")}
-        </span>
-      </td>
-      <td>
+      </Td>
+      <Td nowrap>
+        <Meta title={rec.logger}>{rec.logger.replace(/^ai_server_monitor\./, "")}</Meta>
+      </Td>
+      <Td fill>
         {rec.exc ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
-            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 12px" }}>
+          <Column gap={2}>
+            <Inline>
               {message}
               <Button variant="link" onClick={() => setOpen(!open)} aria-expanded={open}>
                 {open ? "hide traceback" : "traceback"}
               </Button>
-            </div>
+            </Inline>
             {open && (
-              <Scroll max={320}>
-                <Code wrap>{rec.exc}</Code>
-              </Scroll>
+              <Code wrap maxHeight={320}>
+                {rec.exc}
+              </Code>
             )}
-          </div>
+          </Column>
         ) : (
           message
         )}
-      </td>
+      </Td>
     </tr>
   );
 }

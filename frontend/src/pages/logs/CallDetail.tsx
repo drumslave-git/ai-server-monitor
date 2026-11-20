@@ -1,17 +1,14 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../../api";
 import { bytes } from "../../fmt";
-import { Actions, Bar, Button, Code, Empty, ErrorText, Fold, KeyValue, Legend, LinkButton, Meta, Notice, PageHeader, Panel, Row, Split, Status } from "../../kit";
+import { Actions, Bar, Button, Code, Column, Empty, ErrorText, Fold, KeyValue, Labeled, Legend, LinkButton, Meta, Notice, PageHeader, Pad, Panel, Row, Split, Status, Text } from "../../kit";
 import { approxTokens, linkHref, linkLabel, messageText, ms, prettyJson, purposeLabel, stamp, tokens } from "./format";
-import { CallStatus, Scroll, Section } from "./parts";
+import { CallStatus } from "./parts";
 import { TimelinePanel } from "./Timeline";
 import type { ChatMessage, LlmCall, ResponseToolCall, ToolSpec } from "./types";
 
 const SHOW_CHARS = 20_000;
 const BACK = { label: "all LLM calls", href: "#/logs/llm" };
-
-/** Panels one under the other inside a Split. */
-const column = (flex: string): CSSProperties => ({ flex, minWidth: 0, display: "flex", flexDirection: "column", gap: "var(--space-4)" });
 
 export function CallDetail({ id }: { id: number }) {
   const [call, setCall] = useState<LlmCall | null>(null);
@@ -68,7 +65,7 @@ function Loaded({ call }: { call: LlmCall }) {
       "tokens",
       <>
         {tokens(call)}
-        {call.tokens_per_s ? <span className="fd-dim"> · {call.tokens_per_s} tokens/s</span> : null}
+        {call.tokens_per_s ? <Text dim> · {call.tokens_per_s} tokens/s</Text> : null}
       </>,
     ],
     ["finish", call.finish_reason ?? "—"],
@@ -90,29 +87,29 @@ function Loaded({ call }: { call: LlmCall }) {
       </PageHeader>
 
       {call.error && (
-        <Notice title={<Status tone="crit">{call.http_status ? `HTTP ${call.http_status}` : "Request failed"}</Status>}>
-          <Scroll max={200}>
-            <Code wrap>{call.error}</Code>
-          </Scroll>
+        <Notice tone="crit" title={<Status tone="crit">{call.http_status ? `HTTP ${call.http_status}` : "Request failed"}</Status>}>
+          <Code wrap maxHeight={200}>
+            {call.error}
+          </Code>
         </Notice>
       )}
       {!call.bodies && <Notice>Only metadata was stored for this call (full bodies are switched off in the log settings).</Notice>}
       {call.truncated.length > 0 && <Notice>Stored with a size cap: {call.truncated.join(", ")} cut off. The marker “chars cut” shows where.</Notice>}
 
       <Split>
-        <div style={column("3 1 560px")}>
+        <Column flex="3 1 560px">
           <Panel title="Overview">
-            <div className="fd-panel-pad">
+            <Pad>
               <KeyValue items={facts} />
-            </div>
+            </Pad>
             <Timing call={call} />
             <Params params={call.params} />
           </Panel>
 
           <TimelinePanel callId={call.id} />
-        </div>
+        </Column>
 
-        <div style={column("2 1 380px")}>
+        <Column flex="2 1 380px">
           <Panel title="Sent to the model" meta={`${call.messages?.length ?? 0} messages`}>
             {call.messages ? (
               call.messages.map((m, i) => <Message key={i} message={m} index={i} last={i === call.messages!.length - 1} fold={fold} />)
@@ -125,13 +122,13 @@ function Loaded({ call }: { call: LlmCall }) {
           <Panel title="Received">
             <Response call={call} fold={fold} />
           </Panel>
-        </div>
+        </Column>
       </Split>
     </>
   );
 }
 
-/** Where the call's time went, as one bar: the wait in the queue is the empty lead of the track,
+/** Where the call's time went, as one bar of up to three parts: the wait in the queue (hollow),
  *  then the wait for the first token, then generating. */
 function Timing({ call }: { call: LlmCall }) {
   const queued = call.queued_ms ?? 0;
@@ -152,22 +149,21 @@ function Timing({ call }: { call: LlmCall }) {
       <Bar
         size="sm"
         flex="1 0 100%"
+        queued={0}
         start={lead}
         inner={ttft !== null && ttft !== undefined ? lead + ttft : undefined}
         end={sum}
         total={sum}
         label={parts.map((p) => `${p.label} ${ms(p.value)}`).join(", ")}
       />
-      <div style={{ flex: "1 0 100%", minWidth: 0 }}>
-        <Legend>
-          {parts.map((p) => (
-            <Status key={p.key} tone={p.tone} hollow={p.tone === "off"} plain>
-              {p.label.toLowerCase()} {ms(p.value)}
-            </Status>
-          ))}
-          <span style={{ marginLeft: "auto" }}>total {ms(total + queued)}</span>
-        </Legend>
-      </div>
+      <Legend flex="1 0 100%">
+        {parts.map((p) => (
+          <Status key={p.key} tone={p.tone} hollow={p.tone === "off"} plain>
+            {p.label.toLowerCase()} {ms(p.value)}
+          </Status>
+        ))}
+        <Text toEnd>total {ms(total + queued)}</Text>
+      </Legend>
     </Row>
   );
 }
@@ -179,9 +175,9 @@ function Params({ params }: { params: Record<string, unknown> }) {
   return (
     <Row>
       {entries.map(([k, v]) => (
-        <span key={k} className="data fd-wrap" style={{ minWidth: 0 }}>
-          <span className="fd-dim">{k}</span> {shown(v)}
-        </span>
+        <Text key={k} kind="data" wrap>
+          <Text dim>{k}</Text> {shown(v)}
+        </Text>
       ))}
     </Row>
   );
@@ -229,9 +225,9 @@ function Body({ text, json = false, wrap = !json }: { text: string; json?: boole
   const long = content.length > SHOW_CHARS && !all;
   return (
     <>
-      <Scroll max={480}>
-        <Code wrap={wrap}>{long ? content.slice(0, SHOW_CHARS) : content}</Code>
-      </Scroll>
+      <Code wrap={wrap} maxHeight={480}>
+        {long ? content.slice(0, SHOW_CHARS) : content}
+      </Code>
       {long && (
         <Actions>
           <Button variant="link" onClick={() => setAll(true)}>
@@ -260,11 +256,11 @@ function Message({ message, index, last, fold }: { message: ChatMessage; index: 
     >
       {text && <Body text={text} />}
       {calls.length > 0 && (
-        <Section title="tool calls requested">
+        <Labeled label="tool calls requested">
           {calls.map((c, i) => (
             <Body key={i} json text={JSON.stringify({ id: c.id, name: c.function?.name, arguments: parse(c.function?.arguments) }, null, 2)} />
           ))}
-        </Section>
+        </Labeled>
       )}
       {message.tool_call_id && <Meta>answers call {message.tool_call_id}</Meta>}
     </Folded>
@@ -313,20 +309,20 @@ function Response({ call, fold }: { call: LlmCall; fold: FoldAll }) {
         </Folded>
       )}
       {(call.content || calls.length > 0) && (
-        <div className="fd-panel-pad" style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+        <Pad>
           {call.content && (
-            <Section title={`answer · ${call.content.length.toLocaleString()} chars`}>
+            <Labeled label={`answer · ${call.content.length.toLocaleString()} chars`}>
               <Body text={call.content} />
-            </Section>
+            </Labeled>
           )}
           {calls.length > 0 && (
-            <Section title={`tool calls · ${calls.length}`}>
+            <Labeled label={`tool calls · ${calls.length}`}>
               {calls.map((c) => (
                 <Body key={c.id} json text={JSON.stringify({ id: c.id, name: c.name, arguments: parse(c.arguments) }, null, 2)} />
               ))}
-            </Section>
+            </Labeled>
           )}
-        </div>
+        </Pad>
       )}
       {nothing && <Empty>{call.status === "ok" ? "The model returned an empty answer." : "No answer was received."}</Empty>}
     </>
