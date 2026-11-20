@@ -86,8 +86,12 @@
 .fd-tag-info { border-color: var(--info-text); color: var(--info-text); }
 
 /* Counter */
-.fd-counters { display: flex; }
-.fd-counter { flex: 1; display: flex; flex-direction: column; gap: var(--space-2); padding: 0 var(--space-5); border-left: 1px solid var(--line); }
+/* The counters wrap when their row is too narrow. The divider before each stands in the gap, so the one
+   that starts a row is cut off: every row of a flush set starts at its edge, every row of the others
+   with a divider (--fd-counter-pad: the room on either side of a divider). */
+.fd-counters { --fd-counter-pad: var(--space-5); display: flex; flex-wrap: wrap; gap: var(--space-4) calc(var(--fd-counter-pad) + 1px); padding-left: calc(var(--fd-counter-pad) + 1px); overflow-x: clip; }
+.fd-counter { position: relative; flex: 1; display: flex; flex-direction: column; gap: var(--space-2); padding: 0 var(--fd-counter-pad, var(--space-5)) 0 0; }
+.fd-counters > .fd-counter::before { content: ""; position: absolute; inset-block: 0; left: calc(-1 * (var(--fd-counter-pad) + 1px)); width: 1px; background: var(--line); }
 .fd-counter-value { font: 800 96px/0.88 var(--font-display); }
 .fd-counter-sm .fd-counter-value { font-size: 56px; }
 .fd-counter-label { font: 400 13px/1.5 var(--font-mono); color: var(--dim); }
@@ -273,7 +277,7 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 .fd-title-link.fd-mono { font: 500 13px/1.5 var(--font-mono); }
 .fd-panel-head h2.fd-mono { font: 500 15px/1.4 var(--font-mono); }
 .fd-table tr.fd-group td { background: var(--raised); font: 500 13px/1.5 var(--font-mono); }
-.fd-counters-flush .fd-counter:first-child { padding-left: 0; border-left: 0; }
+.fd-counters-flush { padding-left: 0; }
 .fd-section-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-2) var(--space-5); }
 .fd-section-head h2 { margin: 0; font: 600 18px/1.3 var(--font-sans); }
 
@@ -355,7 +359,7 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
   .fd-hero { padding: var(--space-4); }
   .fd-head h1 { font-size: 40px; }
   .fd-lane-name { flex: 1 1 100%; }
-  .fd-counter { padding: 0 var(--space-3); }
+  .fd-counters { --fd-counter-pad: var(--space-3); }
   .fd-counter-value { font-size: 56px; }
 }
 
@@ -608,15 +612,17 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
     .fd-head-sticky, .fd-head-sticky h1, .fd-head-sticky :is(.fd-head-note, .fd-head-over .fd-meta) { animation-timing-function: step-end; }
   }
 }
-/* Wider than a phone, a head whose tools are a row of fields turns into one row as it turns compact:
-   the title, its buttons, then the fields; the fields' names fold (they stay for screen readers).
-   A select keeps the width of its longest option, a search field takes the room left but never
-   less than its placeholder; what does not fit whole goes to a second row.
+/* Wider than a phone, in a head whose tools are a row of fields, a select keeps the width of its
+   longest option and a search field starts at its placeholder and takes the room left (over the flex
+   the page gives them): the search field gives up room first, and what does not fit whole goes to
+   the next row. As the head turns compact it turns into one row: the title and its buttons, then the
+   fields, whose names fold (they stay for screen readers); the title and its buttons stand on the
+   first row of fields, the further rows of fields under the first field.
    (A toolbar over Panes keeps its own row: its parts line up with the panes.) */
 @media (min-width: 761px) {
   .fd-head-sticky:has(> .fd-head-tools > .fd-toolbar:not(.fd-toolbar-panes)) > .fd-head-tools {
-    & .fd-field:has(> .fd-select) { min-width: max-content; }
-    & .fd-field:has(> .fd-input) { min-width: min-content; }
+    & .fd-field:has(> .fd-select) { min-width: max-content; flex: 0 0 auto !important; }
+    & .fd-field:has(> .fd-input) { min-width: min-content; flex: 1 1 0 !important; }
     & .fd-field > .fd-input { min-width: calc(var(--fd-placeholder, 0ch) + 2 * var(--space-3) + 2px); }
   }
 }
@@ -625,16 +631,15 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
     .fd-head-sticky:has(> .fd-head-tools > .fd-toolbar:not(.fd-toolbar-panes)) {
       animation-name: fd-head-compact, fd-head-row;
       & > .fd-head-text { animation-name: fd-head-row-text; }
+      & > .fd-head-actions { animation-name: fd-head-row-actions; }
       & > .fd-head-tools { animation-name: fd-head-row-tools; }
       & > .fd-head-tools .fd-field { animation-name: fd-head-row-field; }
-      & > .fd-head-tools .fd-field:has(> .fd-select) { animation-name: fd-head-row-select; }
-      & > .fd-head-tools .fd-field:has(> .fd-input) { animation-name: fd-head-row-search; }
       & > .fd-head-tools > .fd-toolbar > :not(.fd-field) { animation-name: fd-head-row-item; }
       & > .fd-head-tools .fd-field-label { overflow: hidden; animation-name: fd-head-note; }
-      & :is(.fd-head-text, .fd-head-tools, .fd-toolbar > *, .fd-field, .fd-field-label) { animation-timing-function: linear; animation-fill-mode: both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
+      & :is(.fd-head-text, .fd-head-actions, .fd-head-tools, .fd-toolbar > *, .fd-field, .fd-field-label) { animation-timing-function: linear; animation-fill-mode: both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
       /* the parts change their layout at once half way (the head's height moves the scroll range, so
          the timeline may stop short of its end: an interpolated width would stay between) */
-      & :is(.fd-head-text, .fd-head-tools, .fd-toolbar > *, .fd-field) { animation-timing-function: steps(2, jump-none); }
+      & :is(.fd-head-text, .fd-head-actions, .fd-head-tools, .fd-toolbar > *, .fd-field) { animation-timing-function: steps(2, jump-none); }
       @media (prefers-reduced-motion: reduce) {
         & .fd-field-label { animation-timing-function: step-end; }
       }
@@ -643,11 +648,11 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 }
 @keyframes fd-head-row { to { flex-wrap: nowrap; } }
 @keyframes fd-head-row-item { to { flex-wrap: nowrap; flex-shrink: 0; } }
-@keyframes fd-head-row-text { to { flex: 0 0 auto; } }
+/* (at the top, as tall as a field, the title at its foot: where it stands in a head of one row) */
+@keyframes fd-head-row-text { to { flex: 0 0 auto; align-self: flex-start; min-height: var(--control); justify-content: flex-end; } }
+@keyframes fd-head-row-actions { to { align-self: flex-start; } }
 @keyframes fd-head-row-tools { to { flex: 1 1 0; } }
 @keyframes fd-head-row-field { to { gap: 0; } }
-@keyframes fd-head-row-select { to { gap: 0; flex: 0 0 auto; } }
-@keyframes fd-head-row-search { to { gap: 0; flex: 1 1 0; } }
 @keyframes fd-head-compact { to { padding-top: var(--space-3); padding-bottom: var(--space-3); border-bottom-color: var(--line); } }
 @keyframes fd-head-title { to { font-size: var(--head-title-compact); } }
 @keyframes fd-head-note { to { opacity: 0; block-size: 0; } }
