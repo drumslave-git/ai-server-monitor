@@ -16,6 +16,7 @@ import {
   Empty,
   ErrorText,
   Field,
+  IconButton,
   Inline,
   Input,
   Legend,
@@ -24,10 +25,11 @@ import {
   Meta,
   Notice,
   PageHeader,
+  Pane,
+  Panes,
   Pad,
   Panel,
   Select,
-  Split,
   Stack,
   Status,
   Switch,
@@ -166,136 +168,148 @@ export function McpToolsPage() {
   /** One cell per tool: read and on, then write and on, then off. */
   const cells: Cell[] = [...Array<Cell>(on - writesOn).fill("ok"), ...Array<Cell>(writesOn).fill("warn"), ...Array<Cell>(tools.length - on).fill("")];
 
+  const filters = (
+    <Toolbar
+      side={
+        <Field label="search">
+          <Input type="search" placeholder="Search tools and descriptions" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search tools and descriptions" />
+        </Field>
+      }
+    >
+      <Field label="server" flex="1 1 150px">
+        <Select value={server} onChange={(e) => setServer(e.target.value)} aria-label="Server">
+          <option value="all">all servers</option>
+          {servers.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+        </Select>
+      </Field>
+      <Field label="kind" flex="1 1 150px">
+        <Select value={kind} onChange={(e) => setKind(e.target.value as Kind)} aria-label="Read or write">
+          <option value="all">read and write</option>
+          <option value="read">read</option>
+          <option value="write">write</option>
+        </Select>
+      </Field>
+      <Field label="state" flex="1 1 150px">
+        <Select value={onOff} onChange={(e) => setOnOff(e.target.value as OnOff)} aria-label="On or off">
+          <option value="all">on and off</option>
+          <option value="on">on</option>
+          <option value="off">off</option>
+        </Select>
+      </Field>
+      <Actions toEnd>
+        <IconButton
+          icon={anyClosed ? "expandAll" : "collapseAll"}
+          label={anyClosed ? "expand all" : "collapse all"}
+          hint={filtering ? "While searching or filtering, every domain with matches is open" : undefined}
+          disabled={filtering}
+          onClick={() => setClosed(anyClosed ? new Set() : new Set(allNames))}
+        />
+        <IconButton
+          icon="selectAll"
+          label={filtering ? "select shown" : "select all"}
+          count={toOn.length}
+          hint={filtering ? "Switches on every tool the search and filters show" : "Switches on every tool"}
+          disabled={toOn.length === 0}
+          onClick={() => switchAll(toOn, true)}
+        />
+        <IconButton
+          icon="deselectAll"
+          label={filtering ? "deselect shown" : "deselect all"}
+          count={toOff.length}
+          hint={filtering ? "Switches off every tool the search and filters show" : "Switches off every tool"}
+          disabled={toOff.length === 0}
+          onClick={() => switchAll(toOff, false)}
+        />
+      </Actions>
+    </Toolbar>
+  );
+
   return (
     <>
-      <PageHeader title="MCP tools">
-        <Button variant="primary" onClick={() => setSortOpen(true)} disabled={page.sorting || servers.length === 0}>
+      <PageHeader title="MCP tools" tools={servers.length > 0 ? filters : undefined} fold="filters">
+        <Button variant="primary" icon="sort" onClick={() => setSortOpen(true)} disabled={page.sorting || servers.length === 0}>
           sort into domains…
         </Button>
       </PageHeader>
       {servers.length === 0 ? (
         <Notice title="No MCP server is configured.">Add one under Settings → MCP servers.</Notice>
       ) : (
-        <>
-          <Panel pad>
-            <Inline align="end" gap={4}>
-              <Counters flush flex="0 1 720px">
-                <Counter size="sm" value={tools.length} label={`tool${tools.length === 1 ? "" : "s"} on ${plural(nServers, "server")}`} />
-                <Counter size="sm" value={page.domains.length} label={`domain${page.domains.length === 1 ? "" : "s"}`} />
-                <Counter size="sm" value={on} label="on" tone={on ? "ok" : "off"} />
-                <Counter size="sm" value={writes} label="write" tone={writes ? "warn" : "off"} />
-              </Counters>
-              <Column gap={2} flex="1 1 380px">
-                <Cells cells={cells} label={`${plural(tools.length, "tool")}: ${on - writesOn} read and on, ${writesOn} write and on, ${tools.length - on} off`} />
-                <Legend>
-                  <span>one cell = one tool</span>
-                  <Status tone="ok" plain>read, on</Status>
-                  <Status tone="warn" plain>write, on</Status>
-                  <Status tone="off" hollow plain>off</Status>
-                </Legend>
-              </Column>
-            </Inline>
-          </Panel>
-          {page.sorting && (
-            <Notice title={<Status tone="info" blink>sorting tools into domains…</Status>}>
-              The page updates when it is done; until then some tools may still be without a domain.
-            </Notice>
-          )}
-          {down.map((s) => (
-            <Notice key={s.name} tone="warn">
-              <Text tone="warn">
-                Server <strong>{s.name}</strong> could not be listed{s.listed_ts ? ` ${ago(s.listed_ts)}` : ""}: {s.error}. Its tools are shown as last listed.
-              </Text>
-            </Notice>
-          ))}
-          {notice && <Notice>{notice}</Notice>}
-          {error && <ErrorText>{error}</ErrorText>}
-          <Toolbar>
-            <Field label="search" flex="3 1 240px">
-              <Input type="search" placeholder="Search tools and descriptions" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search tools and descriptions" />
-            </Field>
-            <Field label="server" flex="1 1 150px">
-              <Select value={server} onChange={(e) => setServer(e.target.value)} aria-label="Server">
-                <option value="all">all servers</option>
-                {servers.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
-              </Select>
-            </Field>
-            <Field label="kind" flex="1 1 150px">
-              <Select value={kind} onChange={(e) => setKind(e.target.value as Kind)} aria-label="Read or write">
-                <option value="all">read and write</option>
-                <option value="read">read</option>
-                <option value="write">write</option>
-              </Select>
-            </Field>
-            <Field label="state" flex="1 1 150px">
-              <Select value={onOff} onChange={(e) => setOnOff(e.target.value as OnOff)} aria-label="On or off">
-                <option value="all">on and off</option>
-                <option value="on">on</option>
-                <option value="off">off</option>
-              </Select>
-            </Field>
-            <Actions toEnd>
-                <Button
-                  disabled={filtering}
-                  title={filtering ? "While searching or filtering, every domain with matches is open" : undefined}
-                  onClick={() => setClosed(anyClosed ? new Set() : new Set(allNames))}
-                >
-                  {anyClosed ? "expand all" : "collapse all"}
-                </Button>
-                <Button disabled={toOn.length === 0} onClick={() => switchAll(toOn, true)} title={filtering ? "Switches on every tool the search and filters show" : "Switches on every tool"}>
-                  {filtering ? "select shown" : "select all"} ({toOn.length})
-                </Button>
-                <Button disabled={toOff.length === 0} onClick={() => switchAll(toOff, false)} title={filtering ? "Switches off every tool the search and filters show" : "Switches off every tool"}>
-                  {filtering ? "deselect shown" : "deselect all"} ({toOff.length})
-                </Button>
-            </Actions>
-          </Toolbar>
-          {filtering && shown.length === 0 && (
-            <Panel>
-              <Empty>No tool matches.</Empty>
-            </Panel>
-          )}
+        <Panes>
           {entries.length > 0 && (
-            <Split>
-              <Panel flex="1 1 300px">
-                <List label="Domains">
-                  {entries.map((e) => (
-                    <ListItem
-                      key={e.key}
-                      mono
-                      expanded={isOpen(e.name)}
-                      onClick={() => toggled(e.name, !isOpen(e.name))}
-                      title={e.domain ? e.name : "not sorted"}
-                      trailing={e.domain ? counts(e) : <Meta tone="warn">{counts(e)}</Meta>}
-                    />
-                  ))}
-                </List>
-              </Panel>
-              {open.length > 0 && (
-                <Column flex="3 1 560px">
-                  {open.map((e) =>
-                    e.domain && e.all.length === 0 ? (
-                      <EmptyDomain key={e.key} domain={e.domain} act={act} />
-                    ) : (
-                      <Section
-                        key={e.key}
-                        title={e.domain ? e.name : "Not sorted"}
-                        description={e.domain ? e.domain.description : "These tools have no domain: they are not offered to the chat or to jobs."}
-                        count={e.rows}
-                        total={e.all}
-                        onSwitch={(to) => switchAll(e.rows, to)}
-                        domain={e.domain}
-                        act={act}
-                      >
-                        {e.rows.map((t) => <ToolRow key={t.name} tool={t} domains={page.domains} servers={servers} act={act} reason={!e.domain} />)}
-                      </Section>
-                    ),
-                  )}
-                </Column>
-              )}
-            </Split>
+            <Pane side label="Domains">
+              <List label="Domains">
+                {entries.map((e) => (
+                  <ListItem
+                    key={e.key}
+                    mono
+                    expanded={isOpen(e.name)}
+                    onClick={() => toggled(e.name, !isOpen(e.name))}
+                    title={e.domain ? e.name : "not sorted"}
+                    trailing={e.domain ? counts(e) : <Meta tone="warn">{counts(e)}</Meta>}
+                  />
+                ))}
+              </List>
+            </Pane>
           )}
-        </>
+          <Pane bare label="Tools">
+            <Panel pad>
+              <Inline align="end" gap={4}>
+                <Counters flush flex="0 1 720px">
+                  <Counter size="sm" value={tools.length} label={`tool${tools.length === 1 ? "" : "s"} on ${plural(nServers, "server")}`} />
+                  <Counter size="sm" value={page.domains.length} label={`domain${page.domains.length === 1 ? "" : "s"}`} />
+                  <Counter size="sm" value={on} label="on" tone={on ? "ok" : "off"} />
+                  <Counter size="sm" value={writes} label="write" tone={writes ? "warn" : "off"} />
+                </Counters>
+                <Column gap={2} flex="1 1 380px">
+                  <Cells cells={cells} label={`${plural(tools.length, "tool")}: ${on - writesOn} read and on, ${writesOn} write and on, ${tools.length - on} off`} />
+                  <Legend>
+                    <span>one cell = one tool</span>
+                    <Status tone="ok" plain>read, on</Status>
+                    <Status tone="warn" plain>write, on</Status>
+                    <Status tone="off" hollow plain>off</Status>
+                  </Legend>
+                </Column>
+              </Inline>
+            </Panel>
+            {page.sorting && (
+              <Notice title={<Status tone="info" blink>sorting tools into domains…</Status>}>
+                The page updates when it is done; until then some tools may still be without a domain.
+              </Notice>
+            )}
+            {down.map((s) => (
+              <Notice key={s.name} tone="warn">
+                <Text tone="warn">
+                  Server <strong>{s.name}</strong> could not be listed{s.listed_ts ? ` ${ago(s.listed_ts)}` : ""}: {s.error}. Its tools are shown as last listed.
+                </Text>
+              </Notice>
+            ))}
+            {notice && <Notice>{notice}</Notice>}
+            {error && <ErrorText>{error}</ErrorText>}
+            {filtering && shown.length === 0 && (
+              <Panel>
+                <Empty>No tool matches.</Empty>
+              </Panel>
+            )}
+            {open.map((e) =>
+              e.domain && e.all.length === 0 ? (
+                <EmptyDomain key={e.key} domain={e.domain} act={act} />
+              ) : (
+                <Section
+                  key={e.key}
+                  title={e.domain ? e.name : "Not sorted"}
+                  description={e.domain ? e.domain.description : "These tools have no domain: they are not offered to the chat or to jobs."}
+                  count={e.rows}
+                  total={e.all}
+                  onSwitch={(to) => switchAll(e.rows, to)}
+                  domain={e.domain}
+                  act={act}
+                >
+                  {e.rows.map((t) => <ToolRow key={t.name} tool={t} domains={page.domains} servers={servers} act={act} reason={!e.domain} />)}
+                </Section>
+              ),
+            )}
+          </Pane>
+        </Panes>
       )}
       {sortOpen && (
         <SortDialog
@@ -350,17 +364,9 @@ function Section({
       }
       aside={
         <>
-          <Button disabled={count.every((t) => t.enabled)} onClick={() => onSwitch(true)}>
-            {part ? "select shown" : "select all"}
-          </Button>
-          <Button disabled={!count.some((t) => t.enabled)} onClick={() => onSwitch(false)}>
-            {part ? "deselect shown" : "deselect all"}
-          </Button>
-          {domain && (
-            <Button aria-label={`Rename or describe ${domain.name}`} onClick={() => setEditing(true)}>
-              rename
-            </Button>
-          )}
+          <IconButton small icon="selectAll" label={part ? "select shown" : "select all"} disabled={count.every((t) => t.enabled)} onClick={() => onSwitch(true)} />
+          <IconButton small icon="deselectAll" label={part ? "deselect shown" : "deselect all"} disabled={!count.some((t) => t.enabled)} onClick={() => onSwitch(false)} />
+          {domain && <IconButton small icon="rename" label={`Rename or describe ${domain.name}`} onClick={() => setEditing(true)} />}
         </>
       }
     >
@@ -386,9 +392,7 @@ function EmptyDomain({ domain, act }: { domain: Domain; act: Act }) {
       title={domain.name}
       meta={<>no tools{domain.used_by.length > 0 && ` · used by ${domain.used_by.join(", ")}`}</>}
       aside={
-        <Button aria-label={`Rename or describe ${domain.name}`} onClick={() => setEditing(true)}>
-          rename
-        </Button>
+        <IconButton small icon="rename" label={`Rename or describe ${domain.name}`} onClick={() => setEditing(true)} />
       }
     >
       {domain.description && (

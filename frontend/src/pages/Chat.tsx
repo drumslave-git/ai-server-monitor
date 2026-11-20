@@ -5,7 +5,7 @@ import { HostCommand } from "../components/HostCommand";
 import { RunnableMarkdown } from "../components/RunnableMarkdown";
 import { ago } from "../fmt";
 import { takeExplain, type ExplainRequest } from "../components/Explain";
-import { Button, Code, Column, Command, Empty, ErrorText, Field, Fold, Inline, LinkButton, List, ListItem, Message, Meta, PageHeader, Pad, Panel, Row, Split, Status, Text, Textarea, type Tone } from "../kit";
+import { Code, Column, Command, Composer, Empty, ErrorText, Fold, IconButton, Inline, LinkButton, List, ListItem, Message, Meta, PageHeader, Pad, Pane, Panes, Status, Text, Textarea, type Tone } from "../kit";
 import { useStream } from "../live";
 import { useNow, usePoll } from "../ui";
 
@@ -197,7 +197,6 @@ export function ChatPage() {
   const [draft, setDraft] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
-  const bottom = useRef<HTMLDivElement>(null);
   const sessionId = useRef<string | null>(null);
   /** The session whose last turn failed: its error is not stored, so the live thread stays. */
   const keepThread = useRef<string | null>(null);
@@ -219,10 +218,6 @@ export function ChatPage() {
     if (routeId) void load(routeId);
     else setTurns([]);
   }, [routeId, busy, load]);
-
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "end" });
-  }, [turns]);
 
   // A run that waited for an approval continues on the server: its answer arrives as
   // chat.message, the rewritten waiting note as chat.message.updated (prefix match).
@@ -391,13 +386,13 @@ export function ChatPage() {
   return (
     <>
       <PageHeader title="Chat" back={onePane && showThread ? { label: "all conversations", href: "#/chat" } : undefined}>
-        <LinkButton variant="primary" href="#/chat/new">
+        <LinkButton variant="primary" icon="add" href="#/chat/new">
           new conversation
         </LinkButton>
       </PageHeader>
-      <Split>
+      <Panes>
         {(!onePane || !showThread) && (
-          <Panel flex="1 1 240px">
+          <Pane side label="Conversations">
             {sessions.data && items.length === 0 && <Empty>No conversations yet.</Empty>}
             <List label="Conversations">
               {items.map((s) => (
@@ -407,18 +402,49 @@ export function ChatPage() {
                   selected={s.id === routeId}
                   title={s.title || "Untitled"}
                   meta={`${s.channel === "telegram" ? "Telegram · " : ""}${ago(s.updated, now)} · ${s.messages} messages`}
-                  action={
-                    <Button variant="link" aria-label={`Delete conversation: ${s.title || "Untitled"}`} onClick={() => void remove(s.id)}>
-                      delete
-                    </Button>
-                  }
+                  action={<IconButton small icon="remove" label={`Delete conversation: ${s.title || "Untitled"}`} onClick={() => void remove(s.id)} />}
                 />
               ))}
             </List>
-          </Panel>
+          </Pane>
         )}
         {(!onePane || showThread) && (
-          <Panel flex="3 1 300px">
+          <Pane
+            label="Conversation"
+            endOn={turns}
+            foot={
+              <Composer
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void send();
+                }}
+                actions={
+                  busy ? (
+                    <IconButton small icon="stop" label="stop" onClick={() => abort.current?.abort()} />
+                  ) : (
+                    <IconButton small type="submit" variant="primary" icon="send" label="send" disabled={!draft.trim()} />
+                  )
+                }
+              >
+                <Textarea
+                  rows={2}
+                  value={draft}
+                  placeholder="Ask about the server"
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      // Enter that confirms an IME candidate (Japanese, Chinese, Korean) is not a send.
+                      // keyCode 229: Safari reports the composition as ended before this keydown.
+                      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                      e.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  aria-label="Message"
+                />
+              </Composer>
+            }
+          >
             {(loadError || turns.length > 0) && (
               <Pad>
                 {loadError && <ErrorText>{loadError}</ErrorText>}
@@ -436,45 +462,9 @@ export function ChatPage() {
             {turns.length === 0 && !busy && (
               <Empty>Ask about the server: what is using the disk, why a container restarted, what changed since yesterday.</Empty>
             )}
-            <Row
-              sticky
-              nowrap
-              align="end"
-              gap={3}
-              onSubmit={(e) => {
-                e.preventDefault();
-                void send();
-              }}
-            >
-              <Field label="ask about the server" flex="1 1 0">
-                <Textarea
-                  rows={2}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      // Enter that confirms an IME candidate (Japanese, Chinese, Korean) is not a send.
-                      // keyCode 229: Safari reports the composition as ended before this keydown.
-                      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                      e.currentTarget.form?.requestSubmit();
-                    }
-                  }}
-                  aria-label="Message"
-                />
-              </Field>
-              {busy ? (
-                <Button onClick={() => abort.current?.abort()}>stop</Button>
-              ) : (
-                <Button type="submit" variant="primary" disabled={!draft.trim()}>
-                  send
-                </Button>
-              )}
-            </Row>
-            <div ref={bottom} />
-          </Panel>
+          </Pane>
         )}
-      </Split>
+      </Panes>
     </>
   );
 }

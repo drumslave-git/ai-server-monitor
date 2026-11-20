@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type StatusResponse } from "./api";
 import { AutomationNotice, AutomationProvider, AutomationSwitch } from "./automation";
 import { HardwareMeters } from "./hardware";
-import { Main, Rail, Shell, type NavItem } from "./kit";
+import { Main, Rail, Shell, type IconName, type NavItem } from "./kit";
 import { useConnected, useStream } from "./live";
 import { ApprovalsPage } from "./pages/Approvals";
 import { ChatPage } from "./pages/Chat";
@@ -12,7 +12,7 @@ import { LogsPage } from "./pages/Logs";
 import { McpToolsPage } from "./pages/McpTools";
 import { SettingsPage } from "./pages/Settings";
 
-const PAGES: { key: string; title: string; label: string }[] = [
+const PAGES: { key: string & IconName; title: string; label: string }[] = [
   { key: "dashboard", title: "Dashboard", label: "dashboard" },
   { key: "jobs", title: "Jobs", label: "jobs" },
   { key: "approvals", title: "Approvals", label: "approvals" },
@@ -47,7 +47,6 @@ export function App() {
   useEffect(() => {
     const onHash = () => {
       setRoute(parseHash());
-      window.scrollTo({ top: 0 });
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
@@ -75,6 +74,7 @@ export function App() {
     key: p.key,
     label: p.label,
     href: `#/${p.key}`,
+    icon: p.key,
     count: p.key === "approvals" ? pending : undefined,
   }));
 
@@ -84,7 +84,7 @@ export function App() {
         <Rail items={items} active={page} live={connected} version={version} meters={<HardwareMeters />}>
           <AutomationSwitch />
         </Rail>
-        <Main>
+        <Main resetOn={route.join("/")}>
           <AutomationNotice />
           {page === "jobs" ? (
             <JobsPage params={params} />

@@ -1,7 +1,7 @@
 import DOMPurify from "dompurify";
 import { Marked, type Tokens } from "marked";
 import { useMemo, type MouseEvent } from "react";
-import { Prose } from "../kit";
+import { commandHtml, iconButtonHtml, Prose, setIconButton } from "../kit";
 
 /** Code blocks with these tags get run buttons. */
 const SHELLS = new Set(["bash", "sh", "shell", "zsh", "console"]);
@@ -56,7 +56,7 @@ export function commandMode(group: string): "read-only" | "write" | "unmarked" {
 const COPIED_MS = 1500;
 
 const copyButton = (index: number, what: string) =>
-  `<button type="button" class="fd-btn fd-btn-copy" data-copy="${index}" title="Copy this ${what} to the clipboard">copy</button>`;
+  iconButtonHtml({ icon: "copy", label: "copy", hint: `Copy this ${what} to the clipboard`, data: { copy: String(index) } });
 
 const LABELS = {
   "read-only": "run",
@@ -70,15 +70,15 @@ const TITLES = {
 };
 
 /** One command in the markup of the kit's `Command`: its leading comment lines dim, the
- *  command, and (when it can be run) the button attached. */
-function commandHtml(group: string, button: string): string {
+ *  command, and its buttons (run when it can be run, copy) at its corner. */
+function shellCommandHtml(group: string, buttons: string): string {
   const lines = group.split("\n");
   let lead = 0;
   while (lead < lines.length && /^\s*#/.test(lines[lead])) lead += 1;
   const comment = lines.slice(0, lead).join("\n");
   const rest = lines.slice(lead).join("\n");
   const dim = comment ? `<span class="fd-dim">${escape(comment)}${rest ? "\n" : ""}</span>` : "";
-  return `<div class="fd-command"><pre class="fd-code">${dim}${escape(rest)}</pre>${button}</div>`;
+  return commandHtml(`${dim}${escape(rest)}`, buttons);
 }
 
 /** `runnableNow`: the commands get their run buttons (not while the answer is still written
@@ -94,16 +94,16 @@ function render(text: string, runnableNow: boolean): { html: string; commands: s
         const tag = (lang ?? "").trim().split(/\s+/)[0].toLowerCase();
         if (!SHELLS.has(tag)) {
           const copy = copyButton(copies.push(code) - 1, "text");
-          return `<div class="fd-command"><pre class="fd-code">${escape(code)}</pre>${copy}</div>`;
+          return commandHtml(escape(code), copy);
         }
         const parts = commandGroups(code).map((group) => {
           const command = runnable(group, tag);
           const index = commands.push(command) - 1;
           const mode = commandMode(group);
           const run = runnableNow
-            ? `<button type="button" class="fd-btn${mode === "read-only" ? "" : " fd-btn-warn"}" data-run="${index}" data-label="${LABELS[mode]}" title="${TITLES[mode]}">${LABELS[mode]}</button>`
+            ? iconButtonHtml({ icon: "run", label: LABELS[mode], hint: TITLES[mode], warn: mode !== "read-only", data: { run: String(index), label: LABELS[mode] } })
             : "";
-          return commandHtml(group, run + copyButton(copies.push(command) - 1, "command"));
+          return shellCommandHtml(group, run + copyButton(copies.push(command) - 1, "command"));
         });
         // (the commands of one block stand under each other with the gap of the text around them)
         return `<div class="fd-md">${parts.join("")}</div>`;
@@ -126,11 +126,11 @@ export function RunnableMarkdown({ text, onRun }: { text: string; onRun?: (comma
       if (copied === undefined) return;
       try {
         await navigator.clipboard.writeText(copied);
-        copy.textContent = "copied";
+        setIconButton(copy, "copied", "copied");
       } catch {
-        copy.textContent = "failed";
+        setIconButton(copy, "failed", "failed");
       }
-      window.setTimeout(() => (copy.textContent = "copy"), COPIED_MS);
+      window.setTimeout(() => setIconButton(copy, "copy", "copy"), COPIED_MS);
       return;
     }
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-run]");
@@ -138,12 +138,12 @@ export function RunnableMarkdown({ text, onRun }: { text: string; onRun?: (comma
     const command = commands[Number(button.dataset.run)];
     if (command === undefined) return;
     button.disabled = true;
-    button.textContent = "running…";
+    setIconButton(button, "running", "running…");
     try {
       await onRun(command);
     } finally {
       button.disabled = false;
-      button.textContent = button.dataset.label ?? "run";
+      setIconButton(button, "run", button.dataset.label ?? "run");
     }
   };
   return <Prose html={html} onClick={click} />;

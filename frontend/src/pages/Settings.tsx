@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, ApiError, type FieldError, type JsonObject, type LlmTestResult, type ModelInfo, type SettingsDoc } from "../api";
 import { ObjectFields, resolve, type FormContext } from "../components/SchemaForm";
-import { Button, Column, Count, ErrorText, List, ListItem, Live, Meta, Pad, PageHeader, Panel, SaveBar, SectionHead, Split, Status, TestLine, Text } from "../kit";
+import { Button, Count, ErrorText, IconButton, List, ListItem, Live, Meta, Pad, PageHeader, Pane, Panes, Panel, SaveBar, SectionHead, Status, TestLine, Text } from "../kit";
 
 function modelDefaultsLine(info: ModelInfo): string {
   const p = info.parameters;
@@ -136,10 +136,8 @@ export function SettingsPage() {
   /** Discard and save: in the page's head, and again in the bar that stays in view while there are changes. */
   const buttons = (
     <>
-      <Button disabled={!dirty || saving} onClick={() => { setValues(doc.values); setErrors({}); setStatus(null); }}>
-        discard
-      </Button>
-      <Button type="submit" form={formId} variant="primary" disabled={!dirty || saving}>
+      <IconButton icon="discard" label="discard" disabled={!dirty || saving} onClick={() => { setValues(doc.values); setErrors({}); setStatus(null); }} />
+      <Button type="submit" form={formId} variant="primary" icon="save" disabled={!dirty || saving}>
         {saving ? "saving…" : "save"}
       </Button>
     </>
@@ -148,8 +146,8 @@ export function SettingsPage() {
   return (
     <>
       <PageHeader title="Settings">{buttons}</PageHeader>
-      <Split>
-        <Panel flex="1 1 210px">
+      <Panes>
+        <Pane side label="Settings sections">
           <List label="Settings sections">
             {Object.entries(doc.sections).map(([key, title], i) => (
               <ListItem
@@ -169,9 +167,23 @@ export function SettingsPage() {
               </ListItem>
             ))}
           </List>
-        </Panel>
+        </Pane>
 
-        <Column id={formId} flex="5 1 560px" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+        <Pane
+          bare
+          label={doc.sections[section]}
+          id={formId}
+          resetOn={section}
+          onSubmit={(e) => { e.preventDefault(); void save(); }}
+          foot={
+            (dirty || status) && (
+              <SaveBar>
+                {status ? <Status tone={status.kind === "ok" ? "ok" : "crit"}>{status.text}</Status> : <Status tone="warn">unsaved changes</Status>}
+                {buttons}
+              </SaveBar>
+            )
+          }
+        >
           <SectionHead title={doc.sections[section]} note={sectionSchema.description} />
           <ObjectFields
             schema={sectionSchema}
@@ -186,15 +198,8 @@ export function SettingsPage() {
           {(section === "llm" || section === "worker") && (
             <LlmTest key={section} profile={section === "llm" ? "main" : "worker"} llm={values[section] as JsonObject} onModels={setModels} />
           )}
-
-          {(dirty || status) && (
-            <SaveBar>
-              {status ? <Status tone={status.kind === "ok" ? "ok" : "crit"}>{status.text}</Status> : <Status tone="warn">unsaved changes</Status>}
-              {buttons}
-            </SaveBar>
-          )}
-        </Column>
-      </Split>
+        </Pane>
+      </Panes>
     </>
   );
 }
@@ -244,9 +249,7 @@ function LlmTest({ profile, llm, onModels }: { profile: string; llm: JsonObject;
     <Panel
       title="Connection test"
       aside={
-        <Button disabled={running} onClick={() => void run()}>
-          {running ? "testing…" : "test"}
-        </Button>
+        <IconButton icon="test" label={running ? "testing…" : "test"} disabled={running} onClick={() => void run()} />
       }
     >
       <Pad>

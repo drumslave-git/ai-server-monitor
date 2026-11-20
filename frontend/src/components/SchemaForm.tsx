@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { McpToolPicker, mcpTools } from "./McpTools";
 import { api, type ConnectionTestResult, type Json, type JsonObject, type JsonSchema } from "../api";
-import { Button, Column, ErrorText, Field as KitField, FormGrid, Input, Joined, Live, Meta, Pad, Panel, SectionHead, Segmented, Select, Switch, TestLine, Text, Textarea } from "../kit";
+import { Button, Card, Cards, Column, ErrorText, Field as KitField, FormGrid, IconButton, Input, Joined, Live, Meta, Pad, Panel, SectionHead, Segmented, Select, Status, Switch, TestLine, Text, Textarea } from "../kit";
 
 /* Renders a form from the backend's pydantic JSON schema, so every setting the backend
    defines shows up here without UI changes. Field help comes from `description`.
@@ -11,7 +11,8 @@ import { Button, Column, ErrorText, Field as KitField, FormGrid, Input, Joined, 
 
      group (an object with properties)     Panel, inset when it sits inside another panel
      optional group (the same, or null)    that Panel with "configure" / "remove"
-     list of objects                       a Panel per entry, under a heading with "add"
+     list of objects                       a Card per entry (closed until opened, added or in error),
+                                           under a heading with "add"
      boolean                               Switch
      boolean or "auto"                     Segmented: auto / on / off
      enum                                  Segmented up to SEGMENTED_MAX values, Select above
@@ -415,7 +416,7 @@ function OptionalGroup({ title, spec, inner, value, onChange, path, ctx, inset }
             enabled ? (
               <>
                 {buttons}
-                <Button onClick={() => onChange(null)}>remove</Button>
+                <IconButton icon="remove" label="remove" onClick={() => onChange(null)} />
               </>
             ) : (
               <Button onClick={() => onChange(defaultFor({ ...inner, default: undefined }, ctx.defs))}>configure</Button>
@@ -431,31 +432,52 @@ function OptionalGroup({ title, spec, inner, value, onChange, path, ctx, inset }
 
 function ListOfObjects({ title, spec, item, value, onChange, path, ctx, inset }: BlockProps & { item: JsonSchema }) {
   const list = (value as Json[]) ?? [];
+  // the entry just added opens; the others stay as the owner left them
+  const [added, setAdded] = useState<number | null>(null);
   const update = (i: number, v: Json) => onChange(list.map((x, j) => (j === i ? v : x)));
-  const add = <Button onClick={() => onChange([...list, defaultFor({ ...item, default: undefined }, ctx.defs)])}>add</Button>;
+  const add = (
+    <IconButton
+      icon="add"
+      label="add"
+      onClick={() => {
+        setAdded(list.length);
+        onChange([...list, defaultFor({ ...item, default: undefined }, ctx.defs)]);
+      }}
+    />
+  );
   const none = list.length === 0 && <Text block dim>None.</Text>;
-  const entries = list.map((entry, i) => (
-    <Tested key={i} spec={spec} value={entry} index={i} onEdit={(v) => update(i, v)}>
-      {(buttons, result) => (
-        <Panel
-          inset={inset}
-          title={(entry as JsonObject)?.name ? String((entry as JsonObject).name) : `#${i + 1}`}
-          aside={
-            <>
-              {buttons}
-              <Button onClick={() => onChange(list.filter((_, j) => j !== i))}>remove</Button>
-            </>
-          }
-        >
-          {result}
-          <Pad>
-            <ObjectFields schema={item} value={entry} onChange={(v) => update(i, v)} path={`${path}.${i}`} ctx={ctx} inset />
-          </Pad>
-        </Panel>
-      )}
-    </Tested>
-  ));
-  // Inside a panel the list is a card of its own; on the page its entries are the panels.
+  const entries = list.length > 0 && (
+    <Cards>
+      {list.map((entry, i) => {
+        const fields = (entry ?? {}) as JsonObject;
+        const at = `${path}.${i}`;
+        const failed = Object.keys(ctx.errors).some((p) => p === at || p.startsWith(`${at}.`));
+        return (
+          <Tested key={i} spec={spec} value={entry} index={i} onEdit={(v) => update(i, v)}>
+            {(buttons, result) => (
+              <Card
+                title={fields.name ? String(fields.name) : `#${i + 1}`}
+                // an entry with an on/off switch shows it, and one with an address shows that, while closed
+                status={typeof fields.enabled === "boolean" && <Status tone={fields.enabled ? "ok" : "off"}>{fields.enabled ? "on" : "off"}</Status>}
+                meta={typeof fields.url === "string" && fields.url}
+                reveal={added === i || failed}
+                aside={
+                  <>
+                    {buttons}
+                    <IconButton small icon="remove" label="remove" onClick={() => onChange(list.filter((_, j) => j !== i))} />
+                  </>
+                }
+                below={result}
+              >
+                <ObjectFields schema={item} value={entry} onChange={(v) => update(i, v)} path={at} ctx={ctx} inset />
+              </Card>
+            )}
+          </Tested>
+        );
+      })}
+    </Cards>
+  );
+  // Inside a panel the list is a card of its own; on the page its entries are the cards.
   if (inset) {
     return (
       <Group title={title} description={spec.description} error={ctx.errors[path]} actions={add} inset>
@@ -527,7 +549,7 @@ function Tested({ spec, value, index, onEdit, children }: {
   );
   const buttons = (
     <>
-      {button(null, "test")}
+      <IconButton small icon="test" label={running === "" ? "testing…" : "test"} disabled={running !== null} onClick={() => void run(null)} />
       {Object.entries(spec?.test_modes ?? {}).map(([mode, label]) => button(mode, buttonLabel(label)))}
     </>
   );
