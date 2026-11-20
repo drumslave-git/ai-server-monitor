@@ -959,7 +959,7 @@ def run_job(client: TestClient, slug: str) -> int:
     return int(run_id)
 
 
-def night(client: TestClient, notify: str = "warn_crit") -> None:
+def night(client: TestClient, notify: str = "changed") -> None:
     """The builtin summaries off and an own summary "night" with no jobs in it."""
     for slug in ("summary:daily", "summary:health"):
         assert client.put(f"/api/jobs/{slug}", json={"enabled": False}).status_code == 200
@@ -979,7 +979,7 @@ def test_summary_changed_sends_first_then_only_when_the_picture_changes(
         finish("crit", "Disk is full.", [{**FINDING, "severity": "crit", "title": "<b>x</b>"}]),
     ]
     tg = FakeTelegram()
-    app = make_app(bootstrap, tg)  # send_summary defaults to "changed"
+    app = make_app(bootstrap, tg)
     with running(app, tg) as client:
         night(client)
         run_job(client, "night")
@@ -1025,7 +1025,7 @@ def test_summary_every_sends_each_run_and_only_summaries(
         finish("ok", "Quiet."),
     ]
     tg = FakeTelegram()
-    app = make_app(bootstrap, tg, telegram={"send_summary": "every"})
+    app = make_app(bootstrap, tg)
     with running(app, tg) as client:
         night(client, "always")
         run_job(client, "night")
@@ -1040,9 +1040,9 @@ def test_summary_never_sends_nothing_but_the_command_still_answers(
 ) -> None:
     models.script = [finish("ok", "Quiet."), finish("ok", "Asked for.")]
     tg = FakeTelegram()
-    app = make_app(bootstrap, tg, telegram={"send_summary": "never"})
+    app = make_app(bootstrap, tg)
     with running(app, tg) as client:
-        night(client, "always")
+        night(client, "never")
         run_job(client, "night")
         assert tg.texts() == []
         texts = ask(client, tg, message("/summary"), 2)
@@ -1115,9 +1115,9 @@ def test_status_command_shows_the_headline_and_one_line_per_job(
         finish("crit", "Server in trouble."),
     ]
     tg = FakeTelegram()
-    app = make_app(bootstrap, tg, telegram={"send_summary": "never"})
+    app = make_app(bootstrap, tg)
     with running(app, tg) as client:
-        night(client)
+        night(client, "never")
         names = {j["slug"]: j["name"] for j in client.get("/api/jobs").json()["items"]}
         run_job(client, "storage:usage")
         run_job(client, "night")

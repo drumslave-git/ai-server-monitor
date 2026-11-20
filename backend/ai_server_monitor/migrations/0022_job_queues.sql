@@ -1,7 +1,8 @@
 -- 0.10.0: summaries run an ordered queue of jobs.
 --
 -- * jobs.notify: when a summary or a detached job sends its result to Telegram
---   (always | warn_crit | never). A job inside a summary sends nothing itself.
+--   (always | changed | warn_crit | never). A job inside a summary sends nothing itself.
+--   It replaces the setting `outputs.telegram.send_summary` (see the end).
 -- * jobs.retired: an old builtin this release replaced. Hidden from the job list and the
 --   scheduler; its runs stay readable (history, run detail).
 -- * A job in a summary has no own schedule, so interval_s and cron may both be empty now.
@@ -68,7 +69,7 @@ CREATE TABLE jobs_new (
     created_by TEXT NOT NULL CHECK (created_by IN ('builtin', 'user', 'llm')),
     created REAL NOT NULL,
     updated REAL NOT NULL,
-    notify TEXT NOT NULL DEFAULT 'never' CHECK (notify IN ('always', 'warn_crit', 'never')),
+    notify TEXT NOT NULL DEFAULT 'never' CHECK (notify IN ('always', 'changed', 'warn_crit', 'never')),
     retired INTEGER NOT NULL DEFAULT 0,
     CHECK (interval_s IS NULL OR cron IS NULL)
 );
@@ -112,3 +113,32 @@ WHERE builtin = 1 AND edited = 1 AND slug = 'summary';
 UPDATE jobs SET builtin = 0, edited = 0, created_by = 'user'
 WHERE builtin = 1 AND edited = 1
   AND slug IN ('docker', 'journal', 'resources', 'storage', 'systemd', 'updates', 'summary');
+
+-- `outputs.telegram.send_summary` (changed | every | never) becomes the notify of the summaries:
+-- an edited old summary kept as the owner's gets it now; the builtin summaries Health and
+-- Daily get it when they are seeded at the next start (kv `jobs.summary_notify`, read once).
+-- every -> always, changed -> changed, never -> never; no stored value -> changed (its default).
+-- Then the setting is removed from the stored settings and the backups.
+INSERT INTO kv (key, value, updated)
+SELECT 'jobs.summary_notify',
+       json_quote(CASE json_extract(value, '$.outputs.telegram.send_summary')
+                      WHEN 'every' THEN 'always'
+                      WHEN 'never' THEN 'never'
+                      ELSE 'changed'
+                  END),
+       (julianday('now') - 2440587.5) * 86400.0
+FROM kv
+WHERE key = 'settings' AND json_valid(value)
+  AND json_type(value, '$.outputs.telegram.send_summary') = 'text';
+UPDATE jobs
+SET notify = COALESCE(
+        (SELECT json_extract(value, '$') FROM kv WHERE key = 'jobs.summary_notify'),
+        'changed'
+    )
+WHERE kind = 'summary';
+
+UPDATE kv
+SET value = json_remove(value, '$.outputs.telegram.send_summary')
+WHERE (key = 'settings' OR key LIKE 'settings.backup.%')
+  AND json_valid(value)
+  AND json_type(value, '$.outputs.telegram') = 'object';

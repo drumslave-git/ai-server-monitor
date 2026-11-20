@@ -39,7 +39,8 @@ class JobDef:
     members: tuple[str, ...] = ()
     """A summary's jobs, in the order they run."""
     notify: str = "warn_crit"
-    """Telegram: always, warn_crit or never (set once when seeded; not part of the definition)."""
+    """Telegram: always, changed, warn_crit or never (set once when seeded; not part of the
+    definition)."""
 
 
 HOUR = 3600
@@ -336,7 +337,7 @@ SUMMARIES: tuple[JobDef, ...] = (
         interval_s=HOUR,
         max_steps=6,
         members=tuple(t.slug for t in TOPICS if t.slug not in DAILY),
-        notify="always",  # send_summary decides, as in 0.9.1
+        notify="changed",  # as send_summary's default in 0.9.1
     ),
     JobDef(
         slug="summary:daily",
@@ -347,7 +348,7 @@ SUMMARIES: tuple[JobDef, ...] = (
         cron="0 6 * * *",
         max_steps=6,
         members=DAILY,
-        notify="always",  # send_summary decides, as in 0.9.1
+        notify="changed",  # as send_summary's default in 0.9.1
     ),
 )
 

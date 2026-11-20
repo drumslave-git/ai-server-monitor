@@ -46,9 +46,12 @@ class _JobFields(BaseModel):
     domains: list[str] | None = None
     """MCP domains whose enabled tools the job's runs get (exactly those; empty = the shell
     only). Names of existing domains (MCP tools page)."""
-    notify: Literal["always", "warn_crit", "never"] | None = None
-    """A summary or a job in no summary: when its result goes to Telegram (warn_crit: status
-    warn, crit or error). A job run inside a summary sends nothing itself."""
+    notify: Literal["always", "changed", "warn_crit", "never"] | None = None
+    """A summary or a job in no summary: when its result goes to Telegram. always = after
+    every run; changed = when the status or the list of warnings differs from its last run;
+    warn_crit = when the status is warn, crit or error; never = only on request. Empty on
+    create: changed for a summary, warn_crit for a job. A job run inside a summary sends
+    nothing itself."""
     members: list[str] | None = None
     """A summary: its jobs (slugs) in the order they run. A job with a schedule that is added
     loses it (`notice` says so)."""
@@ -160,7 +163,7 @@ class Job(BaseModel):
     max_steps: int | None = None
     domains: list[str] = []
     """MCP domains: its runs get exactly their enabled tools."""
-    notify: Literal["always", "warn_crit", "never"]
+    notify: Literal["always", "changed", "warn_crit", "never"]
     """When its result goes to Telegram (a summary, or a job in no summary)."""
     members: list[str] = []
     """A summary: its jobs in the order they run."""

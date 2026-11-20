@@ -1288,7 +1288,7 @@ export interface components {
              * Notify
              * @enum {string}
              */
-            notify: "always" | "warn_crit" | "never";
+            notify: "always" | "changed" | "warn_crit" | "never";
             /** Prompt */
             prompt: string;
             /**
@@ -1338,7 +1338,7 @@ export interface components {
             /** Name */
             name: string;
             /** Notify */
-            notify?: ("always" | "warn_crit" | "never") | null;
+            notify?: ("always" | "changed" | "warn_crit" | "never") | null;
             /** Prompt */
             prompt: string;
             /** Slug */
@@ -1479,7 +1479,7 @@ export interface components {
             /** Name */
             name?: string | null;
             /** Notify */
-            notify?: ("always" | "warn_crit" | "never") | null;
+            notify?: ("always" | "changed" | "warn_crit" | "never") | null;
             /** Prompt */
             prompt?: string | null;
             /** Summaries */
@@ -2153,7 +2153,6 @@ export interface components {
              *       "api_url": "",
              *       "enabled": false,
              *       "new_session_after": "6h",
-             *       "send_summary": "changed",
              *       "token": "",
              *       "web_url": ""
              *     }
@@ -2280,7 +2279,6 @@ export interface components {
              *         "api_url": "",
              *         "enabled": false,
              *         "new_session_after": "6h",
-             *         "send_summary": "changed",
              *         "token": "",
              *         "web_url": ""
              *       }
@@ -2438,16 +2436,6 @@ export interface components {
              * @example 30d
              */
             new_session_after: string;
-            /**
-             * Send Summary
-             * @description When to send the result of a summary to the allowed chats (status, headline and the
-             *     warnings), on top of the summary's own notify. changed = when the overall status or the
-             *     list of warnings differs from that summary's last one; every = after every run of it;
-             *     never = only on request (/summary).
-             * @default changed
-             * @enum {string}
-             */
-            send_summary: "changed" | "every" | "never";
             /**
              * Token
              * Format: password

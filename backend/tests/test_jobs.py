@@ -71,8 +71,8 @@ def test_builtins_are_seeded_with_their_schedules(bootstrap: Bootstrap) -> None:
         )
         assert job["next_run"] is None  # its summary runs it
     assert {j["slug"]: j["notify"] for j in items if j["notify"] != "warn_crit"} == {
-        "summary:daily": "always",
-        "summary:health": "always",
+        "summary:daily": "changed",
+        "summary:health": "changed",
     }
     assert all(j["builtin"] and not j["edited"] and j["enabled"] for j in items)
     assert all(j["created_by"] == "builtin" and j["last_run"] is None for j in items)

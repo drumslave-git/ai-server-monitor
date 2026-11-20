@@ -5,10 +5,12 @@ upgrade of a 0.9.1 database."""
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 import time
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo
@@ -184,7 +186,13 @@ def test_notify_decides_what_reaches_telegram_and_a_queue_job_sends_nothing(
     with running(app, tg) as client:
         for slug in ("summary:daily", "summary:health"):
             client.put(f"/api/jobs/{slug}", json={"enabled": False})
-        for slug, notify in (("disk:a", "always"), ("disk:b", "warn_crit"), ("disk:c", "never")):
+        notifies = (
+            ("disk:a", "always"),
+            ("disk:b", "warn_crit"),
+            ("disk:c", "never"),
+            ("disk:d", "changed"),
+        )
+        for slug, notify in notifies:
             made = client.post(
                 "/api/jobs",
                 json={
@@ -207,6 +215,11 @@ def test_notify_decides_what_reaches_telegram_and_a_queue_job_sends_nothing(
         models.script = [tool("bash", command="df -h /"), finish("crit", "Full.")]
         run_and_wait(client, "disk:c")
         assert len(tg.texts()) == 2  # never
+        for status, sent in (("ok", 3), ("ok", 3), ("warn", 4), ("warn", 4), ("ok", 5)):
+            models.script = [tool("bash", command="df -h /"), finish(status, "Disk.")]
+            run_and_wait(client, "disk:d")  # changed: the first run, then each change
+            assert len(tg.texts()) == sent, status
+        assert tg.texts()[4].startswith("✅ Disk:D: OK")  # back to OK is news
         # in a summary: only the summary speaks, whatever the job's own notify says
         make_summary(client, "night", ["disk:a"], notify="always")
         models.script = [
@@ -216,11 +229,11 @@ def test_notify_decides_what_reaches_telegram_and_a_queue_job_sends_nothing(
         ]
         run_and_wait(client, "night")
         settle()
-        assert len(tg.texts()) == 3 and tg.texts()[2].startswith("🔴 Night: Critical")
+        assert len(tg.texts()) == 6 and tg.texts()[5].startswith("🔴 Night: Critical")
         # run alone, a job that is in a summary sends nothing either
         models.script = [tool("bash", command="df -h /"), finish("crit", "Full.")]
         run_and_wait(client, "disk:a")
-        assert len(tg.texts()) == 3
+        assert len(tg.texts()) == 6
 
 
 # --------------------------------------------------------------------------- upgrade
@@ -228,13 +241,20 @@ def test_notify_decides_what_reaches_telegram_and_a_queue_job_sends_nothing(
 OLD_BUILTINS = ("docker", "journal", "resources", "storage", "systemd", "updates", "summary")
 
 
-def _database_of_0_9_1(path: str) -> None:
+def _database_of_0_9_1(path: str, send_summary: str | None = None) -> None:
     """A 0.9.1 database (schema 21): the old builtins, storage and summary edited by the
-    owner, an own job, one MCP domain on docker and storage, and a run of docker and storage."""
+    owner, an own job, one MCP domain on docker and storage, and a run of docker and storage.
+    `send_summary`: stored in the settings and a settings backup (None: never set)."""
     conn = sqlite3.connect(path)
     for version, _name, sql in load_migrations()[:21]:
         conn.executescript(f"BEGIN;\n{sql}\n;PRAGMA user_version = {version};\nCOMMIT;")
     now = time.time()
+    if send_summary is not None:
+        stored = json.dumps({"outputs": {"telegram": {"send_summary": send_summary}}})
+        conn.executemany(
+            "INSERT INTO kv (key, value, updated) VALUES (?, ?, ?)",
+            [("settings", stored, now), ("settings.backup.1700000000", stored, now)],
+        )
     rows = []
     for slug in OLD_BUILTINS:
         edited = slug in ("storage", "summary")
@@ -319,3 +339,28 @@ def test_upgrade_from_0_9_1_retires_the_old_builtins_and_keeps_the_owners_jobs(
             "/api/jobs", json={"slug": "docker", "name": "Docker", "prompt": "Look at docker."}
         )
         assert again.status_code == 409 and "old builtin" in again.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("send_summary", "notify"),
+    [("every", "always"), ("changed", "changed"), ("never", "never"), (None, "changed")],
+)
+def test_upgrade_maps_send_summary_onto_the_summaries_and_removes_it(
+    bootstrap: Bootstrap, send_summary: str | None, notify: str
+) -> None:
+    bootstrap.data_dir.mkdir(parents=True, exist_ok=True)
+    _database_of_0_9_1(str(bootstrap.db_path), send_summary)
+    with TestClient(make_app(bootstrap)) as client:
+        by_slug = {j["slug"]: j for j in client.get("/api/jobs").json()["items"]}
+        for slug in ("summary:health", "summary:daily", "summary"):
+            assert by_slug[slug]["notify"] == notify, slug
+        assert by_slug["storage"]["notify"] == "never"  # kept jobs did not broadcast in 0.9.1
+        assert by_slug["backups"]["notify"] == "never"
+        telegram = client.get("/api/settings").json()["values"]["outputs"]["telegram"]
+        assert "send_summary" not in telegram
+    conn = sqlite3.connect(str(bootstrap.db_path))
+    rows = dict(conn.execute("SELECT key, value FROM kv"))
+    conn.close()
+    assert "jobs.summary_notify" not in rows  # read once by the seeding
+    for key in ("settings", "settings.backup.1700000000"):
+        assert "send_summary" not in rows.get(key, ""), key

@@ -103,6 +103,7 @@ def test_upgrade_drops_removed_features_and_starts_clean(bootstrap: Bootstrap) -
         values = client.get("/api/settings").json()["values"]
         actions = client.get("/api/actions").json()
         status = client.get("/api/status")
+        jobs = {j["slug"]: j for j in client.get("/api/jobs").json()["items"]}
 
     for section in ("arr", "bench", "report", "collectors"):
         assert section not in values
@@ -110,7 +111,9 @@ def test_upgrade_drops_removed_features_and_starts_clean(bootstrap: Bootstrap) -
     assert values["general"]["language"] == "de"
     assert values["general"]["docker_url"] == "tcp://docker-proxy:2375"
     assert values["llm"]["model"] == "test-model"
-    assert values["outputs"]["telegram"]["send_summary"] == "changed"  # from report_every = 3
+    # report_every = 3 -> send_summary changed (0016) -> the summaries' notify (0022)
+    assert "send_summary" not in values["outputs"]["telegram"]
+    assert jobs["summary:health"]["notify"] == jobs["summary:daily"]["notify"] == "changed"
     assert "report_every" not in values["outputs"]["telegram"]
     assert "tool_mode" not in values["llm"] and "tool_mode" not in values["worker"]
     assert status.status_code == 200 and status.json()["pending_approvals"] == 0
@@ -146,7 +149,7 @@ def test_upgrade_drops_removed_features_and_starts_clean(bootstrap: Bootstrap) -
             for gone in ("tool_mode", "max_context_tokens", "stream_usage", "sample_interval"):
                 assert gone not in text, (key, gone)
             assert "report_every" not in text and '"alerts"' not in text, key
-            assert value["outputs"]["telegram"]["send_summary"] == "changed", key
+            assert "send_summary" not in value["outputs"]["telegram"], key
     assert not {t for t in tables if t.startswith("bench_")}
     assert not tables & {"collector_samples", "reports", "prom_queries"}
     assert "actions" in tables and "approval_batches" in tables

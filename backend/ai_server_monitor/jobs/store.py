@@ -22,7 +22,10 @@ SLUG_RULE = (
     "slug: 2-40 characters, lowercase letters, digits, - and _, parts joined by ':' "
     "(e.g. docker:status)"
 )
-NOTIFY = ("always", "warn_crit", "never")
+NOTIFY = ("always", "changed", "warn_crit", "never")
+SUMMARY_NOTIFY_KEY = "jobs.summary_notify"
+"""kv: the notify the builtin summaries get when they are seeded (left by the upgrade from
+0.9.1, which mapped `outputs.telegram.send_summary` onto it); removed after seeding."""
 EDITABLE = ("name", "prompt", "interval_s", "cron", "model", "timeout_s", "max_steps")
 """Fields whose change marks a builtin as edited (enabling/disabling and notify do not; a
 summary's member list does)."""
@@ -102,6 +105,7 @@ class JobStore:
         """Insert missing builtins; bring unedited ones up to the definitions in code. A new
         builtin that came out of a 0.9.1 builtin gets that one's MCP domains."""
         now = time.time()
+        summary_notify = await self.db.kv_get(SUMMARY_NOTIFY_KEY)
         for d in BUILTINS:
             row = await self.db.fetchone(
                 "SELECT edited, builtin FROM jobs WHERE slug = ?", (d.slug,)
@@ -121,7 +125,7 @@ class JobStore:
                         d.max_steps,
                         now,
                         now,
-                        d.notify,
+                        summary_notify if d.kind == "summary" and summary_notify else d.notify,
                     ),
                 )
                 if d.origin:
@@ -139,6 +143,8 @@ class JobStore:
                     current = await self._member_slugs(d.slug)
                     if current != list(d.members):
                         await self._set_members(d.slug, list(d.members))
+        if summary_notify is not None:
+            await self.db.execute("DELETE FROM kv WHERE key = ?", (SUMMARY_NOTIFY_KEY,))
 
     async def _apply_definition(self, d: JobDef, now: float, *, only_if_changed: bool) -> None:
         values = (d.name, d.prompt, d.interval_s, d.cron, d.model, None, d.max_steps)
@@ -201,7 +207,7 @@ class JobStore:
             retired = " (an old builtin this release replaced; its runs are kept)"
             raise JobError(f"a job {slug!r} exists already{retired if existing['retired'] else ''}")
         kind = data.get("kind") or "topic"
-        notify = data.get("notify") or "warn_crit"
+        notify = data.get("notify") or ("changed" if kind == "summary" else "warn_crit")
         if kind == "summary" and data.get("summaries"):
             raise JobError("a summary cannot be a member of another summary")
         if kind == "topic" and data.get("members"):

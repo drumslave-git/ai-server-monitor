@@ -322,11 +322,6 @@ class TelegramSettings(_Model):
     new_session_after: Duration = timedelta(hours=6)
     """Start a fresh chat after this long without a message in a Telegram chat (the old one
     stays in the Chat list on the web page). 0 = never: one chat until you send /new."""
-    send_summary: Literal["changed", "every", "never"] = "changed"
-    """When to send the result of a summary to the allowed chats (status, headline and the
-    warnings), on top of the summary's own notify. changed = when the overall status or the
-    list of warnings differs from that summary's last one; every = after every run of it;
-    never = only on request (/summary)."""
     api_url: OptionalHttpUrl = ""
     """Bot API server. Empty = https://api.telegram.org."""
     web_url: OptionalHttpUrl = ""
