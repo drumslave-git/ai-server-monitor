@@ -773,6 +773,20 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
   {attempt, of}: the client drops the text shown so far and the new answer follows. Tools
   already run are not run again; the trace shows the attempts as attempt 2, 3 of the same call.
   With **Max retries** 0, or once they are used up, the chat ends in `error` as before.
+- **Docker status and resources sort and count for the model, too.** *Docker: status* prints
+  the containers that need a look first (unhealthy, restarting, exited non-zero, then paused,
+  dead or created ones) and ends with a line of counts; *Docker: resources* prints the
+  containers sorted by CPU, then by memory % of their limit, and ends with the number above
+  90 %. The model copies the counts instead of scanning every line. Unedited jobs take the new
+  commands on upgrade; an edited one gets them with **reset to default**.
+- **An approval's "why" cut at 300 characters no longer shows a stray backtick** in Telegram: a
+  code span the cut would break is left out whole.
+- Pages keep their header and actions in view; lists and content scroll on their own, and the
+  header turns compact as you scroll.
+- Icons with tooltips replace text buttons (run, copy, send, test, remove); MCP servers in
+  Settings are collapsible cards; phones get the bottom bar back.
+- The Docker image and CI turn off the IBM telemetry that the Carbon icons' install step runs
+  (`IBM_TELEMETRY_DISABLED=true`).
 
 ## Troubleshooting
 
