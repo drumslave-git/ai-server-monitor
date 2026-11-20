@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from ..agent.prompts import language_name, zone_name
 from ..agent.safety import wrap_untrusted
 from ..hostenv import resolve_timezone
+from ..jobs.prompts import render_run
 from ..llm.modelinfo import read_model_info
 from ..tracing import codec
 
@@ -118,7 +119,8 @@ async def build(app: AppContext, run_id: int, finding: int | None = None) -> Exp
         "kind": "topic",
         "prompt": "(the job has been deleted)",
     }
-    commands, given = await trace_data(app, run.get("trace_turn"))
+    commands = await trace_data(app, run.get("trace_turn"))
+    given = await queue_results(app, run) if job["kind"] == "summary" else None
     budget = await budget_chars(app)
     zone = host_zone(app)
     prompt = compose(
@@ -126,7 +128,7 @@ async def build(app: AppContext, run_id: int, finding: int | None = None) -> Exp
         run,
         finding,
         commands,
-        given if job["kind"] == "summary" else None,
+        given,
         budget,
         app.settings.general.language,
         zone,
@@ -152,11 +154,27 @@ async def budget_chars(app: AppContext) -> int:
     return max(MIN_BUDGET_CHARS, int(tokens * SOURCE_SHARE * CHARS_PER_TOKEN))
 
 
-async def trace_data(app: AppContext, turn: str | None) -> tuple[list[Command], str | None]:
-    """The commands the run executed with their outputs, and the input of its first model
-    request (for a summary: the topic results it was given). Empty when the trace is gone."""
+async def queue_results(app: AppContext, run: dict[str, Any]) -> str | None:
+    """The results a summary run was given: the job runs of its queue run (stored with the
+    link to it), in the order they ran. None for a run without any (from before 0.10.0)."""
+    members = await app.jobs.store.queue_runs(int(run["id"]))
+    if not members:
+        return None
+    now = run.get("finished") or run["started"]
+    parts: list[str] = []
+    for member in members:
+        job = await app.jobs.store.get(member["job_slug"], retired=True)
+        name = job["name"] if job else member["job_slug"]
+        parts.append(f"## {name} ({member['job_slug']})")
+        parts.extend(render_run(member, now))
+        parts.append("")
+    return "\n".join(parts).strip()
+
+
+async def trace_data(app: AppContext, turn: str | None) -> list[Command]:
+    """The commands the run executed with their outputs. Empty when the trace is gone."""
     if not turn:
-        return [], None
+        return []
     rows = await app.db.fetchall(
         "SELECT tool, ok, args, result, error FROM llm_tool_calls WHERE turn = ? ORDER BY ts, id",
         (turn,),
@@ -179,20 +197,7 @@ async def trace_data(app: AppContext, turn: str | None) -> tuple[list[Command], 
                 worker=tool.startswith("worker:"),
             )
         )
-    given = None
-    first = await app.db.fetchone(
-        "SELECT messages FROM llm_calls WHERE turn = ? ORDER BY ts, id LIMIT 1", (turn,)
-    )
-    if first is not None:
-        try:
-            messages = json.loads(codec.unpack(first["messages"]) or "[]")
-        except ValueError:
-            messages = []
-        users = [m for m in messages if isinstance(m, dict) and m.get("role") == "user"]
-        if users:
-            content = users[0].get("content")
-            given = content if isinstance(content, str) else json.dumps(content)
-    return commands, given
+    return commands
 
 
 # ---------------------------------------------------------------------------- the message
@@ -315,14 +320,15 @@ def compose(
     # summary always rests on).
     pieces = list(commands)
     if given:
-        pieces.insert(0, Command("(the input this summary run was given)", given, related=True))
+        label = "(the job results this summary run was given)"
+        pieces.insert(0, Command(label, given, related=True))
     overhead = sum(len(c.command) + 220 for c in pieces)
     room = max(budget - len(fixed) - len(request) - overhead, MIN_OUTPUT_CHARS)
     texts, dropped = fit_outputs(pieces, room)
 
     body: list[str] = [fixed]
     if given:
-        body += ["", "## Topic results this summary was given", _wrapped("input", texts[0])]
+        body += ["", "## Job results this summary was given", _wrapped("input", texts[0])]
         pieces, texts = pieces[1:], texts[1:]
         dropped = [i - 1 for i in dropped if i > 0]
     body += ["", f"## Commands the run executed ({len(pieces)})"]

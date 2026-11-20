@@ -9,14 +9,26 @@ from pydantic import BaseModel, ConfigDict, Field
 from .config import Settings
 
 
+class SummaryState(BaseModel):
+    """One enabled summary and its newest finished run."""
+
+    slug: str
+    name: str
+    status: Literal["ok", "warn", "crit", "error"] | None
+    """None: it has not run yet."""
+    headline: str
+    """The first line of its summary (or the error); empty when it has not run."""
+    finished: float | None
+    run_id: int | None
+
+
 class OverallStatus(BaseModel):
-    """The newest finished run of the summary job."""
+    """The enabled summaries: the worst of their newest runs, and each one's own state."""
 
     status: Literal["ok", "warn", "crit", "error"]
-    headline: str
-    """The first line of the summary (or the error)."""
-    finished: float | None
-    run_id: int
+    """The worst status of the enabled summaries' newest runs (ok < warn < error < crit)."""
+    summaries: list[SummaryState]
+    """Every enabled summary, in the order of the jobs list (those not run yet too)."""
 
 
 class JobStatus(BaseModel):
@@ -58,7 +70,7 @@ class StatusResponse(BaseModel):
     automation: dict[str, Any]
     """The global pause switch (GET /api/automation)."""
     overall: OverallStatus | None = None
-    """From the newest summary run; None until the summary job has run."""
+    """The enabled summaries; None until one of them has run."""
     jobs: list[JobStatus] = []
     change_shell: ChangeShellStatus | None = None
     """Whether the chat can run approved changing commands, and why not."""

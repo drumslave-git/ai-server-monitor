@@ -70,8 +70,8 @@ FINDINGS_EXAMPLE = (
     '"evidence": ["/dev/sda1  100G  91G  9G  91% /"]}]'
 )
 TOPICS_EXAMPLE = (
-    '[{"slug": "storage", "status": "warn", "clause": "/ is 91% full"}, '
-    '{"slug": "updates", "status": "ok", "clause": "12 updates pending"}]'
+    '[{"slug": "storage:usage", "status": "warn", "clause": "/ is 91% full"}, '
+    '{"slug": "updates:packages", "status": "ok", "clause": "12 updates pending"}]'
 )
 
 

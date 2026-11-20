@@ -438,7 +438,12 @@ class ChatEngine:
                 keep=keep,
                 zone=zone,
             )
-        fixed = {"job_save": "write", "job_delete": "write", "bash_write": "write"}
+        fixed = {
+            "job_save": "write",
+            "job_delete": "write",
+            "summary_member": "write",
+            "bash_write": "write",
+        }
 
         def kinds(name: str) -> str:
             return fixed.get(name) or mcp.kind(name) or "read"

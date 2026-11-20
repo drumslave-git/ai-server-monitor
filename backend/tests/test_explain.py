@@ -152,37 +152,51 @@ def test_an_error_run_is_explained_from_its_error(
         assert "none recorded (the run ran none, or its trace has been pruned)" in text
 
 
-def test_a_summary_run_also_gets_the_topic_results_it_was_given(
+def test_a_summary_run_also_gets_the_job_results_of_its_queue_run(
     bootstrap: Bootstrap, models: ScriptedModels
 ) -> None:
     models.script = ["Explained."]
-    given = "Latest results of the topic checks (now 2026-11-18 10:00):\n## Storage\nwarn 88%"
     with TestClient(make_app(bootstrap)) as client:
-        run_id = seed_run(
-            client, "summary:health", "t-sum", status="ok", summary="All fine.", findings=[]
-        )
-        messages = [{"role": "system", "content": "You write"}, {"role": "user", "content": given}]
-        bash = {"command": "uptime"}
+        store = client.app.state.ctx.jobs.store  # type: ignore[union-attr]
 
-        async def trace() -> None:
-            db = client.app.state.ctx.db  # type: ignore[union-attr]
-            await db.execute(
-                "INSERT INTO llm_calls (ts, purpose, turn, status, messages) "
-                "VALUES (?, 'job', 't-sum', 'ok', ?)",
-                (time.time(), codec.pack(json.dumps(messages))),
+        async def queue() -> int:
+            run_id = await store.start_run("summary:health", "schedule", "big")
+            member = await store.start_run("storage:usage", "schedule", "small", run_id)
+            await store.finish_run(member, status="warn", summary="warn 88% on /data")
+            other = await store.start_run("docker:status", "schedule", "small", run_id)
+            await store.finish_run(other, status="ok", summary="7 containers up")
+            await store.finish_run(
+                run_id, trace_turn="t-sum", status="ok", summary="All fine.", findings=[]
             )
-            await db.execute(
+            unrelated = await store.start_run("updates:packages", "schedule", "small")
+            await store.finish_run(unrelated, status="ok", summary="no updates pending")
+            bash = {"command": "uptime"}
+            await client.app.state.ctx.db.execute(  # type: ignore[union-attr]
                 "INSERT INTO llm_tool_calls (ts, turn, tool, ok, args, result) "
                 "VALUES (?, 't-sum', 'worker:bash', 1, ?, ?)",
                 (time.time(), codec.pack(json.dumps(bash)), codec.pack("up 3 days")),
             )
+            return int(run_id)
 
-        client.portal.call(trace)  # type: ignore[union-attr]
+        run_id = client.portal.call(queue)  # type: ignore[union-attr]
         events = explain(client, run_id)
         text = session_of(client, events)["messages"][0]["content"]
-        section = text.split("## Topic results this summary was given")[1]
-        assert "warn 88%" in section.split("## Commands")[0]
+        given = text.split("## Job results this summary was given")[1].split("## Commands")[0]
+        assert "warn 88% on /data" in given and "7 containers up" in given
+        assert given.index("storage:usage") < given.index("docker:status")
+        assert "no updates pending" not in text
         assert "### 1. `uptime` (by the worker model)" in text and "up 3 days" in text
+
+
+def test_a_summary_run_without_a_queue_gets_no_given_section(
+    bootstrap: Bootstrap, models: ScriptedModels
+) -> None:
+    models.script = ["Explained."]
+    with TestClient(make_app(bootstrap)) as client:
+        run_id = seed_run(client, "summary:health", status="ok", summary="All fine.", findings=[])
+        events = explain(client, run_id)
+        text = session_of(client, events)["messages"][0]["content"]
+        assert "results this summary was given" not in text
 
 
 def test_missing_runs_and_findings_are_404_and_a_running_run_409(

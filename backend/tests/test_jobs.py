@@ -157,8 +157,10 @@ def test_a_failed_summary_has_a_plain_headline_and_keeps_the_raw_error(
         failed = run(client, "night")
         assert failed["error"] == "ModelConnectionError: Connection error."
         overall = client.get("/api/status").json()["overall"]
-        assert overall["status"] == "error"
-        assert overall["headline"] == "Summary failed: the model could not be reached"
+        assert overall["status"] == "error"  # the builtin summaries have not run
+        night = next(s for s in overall["summaries"] if s["slug"] == "night")
+        assert night["headline"] == "Night failed: the model could not be reached"
+        assert night["run_id"] == failed["id"]
     for error, words in [
         ("timed out after 900s (limit 900s)", "it took longer than its time limit"),
         ("no result: I think all is fine", "the model gave no result"),
@@ -202,7 +204,9 @@ def test_the_summary_runs_its_jobs_in_order_and_reads_their_results(
         assert [r["id"] for r in listed["queue"]] == [r["id"] for r in queue]
         status = client.get("/api/status").json()
         assert status["overall"]["status"] == "crit"
-        assert status["overall"]["headline"] == "Memory is nearly exhausted."
+        states = {s["slug"]: s for s in status["overall"]["summaries"]}
+        assert states["overview"]["headline"] == "Memory is nearly exhausted."
+        assert states["summary:health"]["status"] is None  # enabled, never ran
         assert {j["slug"]: j["status"] for j in status["jobs"]}["resources:load"] == "crit"
         # the next summary sees the previous one
         models.script = [

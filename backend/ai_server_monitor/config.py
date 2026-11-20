@@ -251,9 +251,9 @@ class WorkerLLMSettings(LLMSettings):
 
 
 class JobsSettings(_Model):
-    """Scheduled checks by the language model: one topic each (storage, journal, docker, ...) on
-    the worker model, and a summary of them all on the main model. The jobs themselves are on
-    the Jobs page."""
+    """Scheduled checks by the language model: jobs (storage:usage, docker:status, ...) on the
+    worker model, and summaries (Health, Daily) on the main model that run their jobs in order
+    and sum them up. The jobs themselves are on the Jobs page."""
 
     max_concurrent_runs: int = Field(default=1, ge=1, le=8)
     """How many job runs may use the models at the same time. 1 suits one local GPU: runs that

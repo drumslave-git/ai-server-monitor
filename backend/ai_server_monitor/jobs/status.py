@@ -1,4 +1,4 @@
-"""The picture of all jobs: the overall status (newest summary run) and every job's last run.
+"""The picture of all jobs: the overall status (the enabled summaries) and every job's last run.
 Shared by GET /api/status and the Telegram /status command."""
 
 from __future__ import annotations
@@ -52,13 +52,19 @@ def headline(run: dict[str, Any], name: str = "Summary") -> str:
     return text.splitlines()[0].lstrip("# ").strip() if text else ""
 
 
+SEVERITY = ("ok", "warn", "error", "crit")
+"""Order for "the worst status": a failed summary (error) says nothing about the host, so it
+ranks below a known crit and above warn."""
+
+
 async def job_status(ctx: AppContext) -> dict[str, Any]:
-    """`overall` (newest summary run) and the newest run of every job."""
+    """`overall` (every enabled summary and the worst of their newest runs) and the newest run
+    of every job."""
     jobs = await ctx.jobs.store.list()
     latest = await ctx.jobs.store.latest_runs()
     running = await ctx.jobs.store.running_runs()
     items = []
-    overall = None
+    summaries: list[api_models.SummaryState] = []
     for job in jobs:
         run = latest.get(job["slug"])
         items.append(
@@ -73,11 +79,21 @@ async def job_status(ctx: AppContext) -> dict[str, Any]:
                 running_run_id=running.get(job["slug"]),
             )
         )
-        if job["kind"] == "summary" and run and (overall is None or run["id"] > overall.run_id):
-            overall = api_models.OverallStatus(
-                status=run["status"],
-                headline=headline(run),
-                finished=run["finished"],
-                run_id=run["id"],
+        if job["kind"] == "summary" and job["enabled"]:
+            summaries.append(
+                api_models.SummaryState(
+                    slug=job["slug"],
+                    name=job["name"],
+                    status=run["status"] if run else None,
+                    headline=headline(run, job["name"]) if run else "",
+                    finished=run["finished"] if run else None,
+                    run_id=run["id"] if run else None,
+                )
             )
+    ran = [s.status for s in summaries if s.status]
+    overall = (
+        api_models.OverallStatus(status=max(ran, key=SEVERITY.index), summaries=summaries)
+        if ran
+        else None
+    )
     return {"overall": overall, "jobs": items}

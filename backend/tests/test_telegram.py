@@ -1045,7 +1045,7 @@ def test_summary_never_sends_nothing_but_the_command_still_answers(
         night(client, "never")
         run_job(client, "night")
         assert tg.texts() == []
-        texts = ask(client, tg, message("/summary"), 2)
+        texts = ask(client, tg, message("/summary night"), 2)
     assert "Running" in texts[0] and "Asked for." in texts[1]
 
 
@@ -1057,7 +1057,7 @@ def test_summary_command_runs_it_and_replies_here_others_get_the_change(
     app = make_app(bootstrap, tg, telegram={"allowed_chat_ids": [CHAT, OTHER]})
     with running(app, tg) as client:
         night(client)
-        tg.feed(message("/summary"))
+        tg.feed(message("/summary night"))
         wait_for(lambda: len(tg.texts(CHAT)) >= 2 and tg.texts(OTHER))
         settle()
         asker = tg.texts(CHAT)
@@ -1123,8 +1123,10 @@ def test_status_command_shows_the_headline_and_one_line_per_job(
         run_job(client, "night")
         text = ask(client, tg, message("/status"), 1)[0]
     lines = text.splitlines()
-    assert lines[0].startswith("🔴 Critical — Server in trouble.")
-    job_lines = [ln for ln in lines if ln.startswith("• ")]
+    assert lines[0] == "🔴 Critical"  # the worst of the enabled summaries
+    assert lines[1] == "• Night: 🔴 Critical — Server in trouble. (just now)"
+    assert lines[2] == ""
+    job_lines = [ln for ln in lines[3:] if ln.startswith("• ")]
     assert len(job_lines) == len(names)
     storage = next(ln for ln in job_lines if names["storage:usage"] in ln)
     assert "Warning" in storage and "just now" in storage
@@ -1136,7 +1138,130 @@ def test_status_command_before_any_summary(bootstrap: Bootstrap) -> None:
     app = make_app(bootstrap, tg)
     with running(app, tg) as client:
         text = ask(client, tg, message("/status"), 1)[0]
-    assert text.startswith("No summary yet.") and text.count("never ran") == len(BUILTINS)
+    assert text.startswith("No summary has run yet.\n")
+    assert text.count("never ran") == len(BUILTINS)
+
+
+def test_status_command_shows_every_enabled_summary_and_the_worst(
+    bootstrap: Bootstrap, models: ScriptedModels
+) -> None:
+    models.script = [finish("warn", "Disk is filling up.", [FINDING]), finish("ok", "Quiet.")]
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
+    with running(app, tg) as client:
+        night(client, "never")
+        body = {"slug": "noon", "kind": "summary", "name": "Noon", "prompt": "Sum it up."}
+        made = client.post("/api/jobs", json={**body, "members": [], "notify": "never"})
+        assert made.status_code == 201, made.text
+        body = {"slug": "dawn", "kind": "summary", "name": "Dawn", "prompt": "Sum it up."}
+        assert client.post("/api/jobs", json={**body, "members": []}).status_code == 201
+        run_job(client, "night")
+        run_job(client, "noon")
+        overall = client.get("/api/status").json()["overall"]
+        text = ask(client, tg, message("/status"), 1)[0]
+    assert overall["status"] == "warn"
+    states = {s["slug"]: s for s in overall["summaries"]}
+    assert set(states) == {"night", "noon", "dawn"}  # the builtin ones are off
+    assert states["noon"]["status"] == "ok" and states["noon"]["headline"] == "Quiet."
+    assert states["dawn"]["status"] is None and states["dawn"]["run_id"] is None
+    lines = text.splitlines()
+    assert lines[0] == "⚠️ Warning"
+    assert "• Night: ⚠️ Warning — Disk is filling up. (just now)" in lines
+    assert "• Noon: ✅ OK — Quiet. (just now)" in lines
+    assert "• Dawn — never ran" in lines
+
+
+def summary_buttons(tg: FakeTelegram) -> list[dict[str, Any]]:
+    """The buttons of the last message, one per row."""
+    rows = tg.of("sendMessage")[-1]["reply_markup"]["inline_keyboard"]
+    assert all(len(row) == 1 for row in rows)
+    return [row[0] for row in rows]
+
+
+def test_summary_command_without_a_name_offers_the_enabled_summaries_as_buttons(
+    bootstrap: Bootstrap, models: ScriptedModels
+) -> None:
+    models.script = [finish("ok", "Asked for.")]
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
+    with running(app, tg) as client:
+        client.put("/api/jobs/summary:daily", json={"enabled": False})
+        night(client, "never")  # turns both builtins off and adds "night"
+        client.put("/api/jobs/summary:health", json={"enabled": True})
+        texts = ask(client, tg, message("/summary"), 1)
+        assert texts[0] == "Which summary should run now?"
+        buttons = summary_buttons(tg)
+        labels = [b["text"] for b in buttons]
+        assert len(labels) == 2 and all(" · " in label for label in labels)
+        assert {label.split(" · ")[0] for label in labels} == {"Health", "Night"}
+        assert all(b["callback_data"].startswith("s:") for b in buttons)
+        assert all(len(b["callback_data"]) <= 64 for b in buttons)
+        tap = next(b for b in buttons if b["text"].startswith("Night"))
+        tg.feed(press(tap["callback_data"], 1001))
+        wait_for(lambda: len(tg.texts()) >= 3)
+        assert tg.of("answerCallbackQuery")[0]["text"] == "Running Night"
+        assert "Running" in tg.texts()[1] and "Asked for." in tg.texts()[2]
+        runs = client.get("/api/jobs/night/runs").json()["items"]
+        assert len(runs) == 1 and runs[0]["trigger"] == "manual"
+
+
+def test_summary_command_takes_the_slug_with_or_without_the_prefix(
+    bootstrap: Bootstrap, models: ScriptedModels
+) -> None:
+    models.script = [finish("ok", "One."), finish("ok", "Two.")]
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
+    with running(app, tg) as client:
+        for slug in ("summary:health", "summary:daily"):  # no members: quick runs
+            assert client.put(f"/api/jobs/{slug}", json={"members": []}).status_code == 200
+        ask(client, tg, message("/summary health"), 2)
+        ask(client, tg, message("/summary summary:daily"), 4)
+        settle()
+        assert len(client.get("/api/jobs/summary:health/runs").json()["items"]) == 1
+        assert len(client.get("/api/jobs/summary:daily/runs").json()["items"]) == 1
+
+
+def test_summary_command_with_an_unknown_name_says_so_and_offers_buttons(
+    bootstrap: Bootstrap,
+) -> None:
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
+    with running(app, tg) as client:
+        texts = ask(client, tg, message("/summary weekly"), 1)
+        assert texts[0] == "There is no summary <code>weekly</code>. Which summary should run now?"
+        names = {b["text"].split(" · ")[0] for b in summary_buttons(tg)}
+        assert names == {"Daily", "Health"}
+        assert not client.get("/api/jobs/summary:health/runs").json()["items"]
+
+
+def test_summary_command_with_no_summary_enabled_says_so(bootstrap: Bootstrap) -> None:
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
+    with running(app, tg) as client:
+        for slug in ("summary:daily", "summary:health"):
+            client.put(f"/api/jobs/{slug}", json={"enabled": False})
+        texts = ask(client, tg, message("/summary"), 1)
+    assert texts == ["No summary is enabled."]
+    assert "reply_markup" not in tg.of("sendMessage")[0]
+
+
+def test_a_forged_or_stale_summary_button_runs_nothing(bootstrap: Bootstrap) -> None:
+    tg = FakeTelegram()
+    app = make_app(bootstrap, tg)
+    with running(app, tg) as client:
+        night(client, "never")
+        ask(client, tg, message("/summary"), 1)
+        [real] = summary_buttons(tg)
+        tg.feed(press("s:night:000000000000", 1001))
+        tg.feed(press("s:summary:health:" + real["callback_data"].rsplit(":", 1)[1], 1001))
+        wait_for(lambda: len(tg.of("answerCallbackQuery")) == 2)
+        assert [a["text"] for a in tg.of("answerCallbackQuery")] == ["Invalid button."] * 2
+        assert client.delete("/api/jobs/night").status_code == 204
+        tg.feed(press(real["callback_data"], 1001))
+        wait_for(lambda: len(tg.of("answerCallbackQuery")) == 3)
+        settle()
+    assert tg.of("answerCallbackQuery")[2]["text"] == "This summary no longer exists."
+    assert len(tg.texts()) == 1  # nothing ran
 
 
 def test_jobs_command_lists_origin_state_and_next_run(bootstrap: Bootstrap) -> None:

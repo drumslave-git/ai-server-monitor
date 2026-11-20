@@ -1,4 +1,4 @@
-"""Telegram bot: chat, approval buttons, job commands, the summary.
+"""Telegram bot: chat, approval buttons, job commands, the summaries.
 
 Built on python-telegram-bot, run inside the app's own event loop (no `run_polling()`): long
 polling, no webhook, because the server sits behind a reverse proxy and nothing needs to be
@@ -57,6 +57,7 @@ from ..actions import ActionError, Conflict, NotFound
 from ..actions.service import outcome_text
 from ..chat import explain as explaining
 from ..config import TelegramSettings
+from ..jobs.prompts import schedule_text
 from ..jobs.status import headline, job_status
 
 if TYPE_CHECKING:
@@ -91,7 +92,7 @@ HELP = (
     "/status — overall status and the last result of every job\n"
     "/jobs — the jobs and when they run next\n"
     "/run &lt;job&gt; — run one job now and show its result\n"
-    "/summary — run the summary now and show it\n"
+    "/summary — pick a summary to run now; /summary &lt;name&gt; runs that one\n"
     "/approvals — actions waiting for your decision\n"
     "/new — start a fresh chat (the old one stays in the web Chat list)\n"
     "/id — this chat's id (works in any chat)\n"
@@ -101,7 +102,7 @@ COMMANDS = [
     BotCommand("status", "Overall status and last job results"),
     BotCommand("jobs", "List the jobs and their next runs"),
     BotCommand("run", "Run a job now: /run <job>"),
-    BotCommand("summary", "Run the summary now"),
+    BotCommand("summary", "Run a summary now: /summary [name]"),
     BotCommand("approvals", "Actions waiting for approval"),
     BotCommand("new", "Start a fresh chat"),
     BotCommand("id", "Show this chat's id"),
@@ -418,6 +419,7 @@ class TelegramBot:
         application.add_handler(MessageHandler(filters.COMMAND, self._unknown))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._chat))
         application.add_handler(CallbackQueryHandler(self._on_explain, pattern=r"^x:"))
+        application.add_handler(CallbackQueryHandler(self._on_summary_button, pattern=r"^s:"))
         application.add_handler(CallbackQueryHandler(self._on_callback))
         application.add_error_handler(self._on_error)
         return application
@@ -597,14 +599,20 @@ class TelegramBot:
         data = await job_status(self.app)
         overall = data["overall"]
         if overall is None:
-            lines = ["No summary yet."]
+            lines = ["No summary has run yet."]
         else:
-            first = _run_text(_one_line(overall.headline, 300), overall.status)
-            lines = [
-                f"{ICONS[overall.status]} **{WORDS[overall.status]}**"
-                + (f" — {first}" if first else "")
-                + md_escape(f" ({_age(overall.finished, now)})")
-            ]
+            lines = [f"{ICONS[overall.status]} **{WORDS[overall.status]}**"]
+            for summary in overall.summaries:
+                if summary.status is None:
+                    lines.append(md_escape(f"• {summary.name} — never ran"))
+                    continue
+                first = _run_text(_one_line(summary.headline, 300), summary.status)
+                lines.append(
+                    md_escape(f"• {summary.name}: ")
+                    + f"{ICONS[summary.status]} {WORDS[summary.status]}"
+                    + (f" — {first}" if first else "")
+                    + md_escape(f" ({_age(summary.finished, now)})")
+                )
         lines.append("")
         for job in data["jobs"]:
             state = (
@@ -661,19 +669,62 @@ class TelegramBot:
         await self._run_and_reply(chat_id, job)
 
     async def _summary(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """`/summary <slug>` (with or without `summary:`) runs that summary; without one, or
+        with an unknown one, the enabled summaries come as buttons."""
         chat_id = update.effective_chat.id  # type: ignore[union-attr]
-        summary = next(
-            (
-                j
-                for j in await self.app.jobs.store.list()
-                if j["kind"] == "summary" and j["enabled"]
-            ),
-            None,
-        )
-        if summary is None:
+        jobs = await self.app.jobs.store.list()
+        summaries = {j["slug"]: j for j in jobs if j["kind"] == "summary"}
+        wanted = (context.args[0] if context.args else "").strip().lower()
+        if wanted:
+            job = summaries.get(wanted) or summaries.get(f"summary:{wanted}")
+            if job is not None:
+                await self._run_and_reply(chat_id, job)
+                return
+        enabled = [j for j in summaries.values() if j["enabled"]]
+        if not enabled:
             await self.send(chat_id, "No summary is enabled.", markdown=False)
             return
-        await self._run_and_reply(chat_id, summary)
+        head = f"There is no summary <code>{html.escape(wanted)}</code>. " if wanted else ""
+        await self.send(
+            chat_id,
+            f"{head}Which summary should run now?",
+            markdown=False,
+            reply_markup=self._summary_keyboard(enabled),
+        )
+
+    def _summary_keyboard(self, summaries: list[dict[str, Any]]) -> InlineKeyboardMarkup:
+        def label(job: dict[str, Any]) -> str:
+            return f"{job['name']} · {schedule_text(job).replace('`', '')}"
+
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        label(j), callback_data=f"s:{j['slug']}:{self._sign_text('s', j['slug'])}"
+                    )
+                ]
+                for j in summaries
+            ]
+        )
+
+    async def _on_summary_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """A tap on one of /summary's buttons: run that summary here."""
+        query = update.callback_query
+        if query is None or update.effective_chat is None:
+            return
+        chat_id = update.effective_chat.id
+        _, _, rest = (query.data or "").partition(":")
+        slug, _, signature = rest.rpartition(":")
+        if not slug or not hmac.compare_digest(signature, self._sign_text("s", slug)):
+            log.warning("telegram: rejected a callback with a bad signature from chat %s", chat_id)
+            await self._answer(query, "Invalid button.")
+            return
+        job = await self.app.jobs.store.get(slug)
+        if job is None or job["kind"] != "summary":
+            await self._answer(query, "This summary no longer exists.")
+            return
+        await self._answer(query, f"Running {job['name']}")
+        await self._run_and_reply(chat_id, job)
 
     async def _run_and_reply(self, chat_id: int, job: dict[str, Any]) -> None:
         """Run `job` now and answer with its result here. The run is started in the
@@ -850,7 +901,7 @@ class TelegramBot:
         if chat_id in self.allowed and data.get("text"):
             await self.send(chat_id, str(data["text"]))
 
-    # ------------------------------------------------------------------ the summary
+    # ------------------------------------------------------------------ results
 
     async def _on_job_finished(self, data: dict[str, Any]) -> None:
         """A summary or a job in no summary ended: tell the chats as its `notify` says
@@ -928,9 +979,10 @@ class TelegramBot:
     # outcome; its (chat, message) is stored so that survives a restart.
 
     def sign(self, decision: str, batch_id: int) -> str:
-        return hmac.new(self._key, f"{decision}:{batch_id}".encode(), hashlib.sha256).hexdigest()[
-            :12
-        ]
+        return self._sign_text(decision, str(batch_id))
+
+    def _sign_text(self, prefix: str, value: str) -> str:
+        return hmac.new(self._key, f"{prefix}:{value}".encode(), hashlib.sha256).hexdigest()[:12]
 
     def _keyboard(self, batch: dict[str, Any]) -> InlineKeyboardMarkup:
         batch_id = int(batch["id"])

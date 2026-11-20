@@ -20,7 +20,16 @@ from ai_server_monitor.main import create_app
 from .conftest import LLM_URL
 from .test_chat import FakeLLM, call, make_app, say
 
-CHAT_TOOLS = ["bash", "delegate", "jobs_list", "job_results", "job_save", "job_delete", "job_run"]
+CHAT_TOOLS = [
+    "bash",
+    "delegate",
+    "jobs_list",
+    "job_results",
+    "job_save",
+    "job_delete",
+    "summary_member",
+    "job_run",
+]
 
 
 @pytest.fixture

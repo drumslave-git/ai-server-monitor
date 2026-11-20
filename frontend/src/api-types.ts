@@ -1489,9 +1489,9 @@ export interface components {
         };
         /**
          * JobsSettings
-         * @description Scheduled checks by the language model: one topic each (storage, journal, docker, ...) on
-         *     the worker model, and a summary of them all on the main model. The jobs themselves are on
-         *     the Jobs page.
+         * @description Scheduled checks by the language model: jobs (storage:usage, docker:status, ...) on the
+         *     worker model, and summaries (Health, Daily) on the main model that run their jobs in order
+         *     and sum them up. The jobs themselves are on the Jobs page.
          */
         JobsSettings: {
             /**
@@ -2161,20 +2161,16 @@ export interface components {
         };
         /**
          * OverallStatus
-         * @description The newest finished run of the summary job.
+         * @description The enabled summaries: the worst of their newest runs, and each one's own state.
          */
         OverallStatus: {
-            /** Finished */
-            finished: number | null;
-            /** Headline */
-            headline: string;
-            /** Run Id */
-            run_id: number;
             /**
              * Status
              * @enum {string}
              */
             status: "ok" | "warn" | "crit" | "error";
+            /** Summaries */
+            summaries: components["schemas"]["SummaryState"][];
         };
         /** PurposeCount */
         PurposeCount: {
@@ -2403,6 +2399,24 @@ export interface components {
              * @example 30d
              */
             retention: string;
+        };
+        /**
+         * SummaryState
+         * @description One enabled summary and its newest finished run.
+         */
+        SummaryState: {
+            /** Finished */
+            finished: number | null;
+            /** Headline */
+            headline: string;
+            /** Name */
+            name: string;
+            /** Run Id */
+            run_id: number | null;
+            /** Slug */
+            slug: string;
+            /** Status */
+            status: ("ok" | "warn" | "crit" | "error") | null;
         };
         /** TelegramSettings */
         TelegramSettings: {

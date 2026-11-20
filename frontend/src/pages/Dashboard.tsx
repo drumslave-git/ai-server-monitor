@@ -33,10 +33,16 @@ const SLOT_S = 1800;
 const PAST_SLOTS = 24;
 const FUTURE_SLOTS = 6;
 
+/** Until the Dashboard shows every summary: the one whose newest run gives the overall status. */
+function leadSummary(overall: StatusResponse["overall"] | undefined) {
+  const found = overall?.summaries.find((x) => x.status === overall.status);
+  return overall && found ? { ...found, status: overall.status } : null;
+}
+
 export function DashboardPage() {
   const status = usePoll(() => api.get<StatusResponse>("/api/status"), 30_000);
   const jobs = usePoll(() => api.get<{ items: Job[] }>("/api/jobs"), 30_000);
-  const runId = status.data?.overall?.run_id ?? null;
+  const runId = leadSummary(status.data?.overall)?.run_id ?? null;
   const overallRun = usePoll(() => (runId ? api.get<JobRun>(`/api/jobs/runs/${runId}`) : Promise.resolve(null)), 300_000);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => overallRun.reload(), [runId]);
@@ -55,10 +61,10 @@ export function DashboardPage() {
   if (!status.data || !jobs.data) return <Meta>Loading…</Meta>;
   const s = status.data;
   const paused = Boolean(auto?.paused);
-  const summary = items.find((j) => j.kind === "summary");
+  const overall = leadSummary(s.overall);
+  const summary = items.find((j) => j.slug === overall?.slug) ?? items.find((j) => j.kind === "summary");
   const topics = items.filter((j) => j.kind !== "summary");
   const neverRan = items.every((j) => !j.last_run) && running.size === 0;
-  const overall = s.overall ?? null;
   const shown = overallRun.data && overall && overallRun.data.id === overall.run_id ? overallRun.data : null;
   // what the summary said about each topic, by job
   const clauses = Object.fromEntries((shown?.topics ?? []).map((t) => [t.slug, t.clause]));
@@ -169,7 +175,7 @@ function Overall({
   now,
   neverRan,
 }: {
-  overall: StatusResponse["overall"] | null;
+  overall: ReturnType<typeof leadSummary>;
   /** The summary run behind `overall`, once loaded. */
   run: JobRun | null;
   summary: Job | undefined;

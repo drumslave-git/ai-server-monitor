@@ -239,6 +239,7 @@ def test_bash_answers_the_question_and_everything_is_persisted(
             "job_results",
             "job_save",
             "job_delete",
+            "summary_member",
             "job_run",
         }
         assert first["messages"][0]["role"] == "system"
