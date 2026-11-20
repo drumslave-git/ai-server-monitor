@@ -23,6 +23,8 @@
 
 /* Rail */
 .fd-rail { flex: 1 0 var(--rail); display: flex; flex-direction: column; gap: var(--space-7); padding: var(--space-6) var(--space-4); border-right: 1px solid var(--line); background: var(--bg); }
+/* Beside the page the rail stays in view while the page scrolls, so its gauges and automation box are always seen */
+.fd-rail:not(.fd-rail-compact) { position: sticky; top: 0; align-self: flex-start; height: 100vh; overflow-y: auto; }
 .fd-brand { display: flex; flex-direction: column; gap: 6px; padding: 0 var(--space-3); }
 .fd-brand-mark { display: flex; align-items: flex-start; gap: var(--space-2); font: 800 56px/0.88 var(--font-display); letter-spacing: 0.01em; }
 .fd-nav { display: flex; flex-direction: column; gap: 2px; }
@@ -30,12 +32,22 @@
 .fd-nav-item:hover { color: var(--text); background: var(--raised); }
 .fd-nav-item[aria-current="page"] { color: var(--on-fill); background: var(--ok); }
 .fd-auto { margin-top: auto; display: flex; flex-direction: column; gap: var(--space-3); padding: 14px var(--space-3); border: 1px solid var(--line); }
+/* Gauges: readings now, at the foot of the rail above the automation box */
+.fd-gauges { margin-top: auto; display: flex; flex-direction: column; gap: var(--space-3); padding: 0 var(--space-3); }
+.fd-gauges:empty { display: none; }
+.fd-gauges:not(:empty) + .fd-auto { margin-top: 0; }
+.fd-gauge { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.fd-gauge-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 var(--space-2); font: 400 12px/1.5 var(--font-mono); }
+.fd-gauge-label { color: var(--dim); white-space: nowrap; }
+.fd-gauge-value { margin-left: auto; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fd-gauge .fd-cells-sm { --cell: 6px; }
 .fd-rail-compact { flex: 1 0 100%; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-right: 0; border-bottom: 1px solid var(--line); }
 .fd-rail-compact .fd-brand { flex: 1; flex-direction: row; align-items: center; gap: var(--space-3); padding: 0; }
 .fd-rail-compact .fd-brand-mark { font-size: 34px; }
 .fd-rail-compact .fd-brand .fd-meta { display: none; }
 .fd-rail-compact .fd-auto { margin: 0; flex-direction: row; align-items: center; padding: 0; border: 0; }
 .fd-rail-compact .fd-auto .fd-status { display: none; }
+.fd-rail-compact .fd-gauges { order: 2; flex: 1 0 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-2) var(--space-4); margin: 0; padding: 0; }
 .fd-rail-compact .fd-nav { order: 3; flex: 1 0 100%; flex-direction: row; overflow-x: auto; scrollbar-width: none; margin: 0 calc(var(--space-4) * -1); padding: 0 var(--space-4); }
 
 /* Count badge */
@@ -343,12 +355,14 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 
 /* Narrow screens: the rail becomes a bar with a scrolling nav, the page padding tightens */
 @media (max-width: 760px) {
+  .fd-rail:not(.fd-rail-compact) { position: static; height: auto; overflow-y: visible; align-self: auto; }
   .fd-rail { flex: 1 0 100%; min-width: 0; max-width: 100%; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-right: 0; border-bottom: 1px solid var(--line); }
   .fd-rail .fd-brand { flex: 1; flex-direction: row; align-items: center; gap: var(--space-3); padding: 0; }
   .fd-rail .fd-brand-mark { font-size: 34px; }
   .fd-rail .fd-brand .fd-meta { display: none; }
   .fd-rail .fd-auto { margin: 0; flex-direction: row; align-items: center; padding: 0; border: 0; }
   .fd-rail .fd-auto .fd-status { display: none; }
+  .fd-rail .fd-gauges { order: 2; flex: 1 0 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-2) var(--space-4); margin: 0; padding: 0; }
   .fd-rail .fd-nav { order: 3; flex: 1 1 100%; min-width: 0; flex-direction: row; overflow-x: auto; scrollbar-width: none; margin: 0 calc(var(--space-4) * -1); padding: 0 var(--space-4); }
   .fd-main { padding: var(--space-4); }
   .fd-hero { padding: var(--space-4); }

@@ -26,7 +26,8 @@ The design kit with live previews of every component: https://claude.ai/artifact
 
 ## Building a screen
 
-- `Shell` > `Rail` + `Main` (done once, in `App.tsx`). A page starts with `PageHeader`, then `Panel`s.
+- `Shell` > `Rail` + `Main` (done once, in `App.tsx`; `Rail` takes `meters`, shown above the automation box
+  beside the page and as a row of the top bar on a phone). A page starts with `PageHeader`, then `Panel`s.
 - Layout: `Split` (blocks side by side that wrap; `stretch`), `Column` (blocks under each other),
   `Inline` (small things on one wrapping line: `gap`, `align`, `between`, `nowrap`), `FormGrid` (fields
   in columns), `Toolbar` (filters above a list), `Actions` (buttons side by side), `Scroll` (a height
@@ -46,7 +47,8 @@ The design kit with live previews of every component: https://claude.ai/artifact
   handle — space, arrows, space — or by the up/down buttons; `onRemove` adds "remove").
 - Status: `Status` (a lamp plus a word; never colour alone), `Lamp`, `Tag`, `Count`, `Counter`.
 - Data: `Schedule` and `Lane` (time as cells), `Meter` (an amount out of a maximum shared by the list;
-  `fluid`), `Bar` (a span on a shared axis: queued, first part, rest), `Axis`, `Cells`, `Code`
+  `fluid`), `Gauge` (one reading now with its label and value, for `Rail` `meters`), `Bar` (a span on a
+  shared axis: queued, first part, rest), `Axis`, `Cells`, `Code`
   (`maxHeight` scrolls inside), `Command`, `KeyValue`, and `Table` with `Tr` and `Td`: `head` names the
   columns, `stack` turns each row into a block of labelled cells where the table is narrower than
   640px (otherwise it scrolls sideways inside itself).

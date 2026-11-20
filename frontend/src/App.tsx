@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type StatusResponse } from "./api";
 import { AutomationNotice, AutomationProvider, AutomationSwitch } from "./automation";
+import { HardwareMeters } from "./hardware";
 import { Main, Rail, Shell, type NavItem } from "./kit";
 import { useConnected, useStream } from "./live";
 import { ApprovalsPage } from "./pages/Approvals";
@@ -80,7 +81,7 @@ export function App() {
   return (
     <AutomationProvider>
       <Shell>
-        <Rail items={items} active={page} live={connected} version={version}>
+        <Rail items={items} active={page} live={connected} version={version} meters={<HardwareMeters />}>
           <AutomationSwitch />
         </Rail>
         <Main>

@@ -26,6 +26,7 @@ dependencies = [
     "telegramify-markdown>=1.4.2,<2",
     "markdown-it-py>=3,<5",
     "cron-descriptor>=2.3,<3",
+    "psutil>=7.2,<8",
 ]
 
 [project.optional-dependencies]

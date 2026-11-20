@@ -31,6 +31,7 @@ from .config import (
 from .conntest import KINDS as TEST_KINDS
 from .conntest import run_test
 from .context import AppContext
+from .hardware import hardware as read_hardware
 from .jobs.api import router as jobs_router
 from .jobs.status import job_status
 from .llm.check import check_model
@@ -204,6 +205,11 @@ def create_app(
                 reason=ctx.change_shell.status.reason,
             ),
         )
+
+    @app.get("/api/hardware")
+    async def hardware(request: Request) -> api_models.HardwareResponse:
+        """CPU, RAM and NVIDIA GPU use now, for the meters in the page's sidebar."""
+        return await read_hardware(get_ctx(request))
 
     @app.get("/api/stream")
     async def stream(request: Request, types: str | None = None) -> StreamingResponse:

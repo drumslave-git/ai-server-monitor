@@ -81,6 +81,7 @@ export function Rail({
   active,
   live,
   version,
+  meters,
   children,
 }: {
   items: NavItem[];
@@ -88,6 +89,8 @@ export function Rail({
   /** Live updates connected: the lamp beside the mark. */
   live: boolean;
   version?: string | null;
+  /** Gauges above the foot; at phone width a row of their own in the top bar. */
+  meters?: ReactNode;
   children?: ReactNode;
 }) {
   return (
@@ -109,6 +112,7 @@ export function Rail({
           </a>
         ))}
       </nav>
+      {meters && <div className="fd-gauges">{meters}</div>}
       {children && <div className="fd-auto">{children}</div>}
     </aside>
   );
@@ -1120,6 +1124,29 @@ export function Meter({
   const filled: Cell = tone === "off" ? "" : tone;
   const cells: Cell[] = Array.from({ length: count }, (_, i) => (i < b ? innerTone : i < a ? filled : ""));
   return <Cells cells={cells} size="sm" fixed={!fluid} label={label} {...where} />;
+}
+
+/** One reading now: its name, the amount as text, and value out of max as cells in the plain text
+ *  colour (no tone: it says how much, not whether that is good). A meter to assistive tech. */
+export function Gauge({ label, value, max, text, title }: { label: string; value: number; max: number; text: string; title?: string }) {
+  return (
+    <div
+      className="fd-gauge"
+      role="meter"
+      aria-label={title ? `${label}, ${title}` : label}
+      aria-valuemin={0}
+      aria-valuemax={max}
+      aria-valuenow={Math.min(Math.max(value, 0), max)}
+      aria-valuetext={text}
+      title={title}
+    >
+      <span className="fd-gauge-head" aria-hidden="true">
+        <span className="fd-gauge-label">{label}</span>
+        <span className="fd-gauge-value">{text}</span>
+      </span>
+      <Meter value={value} max={max} tone="text" fluid />
+    </div>
+  );
 }
 
 export type ScheduleRun = { at: number; tone: Tone };

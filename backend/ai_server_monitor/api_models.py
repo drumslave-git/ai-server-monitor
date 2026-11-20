@@ -77,6 +77,30 @@ class StatusResponse(BaseModel):
     """The newest finished run of every job (GET /api/jobs has the details)."""
 
 
+class GpuUse(BaseModel):
+    """One NVIDIA GPU as `nvidia-smi` lists it now."""
+
+    name: str
+    util_percent: float
+    vram_used: int
+    """Bytes."""
+    vram_total: int
+    """Bytes."""
+
+
+class HardwareResponse(BaseModel):
+    """What the hardware is doing now (read anew on every request, nothing stored)."""
+
+    cpu_percent: float
+    """All CPUs together, since the previous request."""
+    ram_used: int
+    """Bytes: total minus available."""
+    ram_total: int
+    """Bytes."""
+    gpus: list[GpuUse]
+    """Empty when no NVIDIA GPU can be read."""
+
+
 class SettingsResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

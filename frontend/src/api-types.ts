@@ -286,6 +286,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/hardware": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hardware
+         * @description CPU, RAM and NVIDIA GPU use now, for the meters in the page's sidebar.
+         */
+        get: operations["hardware_api_hardware_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/info": {
         parameters: {
             query?: never;
@@ -1231,10 +1251,38 @@ export interface components {
              */
             timezone: string;
         };
+        /**
+         * GpuUse
+         * @description One NVIDIA GPU as `nvidia-smi` lists it now.
+         */
+        GpuUse: {
+            /** Name */
+            name: string;
+            /** Util Percent */
+            util_percent: number;
+            /** Vram Total */
+            vram_total: number;
+            /** Vram Used */
+            vram_used: number;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HardwareResponse
+         * @description What the hardware is doing now (read anew on every request, nothing stored).
+         */
+        HardwareResponse: {
+            /** Cpu Percent */
+            cpu_percent: number;
+            /** Gpus */
+            gpus: components["schemas"]["GpuUse"][];
+            /** Ram Total */
+            ram_total: number;
+            /** Ram Used */
+            ram_used: number;
         };
         /** Job */
         Job: {
@@ -3231,6 +3279,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hardware_api_hardware_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HardwareResponse"];
                 };
             };
         };
