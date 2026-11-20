@@ -36,6 +36,14 @@
   --lamp: 10px;
   --cell: 20px;
   --rail: 212px;
+  /* the narrow pane beside the main one (a list of conversations, of sections, of domains) */
+  --pane-side: 300px;
+  /* the phone's bar of pages at the foot of the screen (without the safe area under it) */
+  --bottom-bar: 64px;
+  /* how far the content scrolls while a sticky page header turns compact */
+  --head-shrink: 64px;
+  /* the title of a compact page header */
+  --head-title-compact: 28px;
   --font-display: "Big Shoulders", "Arial Narrow", sans-serif;
   --font-sans: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;

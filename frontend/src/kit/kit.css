@@ -3,12 +3,12 @@
 
 /* Shell */
 .fd, .fd * { box-sizing: border-box; }
-.fd { display: flex; flex-wrap: wrap; min-height: 100vh; overflow-wrap: break-word; background: var(--bg) radial-gradient(var(--grid-dot) 1px, transparent 1px) 0 0 / 22px 22px; color: var(--text); font: 400 14px/1.5 var(--font-sans); }
+.fd { display: flex; flex-wrap: wrap; min-height: 100vh; overflow-wrap: break-word; background: var(--bg) radial-gradient(var(--grid-dot) 1px, transparent 1px) 0 0 / 22px 22px fixed; color: var(--text); font: 400 14px/1.5 var(--font-sans); }
 .fd a:not([class]) { color: var(--ok-text); }
 .fd a:not([class]):hover { color: var(--text); }
 .fd :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .fd p { margin: 0; }
-.fd-main { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6) var(--space-7); }
+.fd-main { --fd-main-y: var(--space-6); --fd-main-x: var(--space-7); flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--fd-main-y) var(--fd-main-x); }
 
 /* Text helpers */
 .fd-mono { font-family: var(--font-mono); }
@@ -23,8 +23,6 @@
 
 /* Rail */
 .fd-rail { flex: 1 0 var(--rail); display: flex; flex-direction: column; gap: var(--space-7); padding: var(--space-6) var(--space-4); border-right: 1px solid var(--line); background: var(--bg); }
-/* Beside the page the rail stays in view while the page scrolls, so its gauges and automation box are always seen */
-.fd-rail:not(.fd-rail-compact) { position: sticky; top: 0; align-self: flex-start; height: 100vh; overflow-y: auto; }
 .fd-brand { display: flex; flex-direction: column; gap: 6px; padding: 0 var(--space-3); }
 .fd-brand-mark { display: flex; align-items: flex-start; gap: var(--space-2); font: 800 56px/0.88 var(--font-display); letter-spacing: 0.01em; }
 .fd-nav { display: flex; flex-direction: column; gap: 2px; }
@@ -41,14 +39,6 @@
 .fd-gauge-label { color: var(--dim); white-space: nowrap; }
 .fd-gauge-value { margin-left: auto; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .fd-gauge .fd-cells-sm { --cell: 6px; }
-.fd-rail-compact { flex: 1 0 100%; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-right: 0; border-bottom: 1px solid var(--line); }
-.fd-rail-compact .fd-brand { flex: 1; flex-direction: row; align-items: center; gap: var(--space-3); padding: 0; }
-.fd-rail-compact .fd-brand-mark { font-size: 34px; }
-.fd-rail-compact .fd-brand .fd-meta { display: none; }
-.fd-rail-compact .fd-auto { margin: 0; flex-direction: row; align-items: center; padding: 0; border: 0; }
-.fd-rail-compact .fd-auto .fd-status { display: none; }
-.fd-rail-compact .fd-gauges { order: 2; flex: 1 0 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-2) var(--space-4); margin: 0; padding: 0; }
-.fd-rail-compact .fd-nav { order: 3; flex: 1 0 100%; flex-direction: row; overflow-x: auto; scrollbar-width: none; margin: 0 calc(var(--space-4) * -1); padding: 0 var(--space-4); }
 
 /* Count badge */
 .fd-count { margin-left: auto; min-width: 22px; padding: 0 6px; text-align: center; background: var(--warn); color: var(--on-fill); font: 500 13px/20px var(--font-mono); }
@@ -223,9 +213,6 @@
 .fd-title-link { color: inherit; text-decoration: none; font: 600 15px/1.4 var(--font-sans); }
 .fd-title-link:hover { text-decoration: underline; }
 
-/* Main on a phone */
-.fd-main-compact { padding: var(--space-4); }
-
 /* Page header: way back and meta line above the title */
 .fd-head-over { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-4); }
 .fd-head-back { color: var(--ok-text); font: 500 13px/1.5 var(--font-mono); }
@@ -255,13 +242,11 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 /* Axis under a strip of cells or a bar */
 .fd-axis { display: flex; justify-content: space-between; min-width: 0; font: 400 12px/1.5 var(--font-mono); color: var(--dim); }
 
-/* Code that wraps; command with its run button attached */
+/* Code that wraps; a command with its small buttons inside its box, at the top right */
 .fd-code-wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
-.fd-command { display: flex; align-items: stretch; min-width: 0; }
-.fd-command .fd-code { flex: 1; min-width: 0; }
-.fd-command .fd-btn { border-left: 0; }
-/* A copy button keeps one width for all its labels (copy, copied, failed): nothing next to it moves */
-.fd-btn-copy { min-width: calc(6ch + 2 * var(--space-4) + 2px); }
+.fd-command { display: flex; align-items: flex-start; min-width: 0; border: 1px solid var(--line); background: var(--bg); }
+.fd-command > .fd-code { flex: 1 1 auto; min-width: 0; border: 0; }
+.fd-command-actions { flex: none; display: flex; gap: var(--space-1); padding: 2px; }
 
 /* Message header; fold inside running text */
 .fd-msg-who { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3); }
@@ -284,10 +269,6 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 .fd-counters-flush .fd-counter:first-child { padding-left: 0; border-left: 0; }
 .fd-section-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-2) var(--space-5); }
 .fd-section-head h2 { margin: 0; font: 600 18px/1.3 var(--font-sans); }
-
-/* The phone rail must not grow to the width of its scrolling nav */
-.fd-rail-compact { min-width: 0; max-width: 100%; }
-.fd-rail-compact .fd-nav { min-width: 0; flex: 1 1 100%; }
 
 /* ---- app-only parts: states the mockups do not draw ---- */
 
@@ -355,7 +336,6 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 
 /* Narrow screens: the rail becomes a bar with a scrolling nav, the page padding tightens */
 @media (max-width: 760px) {
-  .fd-rail:not(.fd-rail-compact) { position: static; height: auto; overflow-y: visible; align-self: auto; }
   .fd-rail { flex: 1 0 100%; min-width: 0; max-width: 100%; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-right: 0; border-bottom: 1px solid var(--line); }
   .fd-rail .fd-brand { flex: 1; flex-direction: row; align-items: center; gap: var(--space-3); padding: 0; }
   .fd-rail .fd-brand-mark { font-size: 34px; }
@@ -364,7 +344,7 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
   .fd-rail .fd-auto .fd-status { display: none; }
   .fd-rail .fd-gauges { order: 2; flex: 1 0 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-2) var(--space-4); margin: 0; padding: 0; }
   .fd-rail .fd-nav { order: 3; flex: 1 1 100%; min-width: 0; flex-direction: row; overflow-x: auto; scrollbar-width: none; margin: 0 calc(var(--space-4) * -1); padding: 0 var(--space-4); }
-  .fd-main { padding: var(--space-4); }
+  .fd-main { --fd-main-y: var(--space-4); --fd-main-x: var(--space-4); }
   .fd-hero { padding: var(--space-4); }
   .fd-head h1 { font-size: 40px; }
   .fd-lane-name { flex: 1 1 100%; }
@@ -398,12 +378,6 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 
 /* Code that scrolls inside a height limit */
 .fd-code-scroll { overflow: auto; }
-
-/* Command on a narrow screen: the button drops under the code */
-.fd-command { flex-wrap: wrap; }
-.fd-command .fd-code { flex: 1 1 260px; }
-.fd-command .fd-btn { border-left: 1px solid var(--line-strong); margin-left: -1px; }
-.fd-command .fd-btn-warn { border-color: var(--warn); }
 
 /* Text that keeps its line breaks, and text cut after a few lines */
 .fd-pre-line { white-space: pre-line; }
@@ -576,3 +550,135 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 .fd-sort-body { flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; }
 .fd-sort-trailing { flex: none; }
 .fd-sort-buttons { flex: none; display: flex; gap: var(--space-1); margin-left: auto; }
+
+/* ---- layout and UX pass (0.10.2): panes that scroll, a head that stays, icons ---- */
+
+/* Beside the rail (wider than a phone) the shell fills the window and does not scroll: the rail and the
+   main part scroll each on their own; a page of Panes keeps its head and scrolls inside each pane. */
+@media (min-width: 761px) {
+  .fd { height: 100dvh; overflow: hidden; flex-wrap: nowrap; }
+  .fd-rail { flex-grow: 0; overflow-y: auto; }
+  .fd-main { overflow-y: auto; scroll-timeline: --fd-page block; }
+  .fd-main > :not(.fd-panes) { flex-shrink: 0; }
+  .fd-main:has(> .fd-panes) { overflow: hidden; scroll-timeline: none; timeline-scope: --fd-page; }
+  /* sticky offsets count from inside the scroller's padding: pull the head up to its edge */
+  .fd-main > .fd-head-sticky { top: calc(-1 * var(--fd-main-y)); }
+  .fd-panes { flex: 1 1 0; min-height: 0; }
+  .fd-pane-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .fd-pane:not(.fd-pane-side) > .fd-pane-scroll { scroll-timeline: --fd-page block; }
+}
+
+/* Panes: a narrow side pane (a list) beside the lead one (what is open in it) */
+.fd-panes { min-width: 0; display: flex; gap: var(--space-4); }
+.fd-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); }
+.fd-pane:not(.fd-pane-side) { flex: 1 1 0; }
+.fd-pane-side { flex: 0 0 var(--pane-side); }
+/* one pane alone (a width that shows only the list) takes the whole width */
+.fd-pane-side:only-child { flex: 1 1 auto; }
+.fd-pane-bare { background: none; border: 0; }
+.fd-pane-scroll { min-width: 0; display: flex; flex-direction: column; }
+.fd-pane-bare > .fd-pane-scroll { gap: var(--space-4); }
+.fd-pane-foot { flex: none; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line); background: var(--panel); }
+.fd-pane-bare > .fd-pane-foot { padding: var(--space-4) 0 0; border-top: 0; background: none; }
+
+/* Page head that stays at the top of what scrolls; it turns compact while the content scrolls under it */
+.fd-head-sticky { position: sticky; top: 0; z-index: 3; margin: 0 calc(-1 * var(--fd-main-x)); padding: var(--fd-main-y) var(--fd-main-x) var(--space-4); border-bottom: 1px solid transparent; background: var(--bg) radial-gradient(var(--grid-dot) 1px, transparent 1px) 0 0 / 22px 22px fixed; interpolate-size: allow-keywords; }
+/* first in the main part, it reaches its top edge (a notice above it keeps it under the notice) */
+.fd-main > .fd-head-sticky:first-child { margin-top: calc(-1 * var(--fd-main-y)); }
+.fd-head-sticky .fd-head-note { overflow: hidden; }
+@supports ((animation-timeline: scroll()) and (animation-range: 0% 100%)) {
+  .fd-head-sticky { animation: fd-head-compact linear both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
+  .fd-head-sticky h1 { animation: fd-head-title linear both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
+  .fd-head-sticky .fd-head-note { animation: fd-head-note linear both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
+  @media (prefers-reduced-motion: reduce) {
+    .fd-head-sticky, .fd-head-sticky h1, .fd-head-sticky .fd-head-note { animation-timing-function: step-end; }
+  }
+}
+@keyframes fd-head-compact { to { padding-top: var(--space-3); padding-bottom: var(--space-3); border-bottom-color: var(--line); } }
+@keyframes fd-head-title { to { font-size: var(--head-title-compact); } }
+@keyframes fd-head-note { to { opacity: 0; block-size: 0; } }
+
+/* The head's tools: a row of their own under the title; on a phone they may fold behind one button */
+.fd-head-tools { flex: 1 0 100%; min-width: 0; }
+.fd-head-fold { display: none; }
+
+/* Toolbar over Panes: its first part exactly as wide as the side pane, the rest over the lead pane */
+.fd-toolbar-panes { flex-wrap: nowrap; gap: var(--space-4); }
+.fd-toolbar-side { flex: 0 0 var(--pane-side); min-width: 0; }
+.fd-toolbar-main { flex: 1 1 0; min-width: 0; }
+
+/* Icons; the symbols HTML written as text uses */
+.fd-icon { flex: none; }
+.fd-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.fd-icon-slot { display: contents; }
+
+/* Icon button: square, its name in a hint */
+.fd-btn-icon { min-width: var(--control); padding: 0; }
+.fd-btn-icon:has(.fd-btn-count) { padding: 0 var(--space-3); }
+.fd-btn-icon.fd-btn-small { min-width: 32px; padding: 0; }
+.fd-btn-icon.fd-btn-small:has(.fd-btn-count) { padding: 0 var(--space-2); }
+.fd-btn-count { font: 500 12px var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* Hint: the name of an icon button, shown on hover, focus or long press, above it (below where there is no room) */
+.fd-hint { max-width: 320px; margin: 0; padding: var(--space-1) var(--space-2); border: 1px solid var(--line-strong); background: var(--panel); color: var(--text); font: 400 12px/1.5 var(--font-mono); pointer-events: none; }
+@supports (position-area: block-end) {
+  .fd-hint { inset: auto; margin: var(--space-1) 0; position-area: block-start; position-try-fallbacks: flip-block; }
+}
+
+/* Card: one of several things of a kind (an MCP server); its head always seen, its form opens */
+.fd-cards { min-width: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.fd-card { min-width: 0; border: 1px solid var(--line-strong); background: var(--panel); }
+.fd-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); min-height: var(--control); padding: var(--space-1) var(--space-2) var(--space-1) 0; background: var(--raised); }
+.fd-card-open > .fd-card-head { border-bottom: 1px solid var(--line); }
+.fd-card-title { min-width: 0; font: inherit; }
+.fd-card-toggle { display: flex; align-items: center; gap: var(--space-2); max-width: 100%; min-height: var(--control); padding: 0 var(--space-2) 0 var(--space-3); border: 0; border-radius: 0; background: transparent; color: var(--text); font: 600 14px/1.4 var(--font-sans); text-align: left; cursor: pointer; }
+.fd-card-toggle > span { min-width: 0; overflow-wrap: anywhere; }
+.fd .fd-card-toggle:focus-visible { outline-offset: -2px; }
+.fd-card-toggle .fd-icon { rotate: -90deg; transition: rotate 0.15s; }
+.fd-card-open .fd-card-toggle .fd-icon { rotate: 0deg; }
+@media (prefers-reduced-motion: reduce) { .fd-card-toggle .fd-icon { transition: none; } }
+.fd-card-meta { flex: 1 1 160px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fd-card-aside { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
+.fd-card-body { min-width: 0; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4); }
+/* closed with hidden="until-found": the browser keeps the box (to search in it), so it must take no room */
+.fd-card-body[hidden] { padding: 0; }
+
+/* Composer: the box a message is written in, its buttons inside at the bottom right */
+.fd-composer { min-width: 0; }
+.fd-composer-box { display: flex; align-items: flex-end; gap: var(--space-2); padding-right: var(--space-1); border: 1px solid var(--line-strong); background: var(--bg); }
+.fd-composer-box:has(.fd-textarea:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.fd-composer-box > .fd-textarea { flex: 1 1 auto; min-width: 0; border: 0; background: transparent; resize: none; }
+.fd .fd-composer-box > .fd-textarea:focus-visible { outline: 0; }
+.fd-composer-box:has(.fd-textarea[aria-invalid="true"]) { border-color: var(--crit-text); }
+.fd-composer-actions { flex: none; display: flex; gap: var(--space-1); padding-bottom: var(--space-1); }
+
+/* Bottom bar: the phone's pages, one icon and word each; the current one is marked above it, not by colour alone */
+.fd-bottom { display: none; }
+
+@media (max-width: 760px) {
+  /* the page scrolls; the head turns compact as it does */
+  html { scroll-timeline: --fd-page block; }
+  .fd { padding-bottom: calc(var(--bottom-bar) + env(safe-area-inset-bottom)); }
+  .fd-rail .fd-nav { display: none; }
+  .fd-bottom { position: fixed; inset: auto 0 0 0; z-index: 5; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); height: calc(var(--bottom-bar) + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); border-top: 1px solid var(--line); background: var(--bg); }
+  .fd-bottom-item { position: relative; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-1); padding: 0 2px; color: var(--dim); text-decoration: none; font: 500 11px/1.2 var(--font-sans); }
+  .fd-bottom-item > span:not(.fd-count) { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fd-bottom-item:hover { color: var(--text); }
+  .fd-bottom-item[aria-current="page"] { color: var(--text); box-shadow: inset 0 3px 0 var(--ok); }
+  .fd-bottom-item > .fd-count { position: absolute; top: var(--space-1); left: calc(50% + var(--space-2)); min-width: 18px; margin: 0; padding: 0 var(--space-1); font-size: 11px; line-height: 16px; }
+  .fd .fd-bottom-item:focus-visible { outline-offset: -2px; }
+
+  /* panes stand under each other; what stays at a pane's foot stays above the bottom bar */
+  .fd-panes { flex-direction: column; }
+  /* each pane as tall as its content: a flex-basis of 0 would collapse it and spill it out of the main part */
+  .fd-panes > .fd-pane { flex: none; }
+  .fd-pane-foot, .fd-savebar, .fd-row-sticky { position: sticky; bottom: calc(var(--bottom-bar) + env(safe-area-inset-bottom)); z-index: 2; }
+  .fd-pane-bare > .fd-pane-foot { background: var(--bg); padding-bottom: var(--space-2); }
+
+  /* the head: the title beside its buttons; the tools fold when asked to */
+  .fd-head-text { flex-basis: 140px; }
+  .fd-head-fold { display: block; }
+  .fd-head-tools-folds:not(.fd-head-tools-open) { display: none; }
+  .fd-toolbar-panes { flex-wrap: wrap; }
+  .fd-toolbar-side { flex: 1 0 100%; }
+}

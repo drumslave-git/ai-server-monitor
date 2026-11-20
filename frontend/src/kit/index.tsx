@@ -39,6 +39,12 @@ import {
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
 } from "react";
+import { GLYPHS, SPRITE, type IconName } from "./icons";
+export type { IconName } from "./icons";
+
+// Interest invokers (a hint shown on hover, focus or long press) are native in Chromium 149+;
+// elsewhere the interestfor polyfill adds them. It is loaded only where they are missing.
+if (typeof HTMLButtonElement !== "undefined" && !("interestForElement" in HTMLButtonElement.prototype)) void import("interestfor");
 
 /** ok = fine or on, warn = warning or waiting, crit = critical or failed, info = info or running, off = nothing to say. */
 export type Tone = "ok" | "warn" | "crit" | "info" | "off";
@@ -69,11 +75,39 @@ type AsForm = { id?: string; onSubmit?: (e: FormEvent<HTMLFormElement>) => void 
 
 // ---- layout ----------------------------------------------------------------
 
+/** The page: the rail beside the main part. It fills the window and does not scroll itself; its parts scroll. */
 export function Shell({ children }: { children: ReactNode }) {
-  return <div className="fd">{children}</div>;
+  return (
+    <div className="fd">
+      <IconSprite />
+      {children}
+    </div>
+  );
 }
 
-export type NavItem = { key: string; label: string; href: string; count?: number };
+/** One of the kit's icons (icons.tsx). It is decoration: the control it stands in carries the name. */
+export function Icon({ name, size = 16 }: { name: IconName; size?: 16 | 20 | 24 }) {
+  const Glyph = GLYPHS[name];
+  return <Glyph size={size} aria-hidden="true" focusable="false" className="fd-icon" />;
+}
+
+/** The icons that HTML written as a string may use, drawn once as symbols (see iconButtonHtml). */
+function IconSprite() {
+  return (
+    <svg className="fd-sprite" aria-hidden="true" focusable="false">
+      {SPRITE.map((name) => {
+        const Glyph = GLYPHS[name];
+        return (
+          <symbol key={name} id={`fd-icon-${name}`} viewBox="0 0 32 32">
+            <Glyph size={32} />
+          </symbol>
+        );
+      })}
+    </svg>
+  );
+}
+
+export type NavItem = { key: string; label: string; href: string; count?: number; icon?: IconName };
 
 /** The navigation rail: brand, numbered nav, and whatever stands at its foot (children). */
 export function Rail({
@@ -94,50 +128,91 @@ export function Rail({
   children?: ReactNode;
 }) {
   return (
-    <aside className="fd-rail">
-      <div className="fd-brand">
-        <div className="fd-brand-mark">
-          ASM
-          <Lamp tone={live ? "ok" : "warn"} title={live ? "Live updates on" : "Reconnecting"} />
+    <>
+      <aside className="fd-rail">
+        <div className="fd-brand">
+          <div className="fd-brand-mark">
+            ASM
+            <Lamp tone={live ? "ok" : "warn"} title={live ? "Live updates on" : "Reconnecting"} />
+          </div>
+          <span className="fd-meta">ai server monitor</span>
+          <span className="fd-meta">{[version, live ? "live" : "reconnecting"].filter(Boolean).join(" · ")}</span>
         </div>
-        <span className="fd-meta">ai server monitor</span>
-        <span className="fd-meta">{[version, live ? "live" : "reconnecting"].filter(Boolean).join(" · ")}</span>
-      </div>
-      <nav className="fd-nav" aria-label="Main">
-        {items.map((item, i) => (
-          <a key={item.key} className="fd-nav-item" href={item.href} aria-current={item.key === active ? "page" : undefined}>
-            <span>{String(i + 1).padStart(2, "0")}</span>
-            <span>{item.label}</span>
-            {item.count ? <Count>{item.count}</Count> : null}
-          </a>
-        ))}
-      </nav>
-      {meters && <div className="fd-gauges">{meters}</div>}
-      {children && <div className="fd-auto">{children}</div>}
-    </aside>
+        <nav className="fd-nav" aria-label="Main">
+          {items.map((item, i) => (
+            <a key={item.key} className="fd-nav-item" href={item.href} aria-current={item.key === active ? "page" : undefined}>
+              <span>{String(i + 1).padStart(2, "0")}</span>
+              {item.icon && <Icon name={item.icon} />}
+              <span>{item.label}</span>
+              {item.count ? <Count>{item.count}</Count> : null}
+            </a>
+          ))}
+        </nav>
+        {meters && <div className="fd-gauges">{meters}</div>}
+        {children && <div className="fd-auto">{children}</div>}
+      </aside>
+      <BottomBar items={items} active={active} />
+    </>
   );
 }
 
-export function Main({ children }: { children: ReactNode }) {
-  return <main className="fd-main">{children}</main>;
+/** The phone's pages: one icon and a short word each, fixed at the foot of the screen.
+ *  It stands in for the rail's list at phone width and is hidden beside it. */
+export function BottomBar({ items, active }: { items: NavItem[]; active: string }) {
+  return (
+    <nav className="fd-bottom" aria-label="Main">
+      {items.map((item) => (
+        <a key={item.key} className="fd-bottom-item" href={item.href} aria-current={item.key === active ? "page" : undefined}>
+          {item.icon && <Icon name={item.icon} size={20} />}
+          <span>{item.label}</span>
+          {item.count ? <Count>{item.count}</Count> : null}
+        </a>
+      ))}
+    </nav>
+  );
 }
 
-/** The head of a page. Write the title in normal case; actions go in as children. */
+/** The main part of the page. resetOn: when it changes (another page), whatever scrolls goes back to the top. */
+export function Main({ resetOn, children }: { resetOn?: unknown; children: ReactNode }) {
+  const ref = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    ref.current?.scrollTo(0, 0);
+    document.scrollingElement?.scrollTo(0, 0);
+  }, [resetOn]);
+  return (
+    <main ref={ref} className="fd-main">
+      {children}
+    </main>
+  );
+}
+
+/** The head of a page. Write the title in normal case; actions go in as children.
+ *  tools: a row under the title that belongs to the head (the filters of a list): it stays in view with it.
+ *  fold: on a phone the tools fold behind one icon button with this name ("filters").
+ *  A head with something to use in it (actions, tools, a way back) stays at the top while the page scrolls
+ *  and turns compact: a smaller title, no note. */
 export function PageHeader({
   title,
   note,
   back,
   meta,
+  tools,
+  fold,
   children,
 }: {
   title: string;
   note?: ReactNode;
   back?: { label: string; href: string };
   meta?: ReactNode;
+  tools?: ReactNode;
+  fold?: string;
   children?: ReactNode;
 }) {
+  const [open, setOpen] = useState(false);
+  const toolsId = useId();
+  const folds = Boolean(tools && fold);
   return (
-    <header className="fd-head">
+    <header className={cx("fd-head", Boolean(children || tools || back) && "fd-head-sticky")}>
       <div className="fd-head-text">
         {(back || meta) && (
           <div className="fd-head-over">
@@ -152,8 +227,97 @@ export function PageHeader({
         <h1>{title}</h1>
         {note && <p className="fd-head-note">{note}</p>}
       </div>
-      {children && <div className="fd-head-actions">{children}</div>}
+      {(children || folds) && (
+        <div className="fd-head-actions">
+          {children}
+          {folds && (
+            <div className="fd-head-fold">
+              <IconButton icon="filter" label={fold!} aria-expanded={open} aria-controls={toolsId} onClick={() => setOpen(!open)} />
+            </div>
+          )}
+        </div>
+      )}
+      {tools && (
+        <div id={toolsId} className={cx("fd-head-tools", folds && "fd-head-tools-folds", open && "fd-head-tools-open")}>
+          {tools}
+        </div>
+      )}
     </header>
+  );
+}
+
+/** Panes side by side that fill the rest of the window and scroll each on its own (a list and what is open in it).
+ *  On a phone they stand under each other and the page scrolls. */
+export function Panes({ children }: { children: ReactNode }) {
+  return <div className="fd-panes">{children}</div>;
+}
+
+/** One of the Panes. side: the narrow one at the left (a list of conversations, sections, domains).
+ *  bare: no box of its own, for panels under each other. foot: stays at its foot (a composer, a save bar).
+ *  resetOn: when it changes, the pane scrolls back to the top. endOn: when it changes, it scrolls to its end
+ *  (a conversation that grows); on a phone, where the page scrolls instead, the page does. With onSubmit it is a form. */
+export function Pane({
+  side,
+  bare,
+  label,
+  title,
+  meta,
+  aside,
+  foot,
+  resetOn,
+  endOn,
+  id,
+  onSubmit,
+  children,
+}: {
+  side?: boolean;
+  bare?: boolean;
+  /** Its name for assistive tech, when it has no title. */
+  label?: string;
+  title?: ReactNode;
+  meta?: ReactNode;
+  aside?: ReactNode;
+  foot?: ReactNode;
+  resetOn?: unknown;
+  endOn?: unknown;
+  children?: ReactNode;
+} & AsForm) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    ref.current?.scrollTo(0, 0);
+  }, [resetOn]);
+  useEffect(() => {
+    const el = ref.current;
+    if (endOn === undefined || !el) return;
+    if (getComputedStyle(el).overflowY === "auto") el.scrollTo(0, el.scrollHeight);
+    else document.scrollingElement?.scrollTo(0, document.scrollingElement.scrollHeight);
+  }, [endOn]);
+  const className = cx("fd-pane", side && "fd-pane-side", bare && "fd-pane-bare");
+  const body = (
+    <>
+      {(title || aside) && (
+        <div className="fd-panel-head">
+          {title && <h2>{title}</h2>}
+          {meta && <span className="fd-meta">{meta}</span>}
+          {aside && <div className="fd-panel-aside">{aside}</div>}
+        </div>
+      )}
+      <div ref={ref} className="fd-pane-scroll">
+        {children}
+      </div>
+      {foot && <div className="fd-pane-foot">{foot}</div>}
+    </>
+  );
+  if (onSubmit)
+    return (
+      <form id={id} className={className} aria-label={label} onSubmit={onSubmit}>
+        {body}
+      </form>
+    );
+  return (
+    <section id={id} className={className} aria-label={label}>
+      {body}
+    </section>
   );
 }
 
@@ -704,9 +868,17 @@ function SortableRow({
   );
 }
 
-/** Controls in a row above a list: filters, a search box, bulk buttons. */
-export function Toolbar({ children }: { children: ReactNode }) {
-  return <div className="fd-toolbar">{children}</div>;
+/** Controls in a row above a list: filters, a search box, bulk buttons.
+ *  side: what stands over the side pane of Panes (a search box), exactly as wide as it; the rest then
+ *  lines up with the main pane. */
+export function Toolbar({ side, children }: { side?: ReactNode; children: ReactNode }) {
+  if (side === undefined) return <div className="fd-toolbar">{children}</div>;
+  return (
+    <div className="fd-toolbar fd-toolbar-panes">
+      <div className="fd-toolbar-side">{side}</div>
+      <div className="fd-toolbar fd-toolbar-main">{children}</div>
+    </div>
+  );
 }
 
 /** Fields in columns that collapse to one on a narrow screen. */
@@ -724,13 +896,83 @@ type NoLook<T> = Omit<T, "className" | "style">;
 
 /** Labels are lowercase verbs. Primary at most once per panel; warn is for something that changes the server;
  *  danger deletes something for good. */
-export function Button({ variant, block, type = "button", toEnd, ...rest }: ButtonLook & Pick<Place, "toEnd"> & NoLook<ButtonHTMLAttributes<HTMLButtonElement>>) {
-  return <button {...rest} type={type} className={buttonClass({ variant, block })} style={place({ toEnd })} />;
+/** icon: an icon before the word, for the one main action of a page (save, new conversation). */
+export function Button({
+  variant,
+  block,
+  icon,
+  type = "button",
+  toEnd,
+  children,
+  ...rest
+}: ButtonLook & { icon?: IconName } & Pick<Place, "toEnd"> & NoLook<ButtonHTMLAttributes<HTMLButtonElement>>) {
+  return (
+    <button {...rest} type={type} className={buttonClass({ variant, block })} style={place({ toEnd })}>
+      {icon && <Icon name={icon} />}
+      {children}
+    </button>
+  );
 }
 
-/** A link that looks like a button. */
-export function LinkButton({ variant, block, ...rest }: ButtonLook & NoLook<AnchorHTMLAttributes<HTMLAnchorElement>>) {
-  return <a {...rest} className={buttonClass({ variant, block })} />;
+/** A link that looks like a button. icon: as for Button. */
+export function LinkButton({ variant, block, icon, children, ...rest }: ButtonLook & { icon?: IconName } & NoLook<AnchorHTMLAttributes<HTMLAnchorElement>>) {
+  return (
+    <a {...rest} className={buttonClass({ variant, block })}>
+      {icon && <Icon name={icon} />}
+      {children}
+    </a>
+  );
+}
+
+/** A button that shows only an icon: for actions repeated on every item or standing in a toolbar
+ *  (run, copy, delete, test, select all). label is its name, read out and shown as a hint on hover,
+ *  focus or long press; hint, when given, is a longer hint shown instead (the name stays label).
+ *  count: a number shown beside the icon (how many it acts on). small: for a row or a code block. */
+export function IconButton({
+  icon,
+  label,
+  hint,
+  count,
+  variant,
+  small,
+  type = "button",
+  toEnd,
+  ...rest
+}: {
+  icon: IconName;
+  label: string;
+  hint?: string;
+  count?: number;
+  variant?: "default" | "primary" | "warn" | "danger";
+  small?: boolean;
+} & Pick<Place, "toEnd"> &
+  Omit<NoLook<ButtonHTMLAttributes<HTMLButtonElement>>, "children" | "title" | "aria-label">) {
+  const hintId = useId();
+  const name = count === undefined ? label : `${label} (${count})`;
+  const describes = hint !== undefined && hint !== name;
+  return (
+    <>
+      <button
+        {...rest}
+        {...({ interestfor: hintId } as object)}
+        type={type}
+        aria-label={name}
+        aria-describedby={describes ? hintId : undefined}
+        className={cx(buttonClass({ variant }), "fd-btn-icon", small && "fd-btn-small")}
+        style={place({ toEnd })}
+      >
+        <Icon name={icon} />
+        {count !== undefined && (
+          <span className="fd-btn-count" aria-hidden="true">
+            {count}
+          </span>
+        )}
+      </button>
+      <div id={hintId} className="fd-hint" role={describes ? "tooltip" : undefined} {...({ popover: "hint" } as object)}>
+        {describes ? hint : name}
+      </div>
+    </>
+  );
 }
 
 /** label names the switch for assistive tech; text, when given, is shown beside it. */
@@ -1308,16 +1550,46 @@ export function Code({
   );
 }
 
-/** A shell command with its button attached (action). */
+/** A shell command with its buttons (action: small IconButtons) at its top right corner. */
 export function Command({ comment, wrap, action, children, ...where }: { comment?: ReactNode; wrap?: boolean; action?: ReactNode; children: ReactNode } & Place) {
   return (
     <div className="fd-command" style={place(where)}>
       <Code comment={comment} wrap={wrap}>
         {children}
       </Code>
-      {action}
+      {action && <div className="fd-command-actions">{action}</div>}
     </div>
   );
+}
+
+// ---- the same parts as HTML text: for Markdown turned into HTML (Prose), where React draws nothing ----
+
+const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** An IconButton written as HTML. Prose puts in its icon and its hint once the HTML is on the page.
+ *  data: its data-* attributes (what a click handler reads). */
+export function iconButtonHtml({ icon, label, hint, warn, data }: { icon: IconName; label: string; hint?: string; warn?: boolean; data?: Record<string, string> }): string {
+  const attributes = Object.entries(data ?? {})
+    .map(([key, value]) => ` data-${key}="${escapeHtml(value)}"`)
+    .join("");
+  return (
+    `<button type="button" class="${cx("fd-btn fd-btn-icon fd-btn-small", warn && "fd-btn-warn")}" aria-label="${escapeHtml(label)}"` +
+    ` data-hint="${escapeHtml(hint ?? label)}"${attributes}><span class="fd-icon-slot" data-icon="${icon}"></span></button>`
+  );
+}
+
+/** A Command written as HTML: the inside of its pre (already escaped) and its buttons (iconButtonHtml). */
+export function commandHtml(code: string, actions: string): string {
+  return `<div class="fd-command"><pre class="fd-code">${code}</pre><div class="fd-command-actions">${actions}</div></div>`;
+}
+
+const iconSvg = (icon: string) => `<svg class="fd-icon" width="16" height="16" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="#fd-icon-${icon}"></use></svg>`;
+
+/** Changes the icon and the name of a button written by iconButtonHtml (copy → copied, run → running…). */
+export function setIconButton(button: HTMLElement, icon: IconName, label: string) {
+  button.setAttribute("aria-label", label);
+  const slot = button.querySelector<HTMLElement>(".fd-icon-slot");
+  if (slot) slot.innerHTML = iconSvg(icon);
 }
 
 /** A section that opens. inline: a small one inside running text. Leave open undefined to let the reader toggle it.
@@ -1664,7 +1936,116 @@ export function TestLine({ ok, running, children }: { ok?: boolean; running?: bo
 /** Text written by a model or a person as Markdown, already turned into safe HTML by the caller.
  *  onClick hears clicks on what is inside (the run buttons of commands). */
 export function Prose({ html, onClick }: { html: string; onClick?: (e: MouseEvent<HTMLDivElement>) => void }) {
-  return <div className="fd-md" onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />;
+  const ref = useRef<HTMLDivElement>(null);
+  const prefix = useId();
+  // Buttons written by iconButtonHtml get their icon (a use of the Shell's symbol: the sanitizer keeps no
+  // svg use) and their hint (a popover the sanitizer would remove), the same as an IconButton.
+  useLayoutEffect(() => {
+    const root = ref.current;
+    if (!root) return;
+    root.querySelectorAll<HTMLElement>(".fd-icon-slot[data-icon]").forEach((slot) => {
+      slot.innerHTML = iconSvg(slot.dataset.icon!);
+    });
+    root.querySelectorAll<HTMLButtonElement>("button[data-hint]").forEach((button, i) => {
+      const id = `${prefix}hint${i}`;
+      const text = button.dataset.hint!;
+      const hint = document.createElement("div");
+      hint.id = id;
+      hint.className = "fd-hint";
+      hint.setAttribute("popover", "hint");
+      hint.textContent = text;
+      if (text !== button.getAttribute("aria-label")) {
+        hint.setAttribute("role", "tooltip");
+        button.setAttribute("aria-describedby", id);
+      }
+      button.setAttribute("interestfor", id);
+      button.after(hint);
+    });
+  }, [html, prefix]);
+  return <div ref={ref} className="fd-md" onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/** Cards under each other, with room between them so each stands apart. */
+export function Cards({ children }: { children: ReactNode }) {
+  return <div className="fd-cards">{children}</div>;
+}
+
+/** A box for one of several things of the same kind (an MCP server, a header): its head is always seen,
+ *  its form opens and closes. Closed unless open is asked for: defaultOpen, or reveal (it has an error,
+ *  it was just added; when reveal turns true the card opens). Searching the page for text inside opens it too.
+ *  status: on or off; meta: a line beside the name; aside: its buttons (always reachable);
+ *  below: under the head whether open or not (the outcome of a test). */
+export function Card({
+  title,
+  status,
+  meta,
+  aside,
+  defaultOpen,
+  reveal,
+  below,
+  children,
+}: {
+  title: ReactNode;
+  status?: ReactNode;
+  meta?: ReactNode;
+  aside?: ReactNode;
+  defaultOpen?: boolean;
+  reveal?: boolean;
+  below?: ReactNode;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(Boolean(defaultOpen || reveal));
+  const bodyId = useId();
+  const body = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (reveal) setOpen(true);
+  }, [reveal]);
+  // hidden="until-found": closed, yet the browser's find in page still reaches the fields and opens the card
+  useLayoutEffect(() => {
+    const el = body.current;
+    if (!el) return;
+    if (open) el.removeAttribute("hidden");
+    else el.setAttribute("hidden", "until-found");
+  }, [open]);
+  useEffect(() => {
+    const el = body.current;
+    if (!el) return;
+    const found = () => setOpen(true);
+    el.addEventListener("beforematch", found);
+    return () => el.removeEventListener("beforematch", found);
+  }, []);
+  return (
+    <section className={cx("fd-card", open && "fd-card-open")}>
+      <div className="fd-card-head">
+        <h3 className="fd-card-title">
+          <button type="button" className="fd-card-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen(!open)}>
+            <Icon name="chevron" />
+            <span>{title}</span>
+          </button>
+        </h3>
+        {status}
+        {meta && <span className="fd-meta fd-card-meta">{meta}</span>}
+        {aside && <div className="fd-card-aside">{aside}</div>}
+      </div>
+      {below}
+      <div id={bodyId} ref={body} className="fd-card-body">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/** The box a message is written in, with its buttons inside at the bottom right (send, stop).
+ *  children: the Textarea. It is a form; Enter handling stays with the page. */
+export function Composer({ id, onSubmit, actions, children }: { actions: ReactNode; children: ReactNode } & AsForm) {
+  return (
+    <form id={id} className="fd-composer" onSubmit={onSubmit}>
+      <div className="fd-composer-box">
+        {children}
+        <div className="fd-composer-actions">{actions}</div>
+      </div>
+    </form>
+  );
 }
 
 /** Text that shows its first three lines until the reader asks for the rest; opened, it keeps its line breaks. */
