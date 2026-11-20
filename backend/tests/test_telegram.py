@@ -23,8 +23,7 @@ from ai_server_monitor.main import create_app
 from ai_server_monitor.outputs import telegram as telegram_module
 from ai_server_monitor.outputs.telegram import (
     ID_COOLDOWN,
-    html_messages,
-    md_to_html,
+    markdown_messages,
     split_message,
 )
 
@@ -41,6 +40,7 @@ pytestmark = pytest.mark.usefixtures("skip_evidence")
 
 FINDING = {"severity": "warn", "title": "/ is 88% full", "detail": "12 GB free"}
 JSON_PARAMS = {
+    "entities",
     "reply_markup",
     "commands",
     "allowed_updates",
@@ -65,6 +65,8 @@ class FakeTelegram:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.bad_paths: list[str] = []
         self.fail_get_updates = 0
+        self.refuse_entities = False
+        """sendMessage with entities answers 400, as Telegram does for entities it cannot use."""
         self._updates: list[dict[str, Any]] = []
         self._update_id = 100
         self._message_id = 1000
@@ -94,6 +96,13 @@ class FakeTelegram:
         if method == "getMe":
             user = {"id": 1, "is_bot": True, "first_name": "ASM", "username": "my_asm_bot"}
             return httpx.Response(200, json={"ok": True, "result": user})
+        if method == "sendMessage" and self.refuse_entities and "entities" in body:
+            refused = {
+                "ok": False,
+                "error_code": 400,
+                "description": "Bad Request: can't parse entities",
+            }
+            return httpx.Response(400, json=refused)
         if method == "sendMessage":
             self._message_id += 1
             result = {
@@ -110,6 +119,16 @@ class FakeTelegram:
 
     def texts(self, chat: int | None = None) -> list[str]:
         return [b["text"] for b in self.of("sendMessage") if chat in (None, b["chat_id"])]
+
+
+def marked(body: dict[str, Any], kind: str) -> list[str]:
+    """The pieces of a sent message's text its `kind` entities (bold, code, …) cover."""
+    raw = body["text"].encode("utf-16-le")  # entity offsets count UTF-16 units
+    return [
+        raw[e["offset"] * 2 : (e["offset"] + e["length"]) * 2].decode("utf-16-le")
+        for e in body.get("entities") or []
+        if e["type"] == kind
+    ]
 
 
 def wait_for(condition: Callable[[], Any], timeout: float = 8.0) -> Any:
@@ -229,16 +248,60 @@ def test_split_keeps_every_piece_within_4096_and_cuts_at_paragraphs() -> None:
     assert all(len(p) <= 4096 for p in split_message(lines, 4096))
 
 
-def test_markdown_becomes_safe_telegram_html_and_splits_without_cutting_tags() -> None:
-    assert md_to_html("## Findings\n- **Disk** is `/data` & <full>") == (
-        "<b>Findings</b>\n• <b>Disk</b> is <code>/data</code> &amp; &lt;full&gt;"
-    )
-    report = "\n\n".join(f"## Section {i}\n- **item** & <x> " + "word " * 300 for i in range(12))
-    pieces = html_messages(report)
-    assert len(pieces) > 1 and all(len(p) <= 4096 for p in pieces)
-    for piece in pieces:  # every tag that opens also closes inside the same message
-        assert piece.count("<b>") == piece.count("</b>")
-        assert "<x>" not in piece and "&lt;x&gt;" in piece
+def utf16(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def entities(markdown: str) -> tuple[str, list[dict[str, Any]]]:
+    """The one message `markdown` becomes, its entities as dicts."""
+    [(text, found)] = markdown_messages(markdown)
+    return text, [e.to_dict() for e in found]
+
+
+def test_markdown_becomes_text_and_entities() -> None:
+    text, found = entities("```bash\ndf -h /\n```")
+    assert text == "df -h /"
+    assert found == [{"type": "pre", "offset": 0, "length": 7, "language": "bash"}]
+
+    text, found = entities("Run `df -h` and **look**.")
+    assert text == "Run df -h and look."
+    assert found == [
+        {"type": "code", "offset": 4, "length": 5},
+        {"type": "bold", "offset": 14, "length": 4},
+    ]
+
+    text, found = entities("# Disks\n- one\n- two")
+    assert text == "Disks\n⦁ one\n⦁ two\n"  # no symbol (the package's default 📌) before a heading
+    assert found == [
+        {"type": "underline", "offset": 0, "length": 5},
+        {"type": "bold", "offset": 0, "length": 5},
+    ]
+
+
+def test_offsets_count_utf16_units_after_cyrillic_and_emoji() -> None:
+    markdown = "Диск почти полон 💾:\n\n```bash\ndf -h /\n```"
+    text, found = entities(markdown)
+    [pre] = found
+    assert pre["type"] == "pre" and pre["language"] == "bash"
+    start = text.index("df -h")  # Python counts code points, Telegram UTF-16 units
+    assert pre["offset"] == utf16(text[:start])
+    assert pre["length"] == utf16("df -h /")
+    assert pre["offset"] != start  # the emoji is two units
+
+
+def test_a_long_message_is_split_with_every_entity_inside_its_piece() -> None:
+    lead = "Проверка диска. " * 252  # Cyrillic up to just before the 4096 boundary
+    block = "```bash\n" + "\n".join(f"echo line {i}" for i in range(20)) + "\n```"
+    pieces = markdown_messages(f"{lead}\n\n{block}\n\nDone **now**.")
+    assert len(pieces) >= 2
+    for text, found in pieces:
+        assert utf16(text) <= 4096
+        for entity in found:
+            assert entity.offset >= 0 and entity.offset + entity.length <= utf16(text)
+    pres = [e for _, found in pieces for e in found if e.type == "pre"]
+    assert pres and all(e.language == "bash" for e in pres)
+    joined = "".join(text for text, _ in pieces)
+    assert all(f"echo line {i}" in joined for i in range(20))
 
 
 # --------------------------------------------------------------------------- the transport
@@ -552,7 +615,8 @@ def test_one_message_per_run_with_approve_all_reject_all_and_review(
         assert len(tg.of("sendMessage")) == 1  # 40 items, ONE message
 
         text = sent[0]["text"]
-        assert text.startswith("<b>Approval needed #1</b>\nNightly run: fake_write × 40")
+        assert text.startswith("Approval needed #1\nNightly run: fake_write × 40")
+        assert marked(sent[0], "bold") == ["Approval needed #1"]
         assert text.count("• ") == 10 and "+30 more" in text and "asked by: scheduler" in text
         rows = sent[0]["reply_markup"]["inline_keyboard"]
         approve, reject = rows[0]
@@ -770,13 +834,34 @@ def test_free_text_goes_to_the_chat_engine_one_session_per_telegram_chat(
     with running(app, tg) as client:
         ask(client, tg, message("how is the server?"), 1)
         ask(client, tg, message("and now?"), 2)
-        assert tg.texts() == ["The server is <b>fine</b>.", "Still fine."]
+        assert tg.texts() == ["The server is fine.", "Still fine."]
         sessions = client.get("/api/chat/sessions").json()
         assert sessions["total"] == 1 and sessions["items"][0]["channel"] == "telegram"
         # The second question saw the first exchange.
         replay = [m["content"] for m in llm.requests[-1]["messages"] if m["role"] != "system"]
         assert replay[:2] == ["how is the server?", "The server is **fine**."]
-        assert tg.of("sendMessage")[0]["parse_mode"] == "HTML"
+        first = tg.of("sendMessage")[0]
+        assert marked(first, "bold") == ["fine"] and "parse_mode" not in first
+
+
+def test_a_message_telegram_refuses_is_sent_again_as_plain_text_and_logged(
+    bootstrap: Bootstrap, caplog: pytest.LogCaptureFixture
+) -> None:
+    tg = FakeTelegram()
+    tg.refuse_entities = True
+    app = make_app(bootstrap, tg, llm=FakeLLM(say("The server is **fine**.")))
+    log_name = "ai_server_monitor.outputs.telegram"
+    with caplog.at_level(logging.WARNING, logger=log_name), running(app, tg) as client:
+        ask(client, tg, message("how is the server?"), 2)
+        settle()
+    refused, plain = tg.of("sendMessage")
+    assert refused["text"] == plain["text"] == "The server is fine."
+    assert refused["entities"] and "entities" not in plain and "parse_mode" not in plain
+    [record] = [r for r in caplog.records if "refused a message" in r.getMessage()]
+    assert "can't parse entities" in record.getMessage().lower()
+    assert (
+        "'The server is fine.'" in record.getMessage() and '"type": "bold"' in record.getMessage()
+    )
 
 
 def _age_sessions(client: Any, ctx: Any, seconds: float) -> None:
@@ -849,18 +934,20 @@ def test_summary_changed_sends_first_then_only_when_the_picture_changes(
     with running(app, tg) as client:
         run_job(client, "summary")
         [first] = tg.texts()
-        assert first.startswith("⚠️ <b>Warning</b> — Disk is filling up.")
+        assert first.startswith("⚠️ Warning — Disk is filling up.")
+        assert marked(tg.of("sendMessage")[0], "bold") == ["Warning"]
         assert "/ is 88% full" in first and "12 GB free" in first and "More text" not in first
         run_job(client, "summary")
         assert len(tg.texts()) == 1  # identical picture: nothing new
         run_job(client, "summary")
         assert len(tg.texts()) == 1  # only an info finding was added: not worth a message
         run_job(client, "summary")
-        assert len(tg.texts()) == 2 and tg.texts()[1].startswith("🔴 <b>Critical</b>")
+        assert len(tg.texts()) == 2 and tg.texts()[1].startswith("🔴 Critical")
         run_job(client, "summary")
         last = tg.texts()[2]
-        assert "&lt;b&gt;x&lt;/b&gt;" in last and "<b>x</b>" not in last  # escaped
-        assert tg.of("sendMessage")[-1]["parse_mode"] == "HTML"
+        # HTML in the model's text is dropped by telegramify-markdown (its text stays)
+        assert "• 🔴 x — 12 GB free" in last and "<b>" not in last
+        assert marked(tg.of("sendMessage")[-1], "bold") == ["Critical"]
 
 
 def test_summary_changed_does_not_resend_after_a_restart(
@@ -892,7 +979,7 @@ def test_summary_every_sends_each_run_and_only_summaries(
     with running(app, tg) as client:
         run_job(client, "summary")
         run_job(client, "summary")
-        assert len(tg.texts()) == 2 and tg.texts()[0].startswith("✅ <b>OK</b> — Quiet.")
+        assert len(tg.texts()) == 2 and tg.texts()[0].startswith("✅ OK — Quiet.")
         run_job(client, "storage")  # a topic job is not a summary
         assert len(tg.texts()) == 2
 
@@ -923,7 +1010,7 @@ def test_summary_command_runs_it_and_replies_here_others_get_the_change(
         asker = tg.texts(CHAT)
         assert "Running" in asker[0] and len(asker) == 2  # no second copy for the asker
         assert "Disk is filling up." in asker[1] and "/ is 88% full" in asker[1]
-        assert tg.texts(OTHER)[0].startswith("⚠️ <b>Warning</b>")
+        assert tg.texts(OTHER)[0].startswith("⚠️ Warning")
         assert len(tg.texts(OTHER)) == 1
         # the asker's run counts as seen: the same picture later is not news
         models.script = [finish("warn", "Disk is filling up.", [FINDING])]
@@ -945,7 +1032,8 @@ def test_run_command_runs_a_job_and_replies_with_its_result(
         wait_for(lambda: len(tg.texts()) >= 2)
         running_text, result = tg.texts()[:2]
         assert running_text.startswith("Running <b>")
-        assert result.startswith("⚠️ <b>") and "Warning" in result
+        assert result.startswith("⚠️ Storage — Warning")
+        assert marked(tg.of("sendMessage")[1], "bold") == ["Storage"]
         assert "Root is 88% full." in result and "/ is 88% full" in result
         runs = client.get("/api/jobs/storage/runs").json()["items"]
         assert len(runs) == 1 and runs[0]["trigger"] == "manual"
@@ -981,7 +1069,7 @@ def test_status_command_shows_the_headline_and_one_line_per_job(
         run_job(client, "summary")
         text = ask(client, tg, message("/status"), 1)[0]
     lines = text.splitlines()
-    assert lines[0].startswith("🔴 <b>Critical</b> — Server in trouble.")
+    assert lines[0].startswith("🔴 Critical — Server in trouble.")
     job_lines = [ln for ln in lines if ln.startswith("• ")]
     assert len(job_lines) == len(names)
     storage = next(ln for ln in job_lines if names["storage"] in ln)

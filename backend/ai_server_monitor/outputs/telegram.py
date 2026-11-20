@@ -7,8 +7,11 @@ without a reply. The one exception is `/id`: it answers in any chat (so the id t
 allowlist can be found), at most once per `ID_COOLDOWN` seconds per chat. The bot token is only
 ever used to build request URLs: it is not logged, and errors never contain request URLs.
 
-Messages are sent as HTML (only `&`, `<`, `>` need escaping, unlike MarkdownV2) and split
-below Telegram's 4096-character limit on paragraph boundaries.
+Text with the model's Markdown in it (chat answers, run results, the summary, /status, the
+explain header, approvals) is built as Markdown, the code-built parts escaped, and sent as
+plain text plus entities made by telegramify-markdown, which also splits it below Telegram's
+4096 limit. Messages built only by code are sent as HTML (only `&`, `<`, `>` need escaping)
+and split on paragraph boundaries.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    MessageEntity,
     Update,
 )
 from telegram.constants import ParseMode
@@ -45,6 +49,7 @@ from telegram.ext import (
     filters,
 )
 from telegram.request import HTTPXRequest
+from telegramify_markdown import RenderConfig, convert, split_entities
 
 from ..actions import ActionError, Conflict, NotFound
 from ..actions.service import outcome_text
@@ -107,27 +112,45 @@ WORDS = {"ok": "OK", "warn": "Warning", "crit": "Critical", "error": "Error"}
 # --------------------------------------------------------------------------- formatting
 
 
-def md_to_html(text: str) -> str:
-    """The small Markdown subset answers use → Telegram HTML."""
-    out: list[str] = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        heading = re.match(r"^#{1,6}\s+(.*)$", stripped)
-        if heading:
-            out.append(f"<b>{_inline(heading.group(1))}</b>")
-            continue
-        bullet = re.match(r"^[-*]\s+(.*)$", stripped)
-        if bullet:
-            out.append(f"• {_inline(bullet.group(1))}")
-            continue
-        out.append(_inline(line))
-    return "\n".join(out)
+def _render_config() -> RenderConfig:
+    """telegramify-markdown's settings: headings stay bold and underlined, without the symbol
+    (📌, ✏️, …) it puts in front of them by default."""
+    config = RenderConfig.isolated()
+    for level in range(1, 7):
+        setattr(config.markdown_symbol, f"heading_level_{level}", "")
+    return config
 
 
-def _inline(text: str) -> str:
-    escaped = html.escape(text, quote=False)
-    escaped = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", escaped)
-    return re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", escaped)
+RENDER = _render_config()
+
+
+def md_escape(text: str) -> str:
+    """`text` as literal Markdown: every ASCII punctuation character backslash-escaped, which
+    CommonMark reads as that character."""
+    return re.sub(r"([!-/:-@\[-`{-~])", r"\\\1", text)
+
+
+def md_code(text: str) -> str:
+    """`text` as an inline code span: fenced by more backticks than it holds in a row."""
+    fence = "`" * (max((len(run) for run in re.findall(r"`+", text)), default=0) + 1)
+    return f"{fence} {text} {fence}"
+
+
+def markdown_messages(
+    markdown: str, limit: int = MESSAGE_LIMIT
+) -> list[tuple[str, list[MessageEntity]]]:
+    """Markdown → (text, entities) messages of at most `limit` UTF-16 units, converted and
+    split by telegramify-markdown (a code block at a boundary can be cut into two blocks)."""
+    text, entities = convert(markdown, config=RENDER)
+    return [
+        (piece, _entities(piece_entities))
+        for piece, piece_entities in split_entities(text, entities, limit)
+    ]
+
+
+def _entities(entities: list[Any]) -> list[MessageEntity]:
+    """telegramify-markdown's entities as python-telegram-bot's."""
+    return [MessageEntity(**entity.to_dict()) for entity in entities]
 
 
 def split_message(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
@@ -169,19 +192,6 @@ def _hard_split(block: str, limit: int) -> list[str]:
     if current:
         parts.append(current)
     return parts
-
-
-def html_messages(markdown: str, limit: int = MESSAGE_LIMIT) -> list[str]:
-    """Markdown → HTML messages within the limit. Blocks are converted one by one, so a
-    split never lands inside a tag; an oversized block is split first, then converted."""
-    blocks: list[str] = []
-    for block in markdown.split("\n\n"):
-        converted = md_to_html(block)
-        if len(converted) <= limit:
-            blocks.append(converted)
-        else:
-            blocks.extend(md_to_html(part) for part in _hard_split(block, limit // 2))
-    return split_message("\n\n".join(blocks), limit) if blocks else [""]
 
 
 def _one_line(text: str, limit: int) -> str:
@@ -241,35 +251,42 @@ def _attention(run: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _finding_lines(findings: list[dict[str, Any]], limit: int) -> list[str]:
+    """Markdown lines: title and detail are the model's text, the evidence is a code span."""
     lines = []
     for f in findings[:limit]:
         icon = ICONS["crit"] if f.get("severity") == "crit" else ICONS["warn"]
         detail = _one_line(str(f.get("detail") or ""), 120)
         lines.append(
-            f"• {icon} {html.escape(_one_line(str(f.get('title') or ''), 120))}"
-            + (f" — {html.escape(detail)}" if detail else "")
-            + (" <i>(not confirmed by command output)</i>" if f.get("verified") is False else "")
+            f"• {icon} {_one_line(str(f.get('title') or ''), 120)}"
+            + (f" — {detail}" if detail else "")
+            + (" _(not confirmed by command output)_" if f.get("verified") is False else "")
         )
         evidence = [str(e) for e in f.get("evidence") or [] if str(e).strip()]
         if evidence:
-            lines.append(f"  <code>{html.escape(_one_line(evidence[0], 120))}</code>")
+            lines.append(md_code(_one_line(evidence[0], 120)))
     if len(findings) > limit:
-        lines.append(f"+{len(findings) - limit} more")
+        lines.append(md_escape(f"+{len(findings) - limit} more"))
     return lines
 
 
+def _run_text(text: str, status: str) -> str:
+    """A run's text as Markdown: the model's summary as it is; a failed run's text is the
+    app's own error message, escaped."""
+    return md_escape(text) if status == "error" else text
+
+
 def summary_message(run: dict[str, Any]) -> str:
-    """Status, headline and the warnings of a summary run (HTML)."""
+    """Status, headline and the warnings of a summary run (Markdown)."""
     status = str(run.get("status") or "error")
-    first = html.escape(_one_line(headline(run), 300))
+    first = _run_text(_one_line(headline(run), 300), status)
     lines = [
-        f"{ICONS.get(status, '❔')} <b>{WORDS.get(status, status)}</b>"
+        f"{ICONS.get(status, '❔')} **{WORDS.get(status, status)}**"
         + (f" — {first}" if first else "")
     ]
     for topic in run.get("topics") or []:  # one line per topic job, the fine ones too
         icon = ICONS.get(str(topic.get("status")), "▫️")
-        clause = html.escape(_one_line(str(topic.get("clause") or ""), 120))
-        lines.append(f"{icon} {html.escape(str(topic.get('slug') or ''))}: {clause}")
+        clause = _one_line(str(topic.get("clause") or ""), 120)
+        lines.append(f"{icon} {md_escape(str(topic.get('slug') or ''))}: {clause}")
     attention = _attention(run)
     if attention:
         lines.append("")
@@ -278,12 +295,15 @@ def summary_message(run: dict[str, Any]) -> str:
 
 
 def run_message(name: str, run: dict[str, Any]) -> str:
-    """The result of a run a person asked for: its summary text and all findings (HTML)."""
+    """The result of a run a person asked for: its summary text and all findings (Markdown)."""
     status = str(run.get("status") or "error")
-    lines = [f"{ICONS.get(status, '❔')} <b>{html.escape(name)}</b> — {WORDS.get(status, status)}"]
-    text = (run.get("summary") or run.get("error") or "").strip()
-    if text:
-        lines += ["", md_to_html(text)]
+    lines = [f"{ICONS.get(status, '❔')} **{md_escape(name)}** — {WORDS.get(status, status)}"]
+    summary = (run.get("summary") or "").strip()
+    error = (run.get("error") or "").strip()
+    if summary:
+        lines += ["", summary]
+    elif error:
+        lines += ["", md_escape(error)]
     findings = run.get("findings") or []
     if findings:
         lines.append("")
@@ -548,14 +568,11 @@ class TelegramBot:
         if overall is None:
             lines = ["No summary yet."]
         else:
+            first = _run_text(_one_line(overall.headline, 300), overall.status)
             lines = [
-                f"{ICONS[overall.status]} <b>{WORDS[overall.status]}</b>"
-                + (
-                    f" — {html.escape(_one_line(overall.headline, 300))}"
-                    if overall.headline
-                    else ""
-                )
-                + f" ({_age(overall.finished, now)})"
+                f"{ICONS[overall.status]} **{WORDS[overall.status]}**"
+                + (f" — {first}" if first else "")
+                + md_escape(f" ({_age(overall.finished, now)})")
             ]
         lines.append("")
         for job in data["jobs"]:
@@ -565,8 +582,8 @@ class TelegramBot:
                 else "never ran"
             )
             off = "" if job.enabled else " (off)"
-            lines.append(f"• {html.escape(job.name)}{off} — {state}")
-        await self.send(update.effective_chat.id, "\n".join(lines), markdown=False)  # type: ignore[union-attr]
+            lines.append(md_escape(f"• {job.name}{off} — {state}"))
+        await self.send(update.effective_chat.id, "\n".join(lines))  # type: ignore[union-attr]
 
     async def _jobs(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         now = time.time()
@@ -645,9 +662,7 @@ class TelegramBot:
             await self.send(chat_id, "The run is gone.", markdown=False)
             return
         keyboard = self._explain_keyboard(run_id) if job["kind"] == "summary" else None
-        await self.send(
-            chat_id, run_message(job["name"], run), markdown=False, reply_markup=keyboard
-        )
+        await self.send(chat_id, run_message(job["name"], run), reply_markup=keyboard)
 
     # ------------------------------------------------------------------ chat
 
@@ -705,19 +720,35 @@ class TelegramBot:
         reply_markup: InlineKeyboardMarkup | None = None,
     ) -> list[Message]:
         """Send `text` (Markdown, or ready HTML with markdown=False), split to fit."""
-        pieces = html_messages(text) if markdown else split_message(text)
+        pieces: list[tuple[str, list[MessageEntity] | None]] = (
+            list(markdown_messages(text))
+            if markdown
+            else [(piece, None) for piece in split_message(text)]
+        )
         sent = []
-        for i, piece in enumerate(pieces):
+        for i, (piece, entities) in enumerate(pieces):
             markup = reply_markup if i == len(pieces) - 1 else None  # buttons on the last piece
             try:
-                sent.append(
-                    await self.bot.send_message(
+                if entities is None:
+                    message = await self.bot.send_message(
                         chat_id, piece, parse_mode=ParseMode.HTML, reply_markup=markup
                     )
+                else:
+                    message = await self.bot.send_message(
+                        chat_id, piece, entities=entities, reply_markup=markup
+                    )
+            except BadRequest as exc:  # refused formatting: send it as plain text
+                log.warning(
+                    "telegram: Telegram refused a message (%s), sending it as plain text: "
+                    "%r entities=%s",
+                    exc,
+                    piece,
+                    "[" + ", ".join(e.to_json() for e in entities or []) + "]",
                 )
-            except BadRequest:  # unparsable markup: send it as plain text
-                plain = html.unescape(re.sub(r"<[^>]+>", "", piece))
-                sent.append(await self.bot.send_message(chat_id, plain, reply_markup=markup))
+                if entities is None:
+                    piece = html.unescape(re.sub(r"<[^>]+>", "", piece))
+                message = await self.bot.send_message(chat_id, piece, reply_markup=markup)
+            sent.append(message)
         return sent
 
     async def broadcast(
@@ -799,7 +830,6 @@ class TelegramBot:
             return
         await self.broadcast(
             summary_message(run),
-            markdown=False,
             skip=asked_by,
             reply_markup=self._explain_keyboard(run_id),
         )
@@ -830,7 +860,12 @@ class TelegramBot:
             await self.send(chat_id, f"Cannot explain: {exc}.", markdown=False)
             return
         await self._answer(query, "Explaining…")
-        await self.send(chat_id, html.escape(prepared.label), markdown=False)
+        # "Explain: <the finding's title>" holds the model's text, "Explain: <job> run from
+        # <time>" only the app's.
+        finding = prepared.meta.get("finding")
+        await self.send(
+            chat_id, prepared.label if finding is not None else md_escape(prepared.label)
+        )
         await self._converse(
             chat_id,
             self.app.chat.explain(prepared, channel="telegram", source=f"telegram:{chat_id}"),
@@ -872,24 +907,26 @@ class TelegramBot:
         items = batch.get("items") or []
         waiting = [i for i in items if i.get("status") == "pending"]
         queued = [i for i in items if i.get("status") == "queued"]
+        """The approval message (Markdown): the reason ("why") is the model's text, the rest
+        is the app's and escaped."""
         lines = [
-            f"<b>Approval {'needed ' if waiting else ''}#{batch['id']}</b>",
-            html.escape(str(batch.get("title") or "")),
+            "**" + md_escape(f"Approval {'needed ' if waiting else ''}#{batch['id']}") + "**",
+            md_escape(str(batch.get("title") or "")),
             "",
         ]
         shown = waiting or queued or items
         for item in shown[:MESSAGE_ITEMS]:
-            lines.append("• " + html.escape(_one_line(str(item.get("target") or ""), 90)))
+            lines.append(md_escape("• " + _one_line(str(item.get("target") or ""), 90)))
         if len(shown) > MESSAGE_ITEMS:
-            lines.append(f"+{len(shown) - MESSAGE_ITEMS} more")
+            lines.append(md_escape(f"+{len(shown) - MESSAGE_ITEMS} more"))
         done = {k: v for k, v in (batch.get("counts") or {}).items() if k != "pending"}
         if (waiting or queued) and done:
-            lines.append(f"so far: {outcome_text(done)}{batch.get('queue_note') or ''}")
+            lines.append(md_escape(f"so far: {outcome_text(done)}{batch.get('queue_note') or ''}"))
         lines.append("")
-        lines.append(f"asked by: {html.escape(str(batch.get('source') or ''))}")
+        lines.append(md_escape(f"asked by: {batch.get('source') or ''}"))
         reasons = {i.get("reason") for i in waiting if i.get("reason")}
         if len(reasons) == 1:
-            lines.append(f"why: {html.escape(str(next(iter(reasons))))[:300]}")
+            lines.append(f"why: {str(next(iter(reasons)))[:300]}")
         if expiry and waiting and batch.get("expires_at"):
             minutes = max(int((batch["expires_at"] - time.time()) // 60), 0)
             lines.append(f"expires in about {minutes} min")
@@ -934,9 +971,7 @@ class TelegramBot:
             await self._send_approval(chat_id, batch)
 
     async def _send_approval(self, chat_id: int, batch: dict[str, Any]) -> None:
-        sent = await self.send(
-            chat_id, self._batch_text(batch), markdown=False, reply_markup=self._keyboard(batch)
-        )
+        sent = await self.send(chat_id, self._batch_text(batch), reply_markup=self._keyboard(batch))
         await self.app.db.execute(
             "INSERT OR REPLACE INTO telegram_batch_messages "
             "(batch_id, chat_id, message_id, created_ts) VALUES (?, ?, ?, ?)",
@@ -1031,9 +1066,7 @@ class TelegramBot:
         if message_id is None:
             return
         if original:
-            await self._edit(
-                chat_id, message_id, f"{html.escape(original)}\n\n— {html.escape(note)}"
-            )
+            await self._edit(chat_id, message_id, f"{md_escape(original)}\n\n— {md_escape(note)}")
             return
         with contextlib.suppress(TelegramError):  # too old to read its text: only the buttons go
             await self.bot.edit_message_reply_markup(chat_id, message_id, reply_markup=None)
@@ -1045,12 +1078,14 @@ class TelegramBot:
         text: str,
         keyboard: InlineKeyboardMarkup | None = None,
     ) -> None:
+        """Replace a message's text with `text` (Markdown)."""
+        plain, entities = convert(text, config=RENDER)
         try:
             await self.bot.edit_message_text(
-                text,
+                plain,
                 chat_id=chat_id,
                 message_id=message_id,
-                parse_mode=ParseMode.HTML,
+                entities=_entities(entities),
                 reply_markup=keyboard,  # none: Telegram drops the buttons
             )
         except TelegramError as exc:
@@ -1075,9 +1110,9 @@ class TelegramBot:
         else:
             text = (
                 self._batch_text(batch, expiry=False)
-                + "\n\n<b>"
-                + html.escape(_outcome_line(view or batch))
-                + "</b>"
+                + "\n\n**"
+                + md_escape(_outcome_line(view or batch))
+                + "**"
             )
             keyboard = None
         for chat_id, message_id in known:
