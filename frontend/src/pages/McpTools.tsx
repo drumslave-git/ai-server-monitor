@@ -200,7 +200,7 @@ export function McpToolsPage() {
         <IconButton
           icon={anyClosed ? "expandAll" : "collapseAll"}
           label={anyClosed ? "expand all" : "collapse all"}
-          hint={filtering ? "While searching or filtering, every domain with matches is open" : undefined}
+          hint={filtering ? "Matches stay open while filtering" : undefined}
           disabled={filtering}
           onClick={() => setClosed(anyClosed ? new Set() : new Set(allNames))}
         />
@@ -208,7 +208,7 @@ export function McpToolsPage() {
           icon="selectAll"
           label={filtering ? "select shown" : "select all"}
           count={toOn.length}
-          hint={filtering ? "Switches on every tool the search and filters show" : "Switches on every tool"}
+          hint={filtering ? "Switch on the shown tools" : "Switch on all tools"}
           disabled={toOn.length === 0}
           onClick={() => switchAll(toOn, true)}
         />
@@ -216,7 +216,7 @@ export function McpToolsPage() {
           icon="deselectAll"
           label={filtering ? "deselect shown" : "deselect all"}
           count={toOff.length}
-          hint={filtering ? "Switches off every tool the search and filters show" : "Switches off every tool"}
+          hint={filtering ? "Switch off the shown tools" : "Switch off all tools"}
           disabled={toOff.length === 0}
           onClick={() => switchAll(toOff, false)}
         />

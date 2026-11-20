@@ -942,7 +942,7 @@ export function IconButton({
   Omit<NoLook<ButtonHTMLAttributes<HTMLButtonElement>>, "children" | "title" | "aria-label">) {
   const hintId = useId();
   const name = count === undefined ? label : `${label} (${count})`;
-  const describes = hint !== undefined && hint !== name;
+  const describes = hint !== undefined && hint.toLowerCase() !== name.toLowerCase();
   // A disabled icon button still shows its hint, which is its only label: a native disabled button
   // gets no pointer or focus, so it is marked aria-disabled and does nothing when pressed instead.
   return (
@@ -988,7 +988,7 @@ export function IconLink({
   small?: boolean;
 } & Omit<NoLook<AnchorHTMLAttributes<HTMLAnchorElement>>, "children" | "title" | "aria-label">) {
   const hintId = useId();
-  const describes = hint !== undefined && hint !== label;
+  const describes = hint !== undefined && hint.toLowerCase() !== label.toLowerCase();
   return (
     <>
       <a
@@ -1582,14 +1582,16 @@ export function Code({
   );
 }
 
-/** A shell command with its buttons (action: small IconButtons) in a strip of their own above it, at the right. */
+/** A shell command with its buttons (action: small IconButtons) at the right end of its first line; the
+ *  code wraps before them. */
 export function Command({ comment, wrap, action, children, ...where }: { comment?: ReactNode; wrap?: boolean; action?: ReactNode; children: ReactNode } & Place) {
   return (
     <div className="fd-command" style={place(where)}>
-      <Code comment={comment} wrap={wrap}>
+      <pre className={cx("fd-code", (wrap || Boolean(action)) && "fd-code-wrap")}>
+        {action && <span className="fd-command-actions">{action}</span>}
+        {comment && <span className="fd-dim">{comment}{"\n"}</span>}
         {children}
-      </Code>
-      {action && <div className="fd-command-actions">{action}</div>}
+      </pre>
     </div>
   );
 }
@@ -1612,7 +1614,7 @@ export function iconButtonHtml({ icon, label, hint, warn, data }: { icon: IconNa
 
 /** A Command written as HTML: the inside of its pre (already escaped) and its buttons (iconButtonHtml). */
 export function commandHtml(code: string, actions: string): string {
-  return `<div class="fd-command"><pre class="fd-code">${code}</pre><div class="fd-command-actions">${actions}</div></div>`;
+  return `<div class="fd-command"><pre class="fd-code fd-code-wrap"><span class="fd-command-actions">${actions}</span>${code}</pre></div>`;
 }
 
 const iconSvg = (icon: string) => `<svg class="fd-icon" width="16" height="16" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="#fd-icon-${icon}"></use></svg>`;
@@ -1990,7 +1992,7 @@ export function Prose({ html, onClick }: { html: string; onClick?: (e: MouseEven
       hint.className = "fd-hint";
       hint.setAttribute("popover", "hint");
       hint.textContent = text;
-      if (text !== button.getAttribute("aria-label")) {
+      if (text.toLowerCase() !== button.getAttribute("aria-label")?.toLowerCase()) {
         hint.setAttribute("role", "tooltip");
         button.setAttribute("aria-describedby", id);
       }

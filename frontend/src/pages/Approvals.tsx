@@ -318,7 +318,7 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
         <Panel
           title={`Approval #${extra.id}`}
           aside={
-            <IconLink small icon="close" label="close" hint="Close this approval" href="#/approvals" />
+            <IconLink small icon="close" label="close" hint="Close" href="#/approvals" />
           }
         >
           <BatchCard batch={extra} now={now} focused={false} busy={busy === extra.id} onDecide={decide} onAudit={showAudit} />

@@ -81,7 +81,7 @@ function Loaded({ call }: { call: LlmCall }) {
         <IconButton icon="expandAll" label="expand all" onClick={() => setFold({ open: true, n: (fold?.n ?? 0) + 1 })} />
         <IconButton icon="collapseAll" label="collapse all" onClick={() => setFold({ open: false, n: (fold?.n ?? 0) + 1 })} />
         <IconButton icon={copied ? "copied" : "copy"} label={copied ? "copied" : "copy as JSON"} onClick={copy} />
-        <IconLink icon="download" label="download" hint="Download this call as a JSON file" href={`/api/logs/llm/${call.id}/export`} download />
+        <IconLink icon="download" label="download" hint="Download as JSON" href={`/api/logs/llm/${call.id}/export`} download />
       </PageHeader>
 
       {call.error && (

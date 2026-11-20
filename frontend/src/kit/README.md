@@ -64,7 +64,7 @@ The design kit with live previews of every component: https://claude.ai/artifact
 - Data: `Schedule` and `Lane` (time as cells), `Meter` (an amount out of a maximum shared by the list;
   `fluid`), `Gauge` (one reading now with its label and value, for `Rail` `meters`), `Bar` (a span on a
   shared axis: queued, first part, rest), `Axis`, `Cells`, `Code`
-  (`maxHeight` scrolls inside), `Command` (`action`: its icon buttons in a strip of their own above the command, at the right), `KeyValue`, and `Table` with `Tr` and `Td`: `head` names the
+  (`maxHeight` scrolls inside), `Command` (`action`: its icon buttons at the right end of its first line; the code wraps before them), `KeyValue`, and `Table` with `Tr` and `Td`: `head` names the
   columns, `stack` turns each row into a block of labelled cells where the table is narrower than
   640px (otherwise it scrolls sideways inside itself), `stickyHead` keeps the column names at the top of
   the pane that scrolls (use it with `stack`).

@@ -21,7 +21,7 @@ export function ExplainButton({ runId, finding = null, small }: { runId: number;
       icon="explain"
       small={small}
       label="explain"
-      hint={`Open a new chat that explains ${what} in detail`}
+      hint={`Explain ${what} in a new chat`}
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();

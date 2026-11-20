@@ -55,18 +55,18 @@ export function commandMode(group: string): "read-only" | "write" | "unmarked" {
 /** How long a copy button says "copied". */
 const COPIED_MS = 1500;
 
-const copyButton = (index: number, what: string) =>
-  iconButtonHtml({ icon: "copy", label: "copy", hint: `Copy this ${what} to the clipboard`, data: { copy: String(index) } });
+const copyButton = (index: number) => iconButtonHtml({ icon: "copy", label: "copy", hint: "Copy", data: { copy: String(index) } });
 
 const LABELS = {
   "read-only": "run",
   write: "run (changes the server)",
   unmarked: "run (may change the server)",
 };
+/** The hints: a few words, one line on a phone. */
 const TITLES = {
-  "read-only": "Run this read-only command on the server; the result goes to the chat and the model answers it",
-  write: "Run this command as root on the server (it changes the server); the result goes to the chat",
-  unmarked: "Not marked read-only by the answer: it runs as root and may change the server",
+  "read-only": "Run (read-only)",
+  write: "Run as root (changes the server)",
+  unmarked: "Run as root (may change the server)",
 };
 
 /** One command in the markup of the kit's `Command`: its leading comment lines dim, the
@@ -93,7 +93,7 @@ function render(text: string, runnableNow: boolean): { html: string; commands: s
       code({ text: code, lang }: Tokens.Code) {
         const tag = (lang ?? "").trim().split(/\s+/)[0].toLowerCase();
         if (!SHELLS.has(tag)) {
-          const copy = copyButton(copies.push(code) - 1, "text");
+          const copy = copyButton(copies.push(code) - 1);
           return commandHtml(escape(code), copy);
         }
         const parts = commandGroups(code).map((group) => {
@@ -103,7 +103,7 @@ function render(text: string, runnableNow: boolean): { html: string; commands: s
           const run = runnableNow
             ? iconButtonHtml({ icon: "run", label: LABELS[mode], hint: TITLES[mode], warn: mode !== "read-only", data: { run: String(index), label: LABELS[mode] } })
             : "";
-          return shellCommandHtml(group, run + copyButton(copies.push(command) - 1, "command"));
+          return shellCommandHtml(group, run + copyButton(copies.push(command) - 1));
         });
         // (the commands of one block stand under each other with the gap of the text around them)
         return `<div class="fd-md">${parts.join("")}</div>`;

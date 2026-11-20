@@ -332,10 +332,10 @@ function RunButton({ job, names, disabled, onRun, main }: { job: Job; names: Rec
   const where = job.summaries.map((s) => names[s] ?? s).join(", ");
   const { word, label, hint } =
     job.kind === "summary"
-      ? { word: "run now", label: `Run ${job.name} now: its ${job.members.length} jobs, then the summary`, hint: `Runs its ${job.members.length} jobs one after another, then the summary` }
+      ? { word: "run now", label: `Run ${job.name} now: its ${job.members.length} jobs, then the summary`, hint: `Run its ${job.members.length} jobs, then the summary` }
       : job.summaries.length === 0
         ? { word: "run now", label: `Run ${job.name} now`, hint: undefined }
-        : { word: "run alone", label: `Run ${job.name} alone, without ${where}`, hint: `Runs only this job, not ${where}` };
+        : { word: "run alone", label: `Run ${job.name} alone, without ${where}`, hint: "Run only this job" };
   if (!main) return <IconButton small icon="run" label={label} hint={hint} disabled={disabled} onClick={onRun} />;
   return (
     <Button variant="primary" icon="run" onClick={onRun} disabled={disabled} title={hint} aria-label={label}>
@@ -976,7 +976,7 @@ function JobDetail({ slug, runId }: { slug: string; runId: number | null }) {
         <Notice
           title="Saved"
           action={
-            <IconButton small icon="close" label="dismiss" hint="Dismiss this notice" onClick={() => setNotice(null)} />
+            <IconButton small icon="close" label="dismiss" hint="Dismiss" onClick={() => setNotice(null)} />
           }
         >
           {notice}

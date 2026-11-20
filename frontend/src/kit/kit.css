@@ -243,17 +243,16 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 /* Axis under a strip of cells or a bar */
 .fd-axis { display: flex; justify-content: space-between; min-width: 0; font: 400 12px/1.5 var(--font-mono); color: var(--dim); }
 
-/* Code that wraps; a command with its small buttons in a strip of their own above the code, at
-   its right end, so the code keeps the whole width and never runs under them */
+/* Code that wraps; a command with its small buttons at the right end of its first line, 2px from the
+   block's corner. They float inside the code, so the lines beside them wrap before them and the text
+   never runs under them; a command's code always wraps for that. */
 .fd-code-wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
-.fd-command { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--line); background: var(--bg); anchor-scope: --fd-strip; }
+.fd-command { min-width: 0; border: 1px solid var(--line); background: var(--bg); }
 .fd-command > .fd-code { min-width: 0; border: 0; }
-.fd-command-actions { order: -1; display: flex; justify-content: flex-end; gap: var(--space-1); padding: 2px; border-bottom: 1px solid var(--line); anchor-name: --fd-strip; }
-/* a button's hint opens in the empty part of its own strip, left of the buttons: it covers no text
-   around the block. Where the strip is too narrow for it on one line (a phone), it wraps and runs down
-   over the top of its own block. */
-@supports (position-area: center) {
-  .fd-command-actions > .fd-hint { position-anchor: --fd-strip; position-area: center; justify-self: start; align-self: start; margin: 0; max-width: calc(100% - 4.5rem); position-try-fallbacks: none; }
+.fd-command-actions { float: right; display: flex; gap: var(--space-1); margin: calc(2px - var(--space-2)) calc(2px - var(--space-3)) 0 var(--space-2); white-space: normal; }
+/* a button's hint opens above it, from its right edge to the left: on a phone it stays on the screen */
+@supports (position-area: block-start) {
+  .fd-command-actions .fd-hint { position-area: block-start span-inline-start; }
 }
 
 /* Message header; fold inside running text */
@@ -580,8 +579,8 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 .fd-panes { min-width: 0; display: flex; gap: var(--space-4); }
 .fd-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); }
 .fd-pane:not(.fd-pane-side) { flex: 1 1 0; }
-.fd-pane-side-wide { flex-basis: var(--pane-side-wide); }
 .fd-pane-side { flex: 0 0 var(--pane-side); }
+.fd-pane-side-wide { flex-basis: var(--pane-side-wide); }
 /* one pane alone (a width that shows only the list) takes the whole width */
 .fd-pane-side:only-child { flex: 1 1 auto; }
 .fd-pane-bare { background: none; border: 0; }
@@ -700,4 +699,4 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 
 /* Table stickyHead: no scroll box of its own, so its column names stick to the pane that scrolls */
 .fd-table-wrap-sticky { overflow: visible; }
-.fd-table-wrap-sticky thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); box-shadow: inset 0 -1px var(--line); }
+.fd-table-wrap-sticky thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); box-shadow: inset 0 -1px var(--line-strong); }
