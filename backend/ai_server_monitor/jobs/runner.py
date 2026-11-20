@@ -355,6 +355,7 @@ class JobRunner:
             return {"status": "error", "error": "the model is not configured (Settings)"}
         host = host_line(app.host_env.root)
         language = settings.general.language
+        owner = settings.general.instructions
         scrub = Scrubber(settings)
         # Every command of the run (also the delegated ones) is kept: findings must quote it.
         sources: list[str] = []
@@ -364,11 +365,11 @@ class JobRunner:
         topic_check: TopicCheck | None = None
         if job["kind"] == "summary":
             tools.append(app_delegate(app, None, scrub, host, shell))  # type: ignore[arg-type]
-            instructions = summary_instructions(host, language, job["prompt"])
+            instructions = summary_instructions(host, language, job["prompt"], owner)
             prompt, expected = await self._summary_input(slug)
             topic_check = TopicCheck(expected)
         else:
-            instructions = topic_instructions(host, language, job["prompt"])
+            instructions = topic_instructions(host, language, job["prompt"], owner)
             prompt = "Run the check now, then call final_result."
         sources.append(prompt)  # the summary may quote the topic results it was given
         evidence = EvidenceCheck(sources)

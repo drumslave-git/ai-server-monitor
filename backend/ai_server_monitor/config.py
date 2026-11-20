@@ -162,6 +162,10 @@ class GeneralSettings(_Model):
     timezone: str = ""
     """Time zone of cron schedules, e.g. Europe/Berlin. Empty = the host's own time zone (its
     /etc/timezone or /etc/localtime), UTC when that cannot be read."""
+    instructions: str = Field("", json_schema_extra={"format": "multiline"})
+    """Your standing instructions for the model, in your own words: how this server is run, what
+    matters to you, how answers should look. Added after the built-in instructions of the chat,
+    its worker, topic jobs and summaries. Empty = nothing is added."""
 
     @field_validator("timezone")
     @classmethod

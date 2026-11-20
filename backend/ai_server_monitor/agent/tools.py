@@ -320,7 +320,9 @@ def app_delegate(
     async def run_worker(task: str) -> str:
         cfg = AgentConfig(
             model=app.models.model("worker"),
-            instructions=worker_prompt(host, settings.general.language),
+            instructions=worker_prompt(
+                host, settings.general.language, owner=settings.general.instructions
+            ),
             tools=[app_bash(app, audit_session, shell)],
             max_steps=settings.chat.worker_max_steps,
             tool_timeout_s=settings.chat.tool_timeout.total_seconds(),

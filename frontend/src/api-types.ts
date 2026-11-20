@@ -1189,6 +1189,15 @@ export interface components {
              */
             docker_url: string;
             /**
+             * Instructions
+             * Format: multiline
+             * @description Your standing instructions for the model, in your own words: how this server is run, what
+             *     matters to you, how answers should look. Added after the built-in instructions of the chat,
+             *     its worker, topic jobs and summaries. Empty = nothing is added.
+             * @default
+             */
+            instructions: string;
+            /**
              * Language
              * @description Language of chat answers and Telegram messages.
              * @default en
@@ -2150,6 +2159,7 @@ export interface components {
             /**
              * @default {
              *       "docker_url": "",
+             *       "instructions": "",
              *       "language": "en",
              *       "log_level": "info",
              *       "timezone": ""

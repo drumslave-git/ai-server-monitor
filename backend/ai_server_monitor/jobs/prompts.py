@@ -6,7 +6,7 @@ import time
 from datetime import UTC, datetime, tzinfo
 from typing import Any
 
-from ..agent.prompts import SHELL_FACTS, language_name, zone_name
+from ..agent.prompts import SHELL_FACTS, language_name, owner_section, zone_name
 
 TOPIC_SYSTEM = """\
 You run one scheduled check on the Linux server {host}. Nobody is chatting with you.
@@ -51,14 +51,14 @@ Your task:
 """
 
 
-def topic_instructions(host: str, language: str, prompt: str) -> str:
+def topic_instructions(host: str, language: str, prompt: str, owner: str = "") -> str:
     head = TOPIC_SYSTEM.format(host=host, shell=SHELL_FACTS, language=language_name(language))
-    return head + prompt
+    return head + prompt + owner_section(owner)
 
 
-def summary_instructions(host: str, language: str, prompt: str) -> str:
+def summary_instructions(host: str, language: str, prompt: str, owner: str = "") -> str:
     head = SUMMARY_SYSTEM.format(host=host, shell=SHELL_FACTS, language=language_name(language))
-    return head + prompt
+    return head + prompt + owner_section(owner)
 
 
 def age(seconds: float) -> str:

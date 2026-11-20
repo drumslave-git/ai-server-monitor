@@ -323,6 +323,7 @@ values a fresh install starts with.
 | `general.language` | string | `en` | Language of chat answers and Telegram messages. |
 | `general.docker_url` | string | empty | Docker API the shell's `docker` commands use, e.g. tcp://docker-proxy:2375 or unix:///var/run/docker.sock. Empty = $DOCKER_HOST (set by the compose file), else the local socket. |
 | `general.timezone` | string | empty | Time zone of cron schedules, e.g. Europe/Berlin. Empty = the host's own time zone (its /etc/timezone or /etc/localtime), UTC when that cannot be read. |
+| `general.instructions` | string | empty | Your standing instructions for the model, in your own words: how this server is run, what matters to you, how answers should look. Added after the built-in instructions of the chat, its worker, topic jobs and summaries. Empty = nothing is added. |
 
 ### Main model (`llm`)
 

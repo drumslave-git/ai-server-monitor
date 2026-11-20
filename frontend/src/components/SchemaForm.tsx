@@ -18,6 +18,7 @@ import { Button, Column, ErrorText, Field as KitField, FormGrid, Input, Joined, 
      number, number or "auto"              Input (number)
      secret                                Input (password) with "clear"
      duration, text                        Input
+     multi-line text                       Textarea, the whole width
      list of texts or numbers              Input, comma-separated
      names with a text each                two Inputs per row
      any other object                      Textarea (JSON)
@@ -32,6 +33,8 @@ const ACRONYMS: Record<string, string> = {
 };
 /** The most values an enum shows side by side (Segmented); one with more is a Select. */
 const SEGMENTED_MAX = 5;
+/** The height of a multi-line text box in lines: a few paragraphs without scrolling. */
+const MULTILINE_ROWS = 10;
 
 /** The title of a group and the name a control has for assistive tech. */
 export function humanize(key: string): string {
@@ -84,7 +87,7 @@ export function defaultFor(schema: JsonSchema, defs: Record<string, JsonSchema>)
 // ---- the mapping: schema node → kind → kit control ---------------------------
 
 type Kind =
-  | { kind: "group" | "switch" | "auto-switch" | "number" | "secret" | "duration" | "text" | "pairs" | "json"; s: JsonSchema }
+  | { kind: "group" | "switch" | "auto-switch" | "number" | "secret" | "duration" | "text" | "multiline" | "pairs" | "json"; s: JsonSchema }
   | { kind: "optional-group"; s: JsonSchema; inner: JsonSchema }
   | { kind: "objects"; s: JsonSchema; item: JsonSchema }
   | { kind: "auto-number"; s: JsonSchema; numeric: JsonSchema }
@@ -132,6 +135,7 @@ function kindOf(schema: JsonSchema, defs: Record<string, JsonSchema>): Kind {
   if (isNumber(s)) return { kind: "number", s };
   if (s.format === "password") return { kind: "secret", s };
   if (s.format === "duration") return { kind: "duration", s };
+  if (s.format === "multiline") return { kind: "multiline", s };
   return { kind: "text", s };
 }
 
@@ -315,6 +319,13 @@ export function Field({ name, schema, value, onChange, path, ctx, inset }: Field
         </Cell>
       );
     }
+
+    case "multiline":
+      return (
+        <Cell {...cell} wide>
+          {(id, invalid) => <Textarea id={id} rows={MULTILINE_ROWS} invalid={invalid} value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} />}
+        </Cell>
+      );
 
     case "list":
       return (

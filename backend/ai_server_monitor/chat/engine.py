@@ -445,12 +445,13 @@ class ChatEngine:
 
         run_key = run_key or f"turn:{ctx.turn}"
         tools = chat_tools(app, session_id, who, run_key, shell, scrub, host)
-        instructions = chat_prompt(host, settings.general.language)
-        if mcp.servers:
-            instructions += "\n" + MCP_NOTE
-        instructions += "\n" + mcp_turn.LOOKUP_NOTE
+        notes = [MCP_NOTE] if mcp.servers else []
+        notes.append(mcp_turn.LOOKUP_NOTE)
         if turn.deferred:
-            instructions += "\n" + mcp_turn.LOAD_NOTE
+            notes.append(mcp_turn.LOAD_NOTE)
+        instructions = chat_prompt(
+            host, settings.general.language, notes, owner=settings.general.instructions
+        )
         cfg = AgentConfig(
             model=app.models.model("main"),
             instructions=instructions,
