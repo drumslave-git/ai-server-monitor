@@ -403,7 +403,7 @@ values a fresh install starts with.
 | `outputs.telegram.token` | secret | empty | Bot token from @BotFather. |
 | `outputs.telegram.allowed_chat_ids` | list of integer | empty | Only these chats may talk to the bot. Don't know a chat id? Send /id to the bot: it answers in any chat. |
 | `outputs.telegram.new_session_after` | duration | `6h` | Start a fresh chat after this long without a message in a Telegram chat (the old one stays in the Chat list on the web page). 0 = never: one chat until you send /new. |
-| `outputs.telegram.send_summary` | changed / every / never | `changed` | When to send the result of the Summary job to the allowed chats (status, headline and the warnings). changed = when the overall status or the list of warnings differs from the last summary; every = after every summary run; never = only on request (/summary). |
+| `outputs.telegram.send_summary` | changed / every / never | `changed` | When to send the result of a summary to the allowed chats (status, headline and the warnings), on top of the summary's own notify. changed = when the overall status or the list of warnings differs from that summary's last one; every = after every run of it; never = only on request (/summary). |
 | `outputs.telegram.api_url` | string | empty | Bot API server. Empty = https://api.telegram.org. |
 | `outputs.telegram.web_url` | string | empty | Address of this web UI as you open it, e.g. https://monitor.example.com. Approval messages get a "Review" button that opens the approval there. Empty = no button. |
 | `outputs.metrics.enabled` | boolean | on | Expose Prometheus metrics at /metrics. |

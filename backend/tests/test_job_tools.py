@@ -25,7 +25,7 @@ def test_the_chat_lists_creates_changes_runs_and_deletes_jobs(
         models.script = [tool("jobs_list"), "Seven checks are scheduled."]
         events = ask(client, "what do you check regularly?")
         [listed] = results(events)
-        assert listed["ok"] and '"slug":"docker"' in listed["preview"]
+        assert listed["ok"] and '"slug":"summary:daily"' in listed["preview"]
         offered = set(models.requests[0]["tools"])
         assert {"bash", "delegate", "jobs_list", "job_results", "job_save", "job_delete",
                 "job_run"} <= offered  # fmt: skip
@@ -39,7 +39,7 @@ def test_the_chat_lists_creates_changes_runs_and_deletes_jobs(
                 prompt="Check that last night's restic backup finished.",
                 cron="30 7 * * *",
             ),
-            tool("job_save", slug="storage", enabled=False),
+            tool("job_save", slug="storage:usage", enabled=False),
             "Done: backups are checked daily at 7:30, storage is off.",
         ]
         events = ask(client, "add a daily backup check and stop the storage check")
@@ -49,7 +49,7 @@ def test_the_chat_lists_creates_changes_runs_and_deletes_jobs(
         job = client.get("/api/jobs/backups").json()
         assert job["created_by"] == "llm" and job["cron"] == "30 7 * * *"
         assert job["next_run"] is not None
-        assert client.get("/api/jobs/storage").json()["enabled"] is False
+        assert client.get("/api/jobs/storage:usage").json()["enabled"] is False
         call = next(e for e in events if e["type"] == "tool_call")
         assert call["kind"] == "write"
 
@@ -61,7 +61,7 @@ def test_the_chat_lists_creates_changes_runs_and_deletes_jobs(
 
         # run now: the finished result comes back in the same reply
         models.script = [
-            tool("job_run", slug="docker"),
+            tool("job_run", slug="docker:status"),
             tool("bash", command="docker ps"),
             finish("warn", "One container restarts often.", []),  # the job's own model turn
             "Docker: one container restarts often.",
@@ -70,19 +70,19 @@ def test_the_chat_lists_creates_changes_runs_and_deletes_jobs(
         [ran] = results(events)
         assert ran["ok"] and '"status":"warn"' in ran["preview"]
         assert '"trigger":"llm"' in ran["preview"]
-        [run] = client.get("/api/jobs/docker/runs").json()["items"]
+        [run] = client.get("/api/jobs/docker:status/runs").json()["items"]
         assert run["trigger"] == "llm" and run["status"] == "warn"
         assert events[-1]["type"] == "done"
 
         # results: the job's, and the summary by default
-        models.script = [tool("job_results", slug="docker"), tool("job_results"), "ok"]
+        models.script = [tool("job_results", slug="docker:status"), tool("job_results"), "ok"]
         docker, summary = results(ask(client, "latest results?"))
         assert '"status":"warn"' in docker["preview"]
-        assert "summary has not run yet" in summary["preview"]
+        assert '"summary:health":"not run yet"' in summary["preview"]
 
         # delete: builtins never
         models.script = [
-            tool("job_delete", slug="storage"),
+            tool("job_delete", slug="storage:usage"),
             tool("job_delete", slug="backups"),
             "Removed the backup check; storage is a builtin and stays (disabled).",
         ]
@@ -93,7 +93,7 @@ def test_the_chat_lists_creates_changes_runs_and_deletes_jobs(
         audit = client.get("/api/chat/audit", params={"kind": "jobs"}).json()["items"]
         assert [(a["tool"], a["slug"]) for a in reversed(audit)] == [
             ("job_save", "backups"),
-            ("job_save", "storage"),
-            ("job_run", "docker"),
+            ("job_save", "storage:usage"),
+            ("job_run", "docker:status"),
             ("job_delete", "backups"),
         ]

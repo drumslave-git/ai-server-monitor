@@ -312,13 +312,17 @@ export interface paths {
         };
         /**
          * List Jobs
-         * @description Every job (builtins first) with its newest finished run and next scheduled time.
+         * @description Every summary and job (summaries first, then builtins) with its newest finished run (a
+         *     summary's with the runs of its queue) and next scheduled time; `retired`: the old builtins
+         *     a release replaced, whose runs stay readable.
          */
         get: operations["list_jobs_api_jobs_get"];
         put?: never;
         /**
          * Create Job
-         * @description A custom topic job (runs on the worker model unless `model` is `main`).
+         * @description A new job (`kind` topic: a check) or summary (`kind` summary: runs its `members` one
+         *     after another, then sums up). `notice` says what else changed (a member's own schedule
+         *     removed).
          */
         post: operations["create_job_api_jobs_post"];
         delete?: never;
@@ -355,7 +359,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Run */
+        /**
+         * Get Run
+         * @description One run; a summary run with the runs of its queue, in the order they ran.
+         */
         get: operations["get_run_api_jobs_runs__run_id__get"];
         put?: never;
         post?: never;
@@ -376,14 +383,18 @@ export interface paths {
         get: operations["get_job_api_jobs__slug__get"];
         /**
          * Update Job
-         * @description Change the given fields. Editing a builtin's prompt, schedule, model or limits marks it
-         *     edited; `POST /api/jobs/{slug}/reset` restores the release's version.
+         * @description Change the given fields. Editing a builtin's prompt, schedule, model, limits, domains or
+         *     (a summary) members marks it edited; `POST /api/jobs/{slug}/reset` restores the release's
+         *     version. A job in a summary cannot get a schedule; one that joins a summary loses its own,
+         *     and `notice` says so.
          */
         put: operations["update_job_api_jobs__slug__put"];
         post?: never;
         /**
          * Delete Job
-         * @description Custom jobs only (and their runs); builtins can be disabled instead.
+         * @description Own jobs and summaries only (and their runs); builtins can be disabled instead.
+         *     Deleting a summary keeps its jobs (in no other summary they are detached, without a
+         *     schedule).
          */
         delete: operations["delete_job_api_jobs__slug__delete"];
         options?: never;
@@ -402,7 +413,8 @@ export interface paths {
         put?: never;
         /**
          * Reset Job
-         * @description A builtin back to the release's name, prompt, schedule, model and limits.
+         * @description A builtin back to the release's name, prompt, schedule, model and limits (a summary:
+         *     its members too); domains cleared, notify and enabled kept.
          */
         post: operations["reset_job_api_jobs__slug__reset_post"];
         delete?: never;
@@ -422,8 +434,9 @@ export interface paths {
         put?: never;
         /**
          * Run Job
-         * @description Start a run now (also when the job is disabled or automation is paused). Returns the run
-         *     id at once; `job.started` / `job.finished` events follow on /api/stream.
+         * @description Start a run now (also when the job is disabled or automation is paused): a summary runs
+         *     its whole queue, a job in a summary runs alone (no summary). Returns the run id at once;
+         *     `job.started` / `job.finished` events follow on /api/stream.
          */
         post: operations["run_job_api_jobs__slug__run_post"];
         delete?: never;
@@ -441,7 +454,7 @@ export interface paths {
         };
         /**
          * List Runs
-         * @description The job's runs, newest first (a running one included).
+         * @description The job's runs, newest first (a running one included); a retired job's too.
          */
         get: operations["list_runs_api_jobs__slug__runs_get"];
         put?: never;
@@ -1256,6 +1269,11 @@ export interface components {
             /** Max Steps */
             max_steps?: number | null;
             /**
+             * Members
+             * @default []
+             */
+            members: string[];
+            /**
              * Model
              * @enum {string}
              */
@@ -1264,12 +1282,29 @@ export interface components {
             name: string;
             /** Next Run */
             next_run?: number | null;
+            /** Notice */
+            notice?: string | null;
+            /**
+             * Notify
+             * @enum {string}
+             */
+            notify: "always" | "warn_crit" | "never";
             /** Prompt */
             prompt: string;
+            /**
+             * Retired
+             * @default false
+             */
+            retired: boolean;
             /** Running Run Id */
             running_run_id?: number | null;
             /** Slug */
             slug: string;
+            /**
+             * Summaries
+             * @default []
+             */
+            summaries: string[];
             /** Timeout S */
             timeout_s?: number | null;
             /** Updated */
@@ -1288,20 +1323,28 @@ export interface components {
             enabled: boolean;
             /** Interval S */
             interval_s?: number | null;
-            /** Max Steps */
-            max_steps?: number | null;
             /**
-             * Model
-             * @default worker
+             * Kind
+             * @default topic
              * @enum {string}
              */
-            model: "worker" | "main";
+            kind: "topic" | "summary";
+            /** Max Steps */
+            max_steps?: number | null;
+            /** Members */
+            members?: string[] | null;
+            /** Model */
+            model?: ("worker" | "main") | null;
             /** Name */
             name: string;
+            /** Notify */
+            notify?: ("always" | "warn_crit" | "never") | null;
             /** Prompt */
             prompt: string;
             /** Slug */
             slug: string;
+            /** Summaries */
+            summaries?: string[] | null;
             /** Timeout S */
             timeout_s?: number | null;
         };
@@ -1309,6 +1352,11 @@ export interface components {
         JobList: {
             /** Items */
             items: components["schemas"]["Job"][];
+            /**
+             * Retired
+             * @default []
+             */
+            retired: components["schemas"]["Job"][];
         };
         /** JobRun */
         JobRun: {
@@ -1334,6 +1382,13 @@ export interface components {
             model?: string | null;
             /** Prompt Tokens */
             prompt_tokens?: number | null;
+            /**
+             * Queue
+             * @default []
+             */
+            queue: components["schemas"]["JobRun"][];
+            /** Queue Run Id */
+            queue_run_id?: number | null;
             /** Started */
             started: number;
             /**
@@ -1417,12 +1472,18 @@ export interface components {
             interval_s?: number | null;
             /** Max Steps */
             max_steps?: number | null;
+            /** Members */
+            members?: string[] | null;
             /** Model */
             model?: ("worker" | "main") | null;
             /** Name */
             name?: string | null;
+            /** Notify */
+            notify?: ("always" | "warn_crit" | "never") | null;
             /** Prompt */
             prompt?: string | null;
+            /** Summaries */
+            summaries?: string[] | null;
             /** Timeout S */
             timeout_s?: number | null;
         };
@@ -2379,9 +2440,10 @@ export interface components {
             new_session_after: string;
             /**
              * Send Summary
-             * @description When to send the result of the Summary job to the allowed chats (status, headline and
-             *     the warnings). changed = when the overall status or the list of warnings differs from the
-             *     last summary; every = after every summary run; never = only on request (/summary).
+             * @description When to send the result of a summary to the allowed chats (status, headline and the
+             *     warnings), on top of the summary's own notify. changed = when the overall status or the
+             *     list of warnings differs from that summary's last one; every = after every run of it;
+             *     never = only on request (/summary).
              * @default changed
              * @enum {string}
              */

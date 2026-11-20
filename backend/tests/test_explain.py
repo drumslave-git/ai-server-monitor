@@ -15,7 +15,7 @@ from ai_server_monitor.config import Bootstrap
 from ai_server_monitor.tracing import codec
 
 from .jobfakes import ScriptedModels, finish, tool
-from .test_jobs import FINDING, make_app, run
+from .test_jobs import FINDING, make_app, make_summary, run
 from .test_telegram import FakeTelegram, press, running, wait_for
 from .test_telegram import make_app as telegram_app
 
@@ -53,7 +53,7 @@ def test_explain_a_finding_and_a_run_starts_a_chat_with_the_source_data(
         "The storage check looked at one disk.",
     ]
     with TestClient(make_app(bootstrap)) as client:
-        result = run(client, "storage")
+        result = run(client, "storage:usage")
         flush(client)
         events = explain(client, result["id"], 0)
         assert events[0]["type"] == "session" and events[-1]["type"] == "done"
@@ -66,7 +66,7 @@ def test_explain_a_finding_and_a_run_starts_a_chat_with_the_source_data(
         assert first["meta"]["explain"] == {
             "label": "Explain: / is 40% full",
             "run_id": result["id"],
-            "job": "storage",
+            "job": "storage:usage",
             "finding": 0,
         }
         text = first["content"]
@@ -89,7 +89,7 @@ def test_explain_a_finding_and_a_run_starts_a_chat_with_the_source_data(
         # times in the host's time zone, named
         zone = host_zone(client.app.state.ctx)  # type: ignore[attr-defined]
         stamp = datetime.fromtimestamp(result["started"], zone).strftime("%Y-%m-%d %H:%M")
-        assert session["title"] == f"Explain: Storage run from {stamp}"
+        assert session["title"] == f"Explain: Storage: usage run from {stamp}"
         assert f"started {stamp}, finished " in session["messages"][0]["content"]
         assert f"({zone_name(zone)})" in session["messages"][0]["content"]
         assert "about 450 words" in session["messages"][0]["content"]
@@ -110,7 +110,7 @@ def test_an_explain_answer_without_a_look_goes_back_once(
         "Without a look again.",  # a follow-up question in the same chat: no look required
     ]
     with TestClient(make_app(bootstrap)) as client:
-        run_id = seed_run(client, "storage", status="warn", findings=[FINDING])
+        run_id = seed_run(client, "storage:usage", status="warn", findings=[FINDING])
         events = explain(client, run_id, 0)
         assert events[-1]["type"] == "done"
         assert events[-1]["text"] == "Now: / is at 40%, unchanged since the run."
@@ -138,7 +138,11 @@ def test_an_error_run_is_explained_from_its_error(
     models.script = ["The run timed out because du walked a big disk."]
     with TestClient(make_app(bootstrap)) as client:
         run_id = seed_run(
-            client, "journal", "t-err", status="error", error="timed out after 900s (limit 900s)"
+            client,
+            "journal:errors",
+            "t-err",
+            status="error",
+            error="timed out after 900s (limit 900s)",
         )
         events = explain(client, run_id)
         assert events[-1]["type"] == "done"
@@ -154,7 +158,9 @@ def test_a_summary_run_also_gets_the_topic_results_it_was_given(
     models.script = ["Explained."]
     given = "Latest results of the topic checks (now 2026-11-18 10:00):\n## Storage\nwarn 88%"
     with TestClient(make_app(bootstrap)) as client:
-        run_id = seed_run(client, "summary", "t-sum", status="ok", summary="All fine.", findings=[])
+        run_id = seed_run(
+            client, "summary:health", "t-sum", status="ok", summary="All fine.", findings=[]
+        )
         messages = [{"role": "system", "content": "You write"}, {"role": "user", "content": given}]
         bash = {"command": "uptime"}
 
@@ -185,13 +191,13 @@ def test_missing_runs_and_findings_are_404_and_a_running_run_409(
     with TestClient(make_app(bootstrap)) as client:
         missing = client.post("/api/chat/explain", json={"run_id": 999})
         assert missing.status_code == 404 and "no longer exists" in missing.json()["detail"]
-        run_id = seed_run(client, "storage", status="warn", findings=[FINDING])
+        run_id = seed_run(client, "storage:usage", status="warn", findings=[FINDING])
         bad = client.post("/api/chat/explain", json={"run_id": run_id, "finding": 1})
         assert bad.status_code == 404 and "no finding 1" in bad.json()["detail"]
         negative = client.post("/api/chat/explain", json={"run_id": run_id, "finding": -1})
         assert negative.status_code == 422
         store = client.app.state.ctx.jobs.store  # type: ignore[union-attr]
-        running_id = client.portal.call(store.start_run, "docker", "manual", "small")  # type: ignore[union-attr]
+        running_id = client.portal.call(store.start_run, "docker:status", "manual", "small")  # type: ignore[union-attr]
         busy = client.post("/api/chat/explain", json={"run_id": running_id})
         assert busy.status_code == 409
         assert client.get("/api/chat/sessions").json()["total"] == 0
@@ -205,7 +211,7 @@ def test_the_context_budget_keeps_the_subject_and_its_evidence_and_cuts_outputs(
         Command("df -h /", quoted),  # holds the evidence line
         Command("ls /var", "a\nb\n"),
     ]
-    job = {"slug": "storage", "name": "Storage", "kind": "topic", "prompt": "Check disks."}
+    job = {"slug": "storage:usage", "name": "Storage", "kind": "topic", "prompt": "Check disks."}
     finding = {**FINDING, "verified": True}
     run_row = {"id": 7, "status": "warn", "summary": "Root.", "findings": [finding]}
     # A tight budget: every output is cut in the middle to a fair share first.
@@ -240,7 +246,8 @@ def test_telegram_summary_has_an_explain_button_that_answers_in_the_chat(
     tg = FakeTelegram()
     app = telegram_app(bootstrap, tg)
     with running(app, tg) as client:
-        run_id = client.post("/api/jobs/summary/run").json()["run_id"]
+        make_summary(client, "night", [])
+        run_id = client.post("/api/jobs/night/run").json()["run_id"]
         sent = wait_for(lambda: tg.of("sendMessage"))
         keyboard = sent[0]["reply_markup"]["inline_keyboard"]
         assert [[b["text"] for b in row] for row in keyboard] == [["Explain"]]
@@ -252,7 +259,7 @@ def test_telegram_summary_has_an_explain_button_that_answers_in_the_chat(
         tg.feed(press(data, 1001))
         wait_for(lambda: len(tg.texts()) >= 3)
         label, answer = tg.texts()[1:]
-        assert label.startswith("Explain: Summary run from ") and answer == "The disk explanation."
+        assert label.startswith("Explain: Night run from ") and answer == "The disk explanation."
         sessions = client.get("/api/chat/sessions").json()["items"]
         assert len(sessions) == 1 and sessions[0]["channel"] == "telegram"
-        assert sessions[0]["title"].startswith("Explain: Summary run from ")
+        assert sessions[0]["title"].startswith("Explain: Night run from ")

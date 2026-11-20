@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from ai_server_monitor.actions import REGISTRY
 from ai_server_monitor.config import Bootstrap, Settings
+from ai_server_monitor.jobs.builtins import BUILTINS
 from ai_server_monitor.main import create_app
 from ai_server_monitor.outputs import telegram as telegram_module
 from ai_server_monitor.outputs.telegram import (
@@ -958,6 +959,15 @@ def run_job(client: TestClient, slug: str) -> int:
     return int(run_id)
 
 
+def night(client: TestClient, notify: str = "warn_crit") -> None:
+    """The builtin summaries off and an own summary "night" with no jobs in it."""
+    for slug in ("summary:daily", "summary:health"):
+        assert client.put(f"/api/jobs/{slug}", json={"enabled": False}).status_code == 200
+    body = {"slug": "night", "kind": "summary", "name": "Night", "prompt": "Sum it up briefly."}
+    made = client.post("/api/jobs", json={**body, "members": [], "notify": notify})
+    assert made.status_code == 201, made.text
+
+
 def test_summary_changed_sends_first_then_only_when_the_picture_changes(
     bootstrap: Bootstrap, models: ScriptedModels
 ) -> None:
@@ -971,21 +981,22 @@ def test_summary_changed_sends_first_then_only_when_the_picture_changes(
     tg = FakeTelegram()
     app = make_app(bootstrap, tg)  # send_summary defaults to "changed"
     with running(app, tg) as client:
-        run_job(client, "summary")
+        night(client)
+        run_job(client, "night")
         [first] = tg.texts()
-        assert first.startswith("⚠️ Warning — Disk is filling up.")
-        assert marked(tg.of("sendMessage")[0], "bold") == ["Warning"]
+        assert first.startswith("⚠️ Night: Warning — Disk is filling up.")
+        assert marked(tg.of("sendMessage")[0], "bold") == ["Night: Warning"]
         assert "/ is 88% full" in first and "12 GB free" in first and "More text" not in first
-        run_job(client, "summary")
+        run_job(client, "night")
         assert len(tg.texts()) == 1  # identical picture: nothing new
-        run_job(client, "summary")
+        run_job(client, "night")
         assert len(tg.texts()) == 1  # only an info finding was added: not worth a message
-        run_job(client, "summary")
-        assert len(tg.texts()) == 2 and tg.texts()[1].startswith("🔴 Critical")
-        run_job(client, "summary")
+        run_job(client, "night")
+        assert len(tg.texts()) == 2 and tg.texts()[1].startswith("🔴 Night: Critical")
+        run_job(client, "night")
         last = tg.texts()[2]
         assert "• 🔴 <b>x</b> — 12 GB free" in last  # HTML in the model's text shows as text
-        assert marked(tg.of("sendMessage")[-1], "bold") == ["Critical"]  # not "x"
+        assert marked(tg.of("sendMessage")[-1], "bold") == ["Night: Critical"]  # not "x"
 
 
 def test_summary_changed_does_not_resend_after_a_restart(
@@ -995,12 +1006,13 @@ def test_summary_changed_does_not_resend_after_a_restart(
     tg = FakeTelegram()
     first = make_app(bootstrap, tg)
     with running(first, tg) as client:
-        run_job(client, "summary")
+        night(client)
+        run_job(client, "night")
     assert len(tg.texts()) == 1
     del first
     second = make_app(bootstrap, tg)
     with running(second, tg) as client:
-        run_job(client, "summary")
+        run_job(client, "night")
     assert len(tg.texts()) == 1
 
 
@@ -1015,10 +1027,11 @@ def test_summary_every_sends_each_run_and_only_summaries(
     tg = FakeTelegram()
     app = make_app(bootstrap, tg, telegram={"send_summary": "every"})
     with running(app, tg) as client:
-        run_job(client, "summary")
-        run_job(client, "summary")
-        assert len(tg.texts()) == 2 and tg.texts()[0].startswith("✅ OK — Quiet.")
-        run_job(client, "storage")  # a topic job is not a summary
+        night(client, "always")
+        run_job(client, "night")
+        run_job(client, "night")
+        assert len(tg.texts()) == 2 and tg.texts()[0].startswith("✅ Night: OK — Quiet.")
+        run_job(client, "storage:usage")  # a job in a summary: the summary speaks for it
         assert len(tg.texts()) == 2
 
 
@@ -1029,7 +1042,8 @@ def test_summary_never_sends_nothing_but_the_command_still_answers(
     tg = FakeTelegram()
     app = make_app(bootstrap, tg, telegram={"send_summary": "never"})
     with running(app, tg) as client:
-        run_job(client, "summary")
+        night(client, "always")
+        run_job(client, "night")
         assert tg.texts() == []
         texts = ask(client, tg, message("/summary"), 2)
     assert "Running" in texts[0] and "Asked for." in texts[1]
@@ -1042,17 +1056,18 @@ def test_summary_command_runs_it_and_replies_here_others_get_the_change(
     tg = FakeTelegram()
     app = make_app(bootstrap, tg, telegram={"allowed_chat_ids": [CHAT, OTHER]})
     with running(app, tg) as client:
+        night(client)
         tg.feed(message("/summary"))
         wait_for(lambda: len(tg.texts(CHAT)) >= 2 and tg.texts(OTHER))
         settle()
         asker = tg.texts(CHAT)
         assert "Running" in asker[0] and len(asker) == 2  # no second copy for the asker
         assert "Disk is filling up." in asker[1] and "/ is 88% full" in asker[1]
-        assert tg.texts(OTHER)[0].startswith("⚠️ Warning")
+        assert tg.texts(OTHER)[0].startswith("⚠️ Night: Warning")
         assert len(tg.texts(OTHER)) == 1
         # the asker's run counts as seen: the same picture later is not news
         models.script = [finish("warn", "Disk is filling up.", [FINDING])]
-        run_job(client, "summary")
+        run_job(client, "night")
     assert len(tg.texts(OTHER)) == 1
 
 
@@ -1066,14 +1081,14 @@ def test_run_command_runs_a_job_and_replies_with_its_result(
     tg = FakeTelegram()
     app = make_app(bootstrap, tg)
     with running(app, tg) as client:
-        tg.feed(message("/run storage"))
+        tg.feed(message("/run storage:usage"))
         wait_for(lambda: len(tg.texts()) >= 2)
         running_text, result = tg.texts()[:2]
         assert running_text.startswith("Running <b>")
-        assert result.startswith("⚠️ Storage — Warning")
-        assert marked(tg.of("sendMessage")[1], "bold") == ["Storage"]
+        assert result.startswith("⚠️ Storage: usage — Warning")
+        assert marked(tg.of("sendMessage")[1], "bold") == ["Storage: usage"]
         assert "Root is 88% full." in result and "/ is 88% full" in result
-        runs = client.get("/api/jobs/storage/runs").json()["items"]
+        runs = client.get("/api/jobs/storage:usage/runs").json()["items"]
         assert len(runs) == 1 and runs[0]["trigger"] == "manual"
         settle()
         assert len(tg.texts()) == 2  # a topic result is not broadcast on top
@@ -1085,9 +1100,9 @@ def test_run_with_an_unknown_job_lists_the_valid_ones(bootstrap: Bootstrap) -> N
     with running(app, tg) as client:
         texts = ask(client, tg, message("/run nope"), 1)
         texts = ask(client, tg, message("/run"), 2)
-        assert not client.get("/api/jobs/storage/runs").json()["items"]  # nothing was started
+        assert not client.get("/api/jobs/storage:usage/runs").json()["items"]  # nothing was started
     for text in texts:
-        for slug in ("storage", "journal", "summary", "updates"):
+        for slug in ("storage:usage", "journal:auth", "summary:health", "updates:reboot"):
             assert slug in text
 
 
@@ -1102,17 +1117,18 @@ def test_status_command_shows_the_headline_and_one_line_per_job(
     tg = FakeTelegram()
     app = make_app(bootstrap, tg, telegram={"send_summary": "never"})
     with running(app, tg) as client:
+        night(client)
         names = {j["slug"]: j["name"] for j in client.get("/api/jobs").json()["items"]}
-        run_job(client, "storage")
-        run_job(client, "summary")
+        run_job(client, "storage:usage")
+        run_job(client, "night")
         text = ask(client, tg, message("/status"), 1)[0]
     lines = text.splitlines()
     assert lines[0].startswith("🔴 Critical — Server in trouble.")
     job_lines = [ln for ln in lines if ln.startswith("• ")]
     assert len(job_lines) == len(names)
-    storage = next(ln for ln in job_lines if names["storage"] in ln)
+    storage = next(ln for ln in job_lines if names["storage:usage"] in ln)
     assert "Warning" in storage and "just now" in storage
-    assert "never ran" in next(ln for ln in job_lines if names["journal"] in ln)
+    assert "never ran" in next(ln for ln in job_lines if names["journal:errors"] in ln)
 
 
 def test_status_command_before_any_summary(bootstrap: Bootstrap) -> None:
@@ -1120,14 +1136,14 @@ def test_status_command_before_any_summary(bootstrap: Bootstrap) -> None:
     app = make_app(bootstrap, tg)
     with running(app, tg) as client:
         text = ask(client, tg, message("/status"), 1)[0]
-    assert text.startswith("No summary yet.") and text.count("never ran") == 7
+    assert text.startswith("No summary yet.") and text.count("never ran") == len(BUILTINS)
 
 
 def test_jobs_command_lists_origin_state_and_next_run(bootstrap: Bootstrap) -> None:
     tg = FakeTelegram()
     app = make_app(bootstrap, tg)
     with running(app, tg) as client:
-        client.put("/api/jobs/updates", json={"enabled": False})
+        client.put("/api/jobs/updates:reboot", json={"enabled": False})
         made = client.post(
             "/api/jobs",
             json={
@@ -1140,10 +1156,12 @@ def test_jobs_command_lists_origin_state_and_next_run(bootstrap: Bootstrap) -> N
         assert made.status_code == 201
         text = ask(client, tg, message("/jobs"), 1)[0]
     lines = text.splitlines()
-    assert len(lines) == 8
-    storage = next(ln for ln in lines if "<code>storage</code>" in ln)
-    assert "Builtin" in storage and "next run in" in storage
-    assert "Builtin, off" in next(ln for ln in lines if "<code>updates</code>" in ln)
+    assert len(lines) == len(BUILTINS) + 1
+    health = next(ln for ln in lines if "(<code>summary:health</code>)" in ln)
+    assert "Builtin" in health and "next run in" in health
+    storage = next(ln for ln in lines if "(<code>storage:usage</code>)" in ln)
+    assert "on, runs in <code>summary:health</code>" in storage
+    assert "Builtin, off" in next(ln for ln in lines if "(<code>updates:reboot</code>)" in ln)
     mine = next(ln for ln in lines if "<code>mine</code>" in ln)
     assert "<b>My check</b>" in mine and "Custom, by user" in mine and "in 30 min" in mine
 

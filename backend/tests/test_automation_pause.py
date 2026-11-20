@@ -119,15 +119,15 @@ def test_api_pause_resume_and_info(bootstrap: Bootstrap) -> None:
     with TestClient(app) as client:
         state = client.get("/api/automation").json()
         assert state["paused"] is False and state["since"] is None
-        assert client.get("/api/jobs/summary").json()["next_run"] is not None
+        assert client.get("/api/jobs/summary:health").json()["next_run"] is not None
         done = client.post("/api/automation/pause").json()
         assert done["paused"] is True and done["by"] == "ui" and done["since"] > 0
         info = client.get("/api/info").json()
         assert info["automation"]["paused"] is True
         names = {j["name"] for j in info["jobs"]}
-        assert {"prune", "trace_prune", "approvals:sweep", "job:summary", "job:storage"} <= names
+        assert {"prune", "trace_prune", "approvals:sweep", "job:summary:health"} <= names
         assert all(j["paused"] for j in info["jobs"])
-        assert client.get("/api/jobs/summary").json()["next_run"] is None
+        assert client.get("/api/jobs/summary:health").json()["next_run"] is None
         # idempotent
         assert client.post("/api/automation/pause").json()["since"] == done["since"]
         resumed = client.post("/api/automation/resume").json()
@@ -168,8 +168,8 @@ def test_schedule_follows_job_changes(bootstrap: Bootstrap) -> None:
         assert cron["next_run"] is not None and cron["interval_s"] is None
         assert client.put("/api/jobs/certs", json={"enabled": False}).json()["next_run"] is None
         assert "job:certs" not in names()
-        client.put("/api/jobs/storage", json={"enabled": False})
-        assert "job:storage" not in names()
+        client.put("/api/jobs/summary:daily", json={"enabled": False})
+        assert "job:summary:daily" not in names()
         client.delete("/api/jobs/certs")
         assert "job:certs" not in names()
 
@@ -183,19 +183,24 @@ def test_pause_cancels_a_scheduled_run_and_manual_runs_still_work(
         models.script = ["<sleep>"]
 
         async def scheduled_then_pause() -> list[str]:
-            task = asyncio.create_task(ctx._scheduled_run("docker"))
+            task = asyncio.create_task(ctx._scheduled_run("summary:daily"))
             await _until(lambda: bool(ctx.jobs._running))
             cancelled = await ctx.pause_automation("api")
             await asyncio.gather(task, return_exceptions=True)
             return cancelled
 
         cancelled = client.portal.call(scheduled_then_pause)  # type: ignore[union-attr]
-        assert cancelled == ["job:docker"]
-        assert client.get("/api/automation").json()["jobs_cancelled"] == ["job:docker"]
-        [stopped] = client.get("/api/jobs/docker/runs").json()["items"]
-        assert stopped["status"] == "error" and stopped["trigger"] == "schedule"
-        assert stopped["error"] == "cancelled (automation paused)"
+        assert cancelled == ["job:summary:daily"]
+        assert client.get("/api/automation").json()["jobs_cancelled"] == ["job:summary:daily"]
+        # the summary's queue was at its first job: both runs stop, the rest never start
+        [stopped] = client.get("/api/jobs/summary:daily/runs").json()["items"]
+        [member] = client.get("/api/jobs/docker:updates/runs").json()["items"]
+        for run in (stopped, member):
+            assert run["status"] == "error" and run["trigger"] == "schedule"
+            assert run["error"] == "cancelled (automation paused)"
+        assert member["queue_run_id"] == stopped["id"]
+        assert client.get("/api/jobs/updates:packages/runs").json()["items"] == []
         # what a person starts still runs while paused
         models.script = [tool("bash", command="docker ps"), finish("ok", "All containers up.")]
-        manual = client.portal.call(ctx.jobs.run, "docker", "manual")  # type: ignore[union-attr]
+        manual = client.portal.call(ctx.jobs.run, "docker:status", "manual")  # type: ignore[union-attr]
         assert manual["status"] == "ok"

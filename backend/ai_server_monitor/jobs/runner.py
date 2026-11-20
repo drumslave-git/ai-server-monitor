@@ -1,6 +1,7 @@
 """Running one job: the shared agent loop (`agent/runtime.py`) with a structured final result.
 
-Topic jobs get only `bash`; the summary job also `delegate` and the latest topic results. Every
+Jobs get only `bash`. A summary first runs its jobs one after another (its queue), then gets
+`delegate` and exactly those results. Every
 run is a `job_runs` row from the moment it is requested to its end; a run that fails, times
 out or is cancelled is stored as `error` with the reason, never dropped. One run per job at a
 time; Settings → Jobs → concurrent runs limits how many use the models at once.
@@ -125,9 +126,7 @@ TopicStatus = Literal["ok", "warn", "crit", "error", "none"]
 
 class TopicLine(BaseModel):
     slug: str = Field(description="The topic job's slug, as in the results.")
-    status: TopicStatus = Field(
-        description="Its last run's status copied from the results (none: no run yet)."
-    )
+    status: TopicStatus = Field(description="Its run's status copied from the results.")
     clause: str = Field(description="One short clause with its key number.")
 
 
@@ -178,13 +177,13 @@ class CommandCheck:
 
 
 class TopicCheck:
-    """Output validator of the summary: every enabled topic job is listed with the status its
-    latest run really had. One retry names what is wrong; after that the real statuses are
+    """Output validator of the summary: every job of its queue run is listed with the status
+    its run really had. One retry names what is wrong; after that the real statuses are
     stored and missing topics are added as not mentioned."""
 
     def __init__(self, expected: dict[str, str]):
         self.expected = expected
-        """slug -> status of its latest run (`none`: no run yet), in the order given."""
+        """slug -> status of its run in this queue, in the order they ran."""
         self.retried = False
 
     def problems(self, topics: list[Any]) -> list[str]:
@@ -287,16 +286,22 @@ class JobRunner:
 
     # ------------------------------------------------------------------ one run
 
-    async def _open(self, job: dict[str, Any], trigger: Trigger) -> int:
+    async def _open(self, job: dict[str, Any], trigger: Trigger, queue: int | None = None) -> int:
         run_id = await self.store.start_run(
-            job["slug"], trigger, self.app.models.name(job["model"])
+            job["slug"], trigger, self.app.models.name(job["model"]), queue
         )
         self.app.events.publish(
-            "job.started", {"run_id": run_id, "slug": job["slug"], "trigger": trigger}
+            "job.started",
+            {"run_id": run_id, "slug": job["slug"], "trigger": trigger, "queue_run_id": queue},
         )
         return run_id
 
-    async def _execute(self, job: dict[str, Any], run_id: int, trigger: Trigger) -> None:
+    async def _execute(
+        self, job: dict[str, Any], run_id: int, trigger: Trigger, queue: int | None = None
+    ) -> None:
+        """One run. A summary first runs its queue: its enabled jobs one after another in their
+        order, each as its own run linked to this one; a failed job does not stop the queue.
+        The summary's timeout covers only its own step, after the queue."""
         slug = job["slug"]
         settings = self.app.settings
         timeout = float(job.get("timeout_s") or settings.jobs.timeout.total_seconds())
@@ -304,35 +309,55 @@ class JobRunner:
         fields: dict[str, Any] = {"trace_turn": turn}
         task = asyncio.current_task()
         lock = self._locks.setdefault(slug, asyncio.Lock())
+        # A job run inside a queue belongs to the summary's task; cancelling that cancels it.
+        tracked = task if task is not None and trigger == "schedule" and queue is None else None
         try:
-            if task is not None and trigger == "schedule":
-                self._running.add(task)
-            async with lock, self._slots:
-                started = time.monotonic()
-                try:
-                    async with asyncio.timeout(timeout):
-                        fields.update(await self._agent(job, turn))
-                except TimeoutError:
-                    fields.update(
-                        status="error",
-                        error=f"timed out after {time.monotonic() - started:.0f}s "
-                        f"(limit {timeout:.0f}s)",
-                    )
+            if tracked is not None:
+                self._running.add(tracked)
+            async with lock:
+                summary = job["kind"] == "summary"
+                results = await self._queue(job, run_id, trigger) if summary else []
+                async with self._slots:
+                    started = time.monotonic()
+                    try:
+                        async with asyncio.timeout(timeout):
+                            fields.update(await self._agent(job, turn, results))
+                    except TimeoutError:
+                        fields.update(
+                            status="error",
+                            error=f"timed out after {time.monotonic() - started:.0f}s "
+                            f"(limit {timeout:.0f}s)",
+                        )
         except asyncio.CancelledError as exc:
             reason = exc.args[0] if exc.args else "cancelled"
             error = INTERRUPTED if reason == STOPPING else f"cancelled ({reason})"
             fields.update(status="error", error=error)
-            await asyncio.shield(self._close(slug, run_id, fields))
+            await asyncio.shield(self._close(slug, run_id, fields, queue))
             raise
         except Exception as exc:
             log.warning("job %s failed: %s", slug, exc, exc_info=True)
             fields.update(status="error", error=f"{type(exc).__name__}: {exc}"[:2000])
         finally:
-            if task is not None:
-                self._running.discard(task)
-        await self._close(slug, run_id, fields)
+            if tracked is not None:
+                self._running.discard(tracked)
+        await self._close(slug, run_id, fields, queue)
 
-    async def _close(self, slug: str, run_id: int, fields: dict[str, Any]) -> None:
+    async def _queue(
+        self, summary: dict[str, Any], run_id: int, trigger: Trigger
+    ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+        """Run the summary's enabled jobs one after another; each with its finished run."""
+        out: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for member in await self.store.members(summary["slug"]):
+            if not member["enabled"]:
+                continue
+            member_run = await self._open(member, trigger, run_id)
+            await self._execute(member, member_run, trigger, run_id)
+            out.append((member, await self.store.get_run(member_run) or {"status": "error"}))
+        return out
+
+    async def _close(
+        self, slug: str, run_id: int, fields: dict[str, Any], queue: int | None = None
+    ) -> None:
         try:
             await self.store.finish_run(run_id, **fields)
         except Exception:
@@ -344,10 +369,16 @@ class JobRunner:
                 "slug": slug,
                 "status": fields.get("status"),
                 "error": fields.get("error"),
+                "queue_run_id": queue,
             },
         )
 
-    async def _agent(self, job: dict[str, Any], turn: str) -> dict[str, Any]:
+    async def _agent(
+        self,
+        job: dict[str, Any],
+        turn: str,
+        results: list[tuple[dict[str, Any], dict[str, Any]]] | None = None,
+    ) -> dict[str, Any]:
         app = self.app
         settings = app.settings
         slug = job["slug"]
@@ -366,7 +397,7 @@ class JobRunner:
         if job["kind"] == "summary":
             tools.append(app_delegate(app, None, scrub, host, shell))  # type: ignore[arg-type]
             instructions = summary_instructions(host, language, job["prompt"], owner)
-            prompt, expected = await self._summary_input(slug)
+            prompt, expected = await self._summary_input(slug, results or [])
             topic_check = TopicCheck(expected)
         else:
             instructions = topic_instructions(host, language, job["prompt"], owner)
@@ -477,13 +508,11 @@ class JobRunner:
             ),
         }
 
-    async def _summary_input(self, slug: str) -> tuple[str, dict[str, str]]:
-        """The summary's input, and the status of every enabled topic it must list."""
-        jobs = await self.store.list()
-        topics = [j for j in jobs if j["kind"] == "topic" and j["enabled"]]
-        latest = await self.store.latest_runs()
-        expected = {
-            j["slug"]: str(latest[j["slug"]]["status"]) if j["slug"] in latest else "none"
-            for j in topics
-        }
-        return summary_input(topics, latest, latest.get(slug), zone=host_zone(self.app)), expected
+    async def _summary_input(
+        self, slug: str, results: list[tuple[dict[str, Any], dict[str, Any]]]
+    ) -> tuple[str, dict[str, str]]:
+        """The summary's input (this queue run's results and the previous summary), and the
+        status of every job it must list."""
+        previous = (await self.store.latest_runs()).get(slug)
+        expected = {job["slug"]: str(run["status"]) for job, run in results}
+        return summary_input(results, previous, zone=host_zone(self.app)), expected

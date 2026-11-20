@@ -29,7 +29,8 @@ def test_healthz_and_info(bootstrap: Bootstrap, settings: Settings) -> None:
         "trace_prune",
         "approvals:sweep",
         "approvals:drain",
-        *(f"job:{d.slug}" for d in BUILTINS),
+        # only jobs with a schedule of their own: the summaries run their jobs
+        *(f"job:{d.slug}" for d in BUILTINS if d.interval_s or d.cron),
     }
     assert (bootstrap.data_dir / "monitor.db").exists()
 
@@ -160,8 +161,8 @@ def test_status_shape(bootstrap: Bootstrap, settings: Settings) -> None:
     assert status["llm_configured"] is True and status["main_model"] == "test-model"
     assert status["worker_model"] == "test-model" and status["pending_approvals"] == 0
     assert status["automation"]["paused"] is False
-    assert status["overall"] is None  # the summary job has not run yet
-    assert {j["slug"] for j in status["jobs"]} >= {"summary", "storage"}
+    assert status["overall"] is None  # no summary has run yet
+    assert {j["slug"] for j in status["jobs"]} >= {"summary:health", "storage:usage"}
 
 
 def test_settings_responses_are_typed_and_still_mask_secrets(bootstrap: Bootstrap) -> None:

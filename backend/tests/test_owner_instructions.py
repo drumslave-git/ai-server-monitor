@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from ai_server_monitor.agent.prompts import chat_prompt, worker_prompt
 from ai_server_monitor.chat.marks import MARKS_SYSTEM
 from ai_server_monitor.config import Bootstrap, Settings
+from ai_server_monitor.jobs.builtins import DAILY
 from ai_server_monitor.jobs.prompts import summary_instructions, topic_instructions
 
 from .jobfakes import ScriptedModels, finish, tool
@@ -107,10 +108,12 @@ def test_topic_and_summary_runs(
 ) -> None:
     with TestClient(make_app(bootstrap, general={"instructions": owner})) as client:
         models.script = [tool("bash", command="df -h /"), finish("ok", "Fine.")]
-        run(client, "storage")
+        run(client, "storage:usage")
         topic = models.requests[-1]["instructions"]
+        for slug in DAILY:  # the summary alone: its jobs are off
+            client.put(f"/api/jobs/{slug}", json={"enabled": False})
         models.script = [finish("ok", "Fine.")]
-        run(client, "summary")
+        run(client, "summary:daily")
         summary = models.requests[-1]["instructions"]
     assert "Disk space and inodes" in topic and "Write the overall picture" in summary
     if owner:

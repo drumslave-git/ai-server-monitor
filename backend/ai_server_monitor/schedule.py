@@ -130,9 +130,15 @@ class Schedule:
     def sync_jobs(
         self, jobs: list[dict[str, Any]], run_job: Callable[[str], Awaitable[Any]]
     ) -> None:
-        """Make the scheduled LLM jobs match the table: enabled ones with their trigger,
-        nothing else."""
-        wanted = {JOB_PREFIX + j["slug"]: j for j in jobs if j["enabled"]}
+        """Make the scheduled LLM jobs match the table: enabled ones that have a schedule
+        (interval or cron) with their trigger, nothing else. A job in a summary has none: the
+        summary runs it. A start due while the previous run is still going is skipped
+        (`max_instances=1`)."""
+        wanted = {
+            JOB_PREFIX + j["slug"]: j
+            for j in jobs
+            if j["enabled"] and (j.get("interval_s") or j.get("cron"))
+        }
         for existing in self._sched.get_jobs():
             if existing.id.startswith(JOB_PREFIX) and existing.id not in wanted:
                 existing.remove()

@@ -85,23 +85,26 @@ def test_job_runs_show_up_as_series(
             tool("bash", command="df -h /"),
             finish("crit", "Disks are full.", findings),
         ]
-        storage = client.portal.call(app.state.ctx.jobs.run, "storage", "manual")  # type: ignore[union-attr]
+        storage = client.portal.call(app.state.ctx.jobs.run, "storage:usage", "manual")  # type: ignore[union-attr]
         models.script = [tool("bash", command="df -h /"), finish("ok", "Fine.")]
-        client.portal.call(app.state.ctx.jobs.run, "docker", "manual")  # type: ignore[union-attr]
+        client.portal.call(app.state.ctx.jobs.run, "docker:status", "manual")  # type: ignore[union-attr]
         s = scrape(client)
-        assert s['asm_job_status{job="storage"}'] == 2 and s['asm_job_status{job="docker"}'] == 0
-        assert s['asm_job_findings{job="storage",severity="crit"}'] == 1
-        assert s['asm_job_findings{job="storage",severity="warn"}'] == 2
-        assert s['asm_job_findings{job="docker",severity="warn"}'] == 0
-        assert s['asm_job_runs_total{job="storage",status="crit"}'] == 1
-        assert s['asm_job_last_run_timestamp_seconds{job="storage"}'] == storage["finished"]
-        assert s['asm_job_last_run_duration_seconds{job="storage"}'] >= 0
-        assert 'asm_job_status{job="journal"}' not in s  # never ran
+        assert (
+            s['asm_job_status{job="storage:usage"}'] == 2
+            and s['asm_job_status{job="docker:status"}'] == 0
+        )
+        assert s['asm_job_findings{job="storage:usage",severity="crit"}'] == 1
+        assert s['asm_job_findings{job="storage:usage",severity="warn"}'] == 2
+        assert s['asm_job_findings{job="docker:status",severity="warn"}'] == 0
+        assert s['asm_job_runs_total{job="storage:usage",status="crit"}'] == 1
+        assert s['asm_job_last_run_timestamp_seconds{job="storage:usage"}'] == storage["finished"]
+        assert s['asm_job_last_run_duration_seconds{job="storage:usage"}'] >= 0
+        assert 'asm_job_status{job="journal:errors"}' not in s  # never ran
     # after a restart the latest runs are there again (the run counters start from zero)
     with TestClient(make_jobs_app(bootstrap)) as client:
         s = scrape(client, 0)
-        assert s['asm_job_status{job="storage"}'] == 2
-        assert 'asm_job_runs_total{job="storage",status="crit"}' not in s
+        assert s['asm_job_status{job="storage:usage"}'] == 2
+        assert 'asm_job_runs_total{job="storage:usage",status="crit"}' not in s
 
 
 def test_metrics_can_be_disabled_and_protected_by_a_token(bootstrap: Bootstrap) -> None:

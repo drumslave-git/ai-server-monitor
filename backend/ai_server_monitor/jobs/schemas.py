@@ -7,7 +7,8 @@ from typing import Any, Literal
 from apscheduler.triggers.cron import CronTrigger
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-SLUG_PATTERN = r"^[a-z0-9][a-z0-9_-]{1,39}$"
+SLUG_PATTERN = r"^[a-z0-9][a-z0-9_-]*(:[a-z0-9][a-z0-9_-]*)*$"
+"""Lowercase letters, digits, - and _, parts joined by ':' (docker:status); 2-40 characters."""
 MIN_INTERVAL_S = 60
 MAX_INTERVAL_S = 31 * 86400
 
@@ -31,9 +32,11 @@ class _JobFields(BaseModel):
     prompt: str | None = Field(default=None, min_length=10, max_length=8000)
     """The check: scope, typical commands, what counts as ok / warn / crit."""
     interval_s: int | None = Field(default=None, ge=MIN_INTERVAL_S, le=MAX_INTERVAL_S)
-    """Run every N seconds. Give this or `cron`."""
+    """Run every N seconds; or `cron`; or neither: run by hand only. A job in a summary has no
+    schedule of its own (the summary runs it)."""
     cron: str | None = None
-    """Run on a crontab schedule (minute hour day month weekday, server time)."""
+    """Run on a crontab schedule (minute hour day month weekday, in Settings → General → time
+    zone)."""
     model: Literal["worker", "main"] | None = None
     enabled: bool | None = None
     timeout_s: int | None = Field(default=None, ge=30, le=6 * 3600)
@@ -43,6 +46,15 @@ class _JobFields(BaseModel):
     domains: list[str] | None = None
     """MCP domains whose enabled tools the job's runs get (exactly those; empty = the shell
     only). Names of existing domains (MCP tools page)."""
+    notify: Literal["always", "warn_crit", "never"] | None = None
+    """A summary or a job in no summary: when its result goes to Telegram (warn_crit: status
+    warn, crit or error). A job run inside a summary sends nothing itself."""
+    members: list[str] | None = None
+    """A summary: its jobs (slugs) in the order they run. A job with a schedule that is added
+    loses it (`notice` says so)."""
+    summaries: list[str] | None = None
+    """A job: the summaries (slugs) it is in; joining one appends it at the end and removes
+    its own schedule."""
 
     @field_validator("cron")
     @classmethod
@@ -57,18 +69,17 @@ class _JobFields(BaseModel):
 
 
 class JobCreate(_JobFields):
-    slug: str = Field(pattern=SLUG_PATTERN)
-    """Unique id: 2-40 characters, lowercase letters, digits, - and _."""
+    slug: str = Field(pattern=SLUG_PATTERN, min_length=2, max_length=40)
+    """Unique id: 2-40 characters, lowercase letters, digits, - and _, parts joined by ':'
+    (docker:status)."""
+    kind: Literal["topic", "summary"] = "topic"
+    """topic: a check that runs commands; summary: runs its `members` one after another and
+    sums up their results."""
     name: str = Field(min_length=1, max_length=80)
     prompt: str = Field(min_length=10, max_length=8000)
-    model: Literal["worker", "main"] = "worker"
+    model: Literal["worker", "main"] | None = None
+    """Empty: worker for a job, main for a summary."""
     enabled: bool = True
-
-    @model_validator(mode="after")
-    def _has_schedule(self) -> JobCreate:
-        if self.interval_s is None and self.cron is None:
-            raise ValueError("a job needs a schedule: interval_s or cron")
-        return self
 
 
 class JobUpdate(_JobFields):
@@ -89,7 +100,8 @@ class Finding(BaseModel):
 class TopicLine(BaseModel):
     slug: str
     status: Literal["ok", "warn", "crit", "error", "none"]
-    """The status of the topic's latest run when the summary ran (none: it had not run)."""
+    """The status of the job's run in this queue run (none: from before 0.10.0, the job had
+    not run)."""
     clause: str
     """The summary's one clause about it, with its key number."""
 
@@ -106,6 +118,8 @@ class JobRunMcp(BaseModel):
 class JobRun(BaseModel):
     id: int
     job_slug: str
+    queue_run_id: int | None = None
+    """The summary run this run was part of (None: run alone)."""
     trigger: Literal["schedule", "manual", "llm"]
     started: float
     finished: float | None = None
@@ -115,7 +129,7 @@ class JobRun(BaseModel):
     """Markdown."""
     findings: list[Finding] = []
     topics: list[TopicLine] = []
-    """Summary runs: one entry per enabled topic job."""
+    """Summary runs: one entry per job of its queue run."""
     error: str | None = None
     model: str | None = None
     prompt_tokens: int | None = None
@@ -125,6 +139,9 @@ class JobRun(BaseModel):
     """The run's LLM and tool calls on the Logs page (turn id)."""
     mcp: JobRunMcp | None = None
     """What the run had of MCP (None: the job has no domains)."""
+    queue: list[JobRun] = []
+    """A summary run: the runs of its jobs, in the order they ran (filled in a job's
+    `last_run` and in the run detail)."""
 
 
 class Job(BaseModel):
@@ -143,6 +160,14 @@ class Job(BaseModel):
     max_steps: int | None = None
     domains: list[str] = []
     """MCP domains: its runs get exactly their enabled tools."""
+    notify: Literal["always", "warn_crit", "never"]
+    """When its result goes to Telegram (a summary, or a job in no summary)."""
+    members: list[str] = []
+    """A summary: its jobs in the order they run."""
+    summaries: list[str] = []
+    """A job: the summaries it is in (then it has no schedule of its own)."""
+    retired: bool = False
+    """An old builtin a release replaced: it no longer runs; its runs are kept."""
     created_by: Literal["builtin", "user", "llm"]
     created: float
     updated: float
@@ -152,10 +177,15 @@ class Job(BaseModel):
     """The newest finished run."""
     running_run_id: int | None = None
     """The run in progress right now (None: not running)."""
+    notice: str | None = None
+    """After a change: what else changed, in plain words (a schedule removed because the job
+    joined a summary)."""
 
 
 class JobList(BaseModel):
     items: list[Job]
+    retired: list[Job] = []
+    """Old builtins a release replaced; their runs stay readable."""
 
 
 class JobRunList(BaseModel):

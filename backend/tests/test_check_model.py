@@ -89,13 +89,13 @@ def test_other_chat_tools_are_offered_but_do_nothing(
     bootstrap: Bootstrap, echo_shell: list[str]
 ) -> None:
     llm = FakeLLM(
-        call("job_delete", {"slug": "docker"}),
+        call("job_delete", {"slug": "docker:status"}),
         lambda body: call("bash", {"command": f"echo {word_of(body)}"}),
         say("done"),
     )
     with TestClient(make_app(bootstrap, llm)) as client:
         result = run_test(client)
-        assert client.get("/api/jobs/docker").status_code == 200  # not deleted
+        assert client.get("/api/jobs/docker:status").status_code == 200  # not deleted
     assert result["ok"] is True
     assert "Not available in the connection test" in json.dumps(llm.requests[1]["messages"])
 

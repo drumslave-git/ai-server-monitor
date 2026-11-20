@@ -44,7 +44,9 @@ def topics_of(messages: list[ModelMessage]) -> list[dict[str, str]]:
         if isinstance(part, UserPromptPart)
     )
     out = []
-    sections = re.findall(r"^## .+? \(([a-z0-9_-]+), [^\n]*\)\n(.*?)(?=^## |\Z)", text, re.M | re.S)
+    sections = re.findall(
+        r"^## .+? \(([a-z0-9_:-]+)(?:, [^\n]*)?\)\n(.*?)(?=^## |\Z)", text, re.M | re.S
+    )
     for slug, body in sections:
         found = re.search(r"^last run .*? ago: (\w+)", body, re.M)
         out.append({"slug": slug, "status": found.group(1) if found else "none", "clause": "fine"})

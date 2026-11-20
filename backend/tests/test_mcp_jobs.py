@@ -85,7 +85,7 @@ async def test_a_run_gets_exactly_its_domains_tools(tmp_path: Path, fake46: Fake
         assert run["findings"][0]["verified"] is True  # MCP output is evidence
         assert run["mcp"] == {"domains": ["climate"], "unsorted": [], "unreachable": {}}
         # a builtin job ships without domains and gets no MCP tools
-        builtin = await app.jobs.store.get("docker")
+        builtin = await app.jobs.store.get("docker:status")
         assert builtin is not None and builtin["domains"] == []
 
 
@@ -166,9 +166,9 @@ async def test_domains_in_the_api_classify_and_job_save(tmp_path: Path, fake46: 
             r = await http.delete(f"/api/mcp/domains/{climate['id']}")
             assert r.status_code == 409 and "used by: Heating" in r.text
             # a builtin with domains is edited; reset empties them again
-            r = await http.put("/api/jobs/docker", json={"domains": ["bulk"]})
+            r = await http.put("/api/jobs/docker:status", json={"domains": ["bulk"]})
             assert r.json()["domains"] == ["bulk"] and r.json()["edited"]
-            r = await http.post("/api/jobs/docker/reset")
+            r = await http.post("/api/jobs/docker:status/reset")
             assert r.json()["domains"] == [] and not r.json()["edited"]
         save = next(t for t in job_tools(app, "s1") if t.name == "job_save")
         with pytest.raises(Exception, match="existing domains: bulk, climate, misc"):

@@ -208,8 +208,15 @@ def test_never_offered_to_jobs_or_the_worker(
 ) -> None:
     app = make_app(bootstrap, approvals={"shell_changes": "auto"})
     with TestClient(app) as client:
+        body = {
+            "slug": "night",
+            "kind": "summary",
+            "name": "Night",
+            "prompt": "Sum it up, briefly.",
+        }
+        assert client.post("/api/jobs", json=body).status_code == 201
         models.script = [finish("ok", "Fine.")]
-        client.portal.call(app.state.ctx.jobs.run, "summary", "manual")  # type: ignore[union-attr]
+        client.portal.call(app.state.ctx.jobs.run, "night", "manual")  # type: ignore[union-attr]
         assert "bash_write" not in models.requests[-1]["tools"]
         models.script = [tool("delegate", task="look around"), "found nothing", "All fine."]
         ask(client, "have a look")

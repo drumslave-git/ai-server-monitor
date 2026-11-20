@@ -90,7 +90,7 @@ function JobList() {
   useStream(["job.finished"], () => jobs.reload());
 
   const toggle = (job: Job) =>
-    api.put<Job>(`/api/jobs/${job.slug}`, { enabled: !job.enabled }).then(
+    api.put<Job>(`/api/jobs/${encodeURIComponent(job.slug)}`, { enabled: !job.enabled }).then(
       () => jobs.reload(),
       (e) => setError(errorText(e)),
     );
@@ -264,7 +264,7 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
     if (creating) body.slug = slug;
     setBusy(true);
     setError(null);
-    const req = creating ? api.post<Job>("/api/jobs", body) : api.put<Job>(`/api/jobs/${job.slug}`, body);
+    const req = creating ? api.post<Job>("/api/jobs", body) : api.put<Job>(`/api/jobs/${encodeURIComponent(job.slug)}`, body);
     req.then(
       (saved) => {
         location.hash = `#/jobs/${saved.slug}`;
@@ -279,7 +279,7 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
   const reset = () => {
     if (!job || !confirm(`Reset "${job.name}" to the version of this release? Your changes to it are lost.`)) return;
     setBusy(true);
-    api.post<Job>(`/api/jobs/${job.slug}/reset`, undefined).then(
+    api.post<Job>(`/api/jobs/${encodeURIComponent(job.slug)}/reset`, undefined).then(
       (fresh) => {
         setBusy(false);
         onReset?.(fresh);
@@ -294,7 +294,7 @@ function JobForm({ job, onReset }: { job: Job | null; onReset?: (job: Job) => vo
   const remove = () => {
     if (!job || !confirm(`Delete the job "${job.name}" and all its runs? This cannot be undone.`)) return;
     setBusy(true);
-    api.del(`/api/jobs/${job.slug}`).then(
+    api.del(`/api/jobs/${encodeURIComponent(job.slug)}`).then(
       () => {
         location.hash = "#/jobs";
       },

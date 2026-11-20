@@ -231,12 +231,14 @@ class AppContext:
 
     async def _rerun_interrupted(self) -> None:
         """Jobs whose last run the stop interrupted run again shortly after the start (through
-        the schedule: the pause switch and the concurrency limit apply), the summary last."""
+        the schedule: the pause switch and the concurrency limit apply), summaries last. Only
+        scheduled jobs: an interrupted summary reruns its whole queue; a job in a summary or
+        without a schedule waits for its next run."""
         slugs = await self.jobs.store.interrupted_slugs()
         if not slugs:
             return
         kinds = {j["slug"]: j["kind"] for j in await self.jobs.store.list()}
-        slugs.sort(key=lambda s: kinds.get(s) == "summary")
+        slugs.sort(key=lambda s: kinds.get(s) == "summary")  # stable: summaries last
         moved = self.schedule.run_soon(slugs, RERUN_FIRST, RERUN_SPACING)
         if moved:
             log.info("rerunning interrupted job(s) soon: %s", ", ".join(moved))
@@ -265,10 +267,11 @@ class AppContext:
 
     async def _load_job_metrics(self) -> None:
         """The job series from the stored runs (after a start: the latest run of each job)."""
-        jobs = await self.jobs.store.list()
-        self.metrics.forget_jobs(j["slug"] for j in jobs)
-        for run in (await self.jobs.store.latest_runs()).values():
-            self.metrics.set_job_run(run, count=False)
+        slugs = {j["slug"] for j in await self.jobs.store.list()}
+        self.metrics.forget_jobs(slugs)
+        for slug, run in (await self.jobs.store.latest_runs()).items():
+            if slug in slugs:  # not the runs of retired jobs
+                self.metrics.set_job_run(run, count=False)
 
     def _start_metrics_consumer(self) -> None:
         """Keep the metrics current from the events (subscribed before anything can publish):

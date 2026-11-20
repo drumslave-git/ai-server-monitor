@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from ai_server_monitor.agent import prompts
 from ai_server_monitor.config import Bootstrap, Settings
 from ai_server_monitor.context import AppContext
+from ai_server_monitor.jobs.builtins import DAILY
 from ai_server_monitor.jobs.prompts import summary_input
 
 from .conftest import LLM_URL
@@ -89,16 +90,18 @@ def test_job_runs_get_the_line_in_the_configured_zone(
 ) -> None:
     with TestClient(make_app(bootstrap, general={"timezone": "Europe/Kyiv"})) as client:
         models.script = [tool("bash", command="df -h /"), finish("ok", "Fine.")]
-        run(client, "storage")
+        run(client, "storage:usage")
         assert KYIV_LINE in models.requests[-1]["instructions"]
         clock[0] += 86400
+        for slug in DAILY:  # the summary alone: its jobs are off
+            client.put(f"/api/jobs/{slug}", json={"enabled": False})
         models.script = [finish("ok", "Fine.")]
-        run(client, "summary")
+        run(client, "summary:daily")
         assert NEXT_DAY_LINE in models.requests[-1]["instructions"]
 
 
 def test_the_summary_input_stamp_is_in_the_owner_zone_not_container_time() -> None:
-    text = summary_input([], {}, None, now=THU_2230_UTC, zone=ZoneInfo("Europe/Kyiv"))
+    text = summary_input([], None, now=THU_2230_UTC, zone=ZoneInfo("Europe/Kyiv"))
     assert "(now 2026-11-20 00:30 Europe/Kyiv)" in text
 
 

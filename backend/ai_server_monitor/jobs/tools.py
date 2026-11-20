@@ -94,7 +94,14 @@ def job_tools(app: AppContext, session: str) -> list[AgentTool]:
         return [_job_line(j, latest.get(j["slug"])) for j in await store.list()]
 
     async def job_results(args: dict[str, Any]) -> Any:
-        slug = args.get("slug") or "summary"
+        slug = args.get("slug")
+        if not slug:  # the latest run of every enabled summary
+            latest = await store.latest_runs()
+            return {
+                j["slug"]: _run_view(latest[j["slug"]]) if j["slug"] in latest else "not run yet"
+                for j in await store.list()
+                if j["kind"] == "summary" and j["enabled"]
+            } or "no summary is enabled"
         if await store.get(slug) is None:
             raise ToolError(f"no job {slug!r} (jobs_list shows them)")
         limit = max(1, min(int(args.get("limit") or 1), MAX_RESULTS))
@@ -145,19 +152,19 @@ def job_tools(app: AppContext, session: str) -> list[AgentTool]:
     return [
         AgentTool(
             "jobs_list",
-            "The monitor's scheduled checks (storage, journal, docker, ... and the summary) "
-            "with their schedule and latest status.",
+            "The monitor's jobs (checks such as storage:usage or docker:status, and the "
+            "summaries that run them in order) with their schedule, summaries and latest status.",
             {"type": "object", "properties": {}},
             jobs_list,
         ),
         AgentTool(
             "job_results",
             "The latest results of one job: status, summary and findings. Without a slug: the "
-            "latest overall summary.",
+            "latest run of every enabled summary.",
             {
                 "type": "object",
                 "properties": {
-                    "slug": {"type": "string", "description": "Job id (default: summary)."},
+                    "slug": {"type": "string", "description": "Job id (default: every summary)."},
                     "limit": {"type": "integer", "description": "How many runs (1-10)."},
                 },
             },

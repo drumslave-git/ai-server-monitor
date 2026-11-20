@@ -78,7 +78,10 @@ MESSAGE_ITEMS = 10
 SUMMARY_ITEMS = 8
 """How many warnings a summary message lists (the rest is "+N more")."""
 SUMMARY_KEY = "telegram.summary_seen"
-"""kv key: status and warnings of the last summary seen, so a restart does not resend it."""
+"""kv key (+ ":" + the summary's slug): status and warnings of its last run seen, so a restart
+does not resend it."""
+NOTIFY_ON = {"always": ("ok", "warn", "crit", "error"), "warn_crit": ("warn", "crit", "error")}
+"""A job's `notify` → the run statuses that are sent (never: none)."""
 STOP_GRACE = 10.0
 """Seconds a stopping bot lets running handlers finish before they are cancelled."""
 HELP = (
@@ -300,12 +303,14 @@ def _run_text(text: str, status: str) -> str:
     return md_escape(text) if status == "error" else text
 
 
-def summary_message(run: dict[str, Any]) -> str:
-    """Status, headline and the warnings of a summary run (Markdown)."""
+def summary_message(run: dict[str, Any], name: str | None = None) -> str:
+    """Status, headline and the warnings of a summary run (Markdown); `name` = the summary's or
+    job's name, shown first."""
     status = str(run.get("status") or "error")
     first = _run_text(_one_line(headline(run), 300), status)
+    title = f"{md_escape(name)}: " if name else ""
     lines = [
-        f"{ICONS.get(status, '❔')} **{WORDS.get(status, status)}**"
+        f"{ICONS.get(status, '❔')} **{title}{WORDS.get(status, status)}**"
         + (f" — {first}" if first else "")
     ]
     for topic in run.get("topics") or []:  # one line per topic job, the fine ones too
@@ -617,6 +622,11 @@ class TelegramBot:
             nxt = self.app.job_next_run(job["slug"])
             if not job["enabled"]:
                 when = "off"
+            elif job["summaries"]:
+                where = ", ".join(f"<code>{html.escape(s)}</code>" for s in job["summaries"])
+                when = f"on, runs in {where}"
+            elif not (job["interval_s"] or job["cron"]):
+                when = "on, no schedule"
             elif nxt is None:
                 when = "on, not scheduled (paused)"
             else:
@@ -652,10 +662,15 @@ class TelegramBot:
     async def _summary(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         chat_id = update.effective_chat.id  # type: ignore[union-attr]
         summary = next(
-            (j for j in await self.app.jobs.store.list() if j["kind"] == "summary"), None
+            (
+                j
+                for j in await self.app.jobs.store.list()
+                if j["kind"] == "summary" and j["enabled"]
+            ),
+            None,
         )
         if summary is None:
-            await self.send(chat_id, "There is no summary job.", markdown=False)
+            await self.send(chat_id, "No summary is enabled.", markdown=False)
             return
         await self._run_and_reply(chat_id, summary)
 
@@ -837,24 +852,32 @@ class TelegramBot:
     # ------------------------------------------------------------------ the summary
 
     async def _on_job_finished(self, data: dict[str, Any]) -> None:
-        """A summary run ended: tell the chats, as `send_summary` says."""
+        """A summary or a job in no summary ended: tell the chats as its `notify` says
+        (summaries also as `send_summary` says). A job run inside a summary's queue, or a job
+        that is in a summary, sends nothing: the summary speaks for it."""
         run_id = int(data["run_id"])
         asked_by = self._own_runs.pop(run_id, None)  # it answered there already
-        mode = self.cfg.send_summary
-        if mode == "never":
+        if data.get("queue_run_id") is not None:
             return
         store = self.app.jobs.store
         job = await store.get(str(data.get("slug") or ""))
         run = await store.get_run(run_id)
-        if job is None or run is None or job["kind"] != "summary":
+        if job is None or run is None or job["summaries"]:
             return
-        signature = summary_signature(run)
-        seen = await self.app.db.kv_get(SUMMARY_KEY)
-        await self.app.db.kv_set(SUMMARY_KEY, signature)
-        if mode == "changed" and seen == signature:
+        if run["status"] not in NOTIFY_ON.get(job["notify"], ()):
             return
+        if job["kind"] == "summary":
+            mode = self.cfg.send_summary
+            if mode == "never":
+                return
+            key = f"{SUMMARY_KEY}:{job['slug']}"
+            signature = summary_signature(run)
+            seen = await self.app.db.kv_get(key)
+            await self.app.db.kv_set(key, signature)
+            if mode == "changed" and seen == signature:
+                return
         await self.broadcast(
-            summary_message(run),
+            summary_message(run, job["name"]),
             skip=asked_by,
             reply_markup=self._explain_keyboard(run_id),
         )
