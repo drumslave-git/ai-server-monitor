@@ -52,6 +52,24 @@ export function commandMode(group: string): "read-only" | "write" | "unmarked" {
   return marks.has("write") ? "write" : "unmarked";
 }
 
+const LINE_MARK = /^(\s*#)\s*\[(?:read-only|write)\]\s*/i;
+
+/** What copy puts on the clipboard: the command as run sends it, without its mark (a comment
+ *  line that held only the mark goes). */
+export function withoutMark(command: string): string {
+  return command
+    .split("\n")
+    .map((line) => line.replace(LINE_MARK, "$1 "))
+    .filter((line) => line.trim() !== "#")
+    .join("\n");
+}
+
+/** How long a copy button says "copied". */
+const COPIED_MS = 1500;
+
+const copyButton = (index: number, what: string) =>
+  `<button type="button" class="fd-btn" data-copy="${index}" title="Copy this ${what} to the clipboard">copy</button>`;
+
 const LABELS = {
   "read-only": "run",
   write: "run (changes the server)",
@@ -76,22 +94,28 @@ function commandHtml(group: string, button: string): string {
 }
 
 /** `runnableNow`: the commands get their run buttons (not while the answer is still written
- *  or another command runs). */
-function render(text: string, runnableNow: boolean): { html: string; commands: string[] } {
+ *  or another command runs). Every code block gets a copy button: a shell block one per
+ *  command (what run sends, without the mark), any other block one for its text. */
+function render(text: string, runnableNow: boolean): { html: string; commands: string[]; copies: string[] } {
   const commands: string[] = [];
+  const copies: string[] = [];
   const marked = new Marked({
     gfm: true,
     renderer: {
       code({ text: code, lang }: Tokens.Code) {
         const tag = (lang ?? "").trim().split(/\s+/)[0].toLowerCase();
-        if (!SHELLS.has(tag)) return false;
+        if (!SHELLS.has(tag)) {
+          const copy = copyButton(copies.push(code) - 1, "text");
+          return `<div class="fd-command"><pre class="fd-code">${escape(code)}</pre>${copy}</div>`;
+        }
         const parts = commandGroups(code).map((group) => {
-          const index = commands.push(runnable(group, tag)) - 1;
+          const command = runnable(group, tag);
+          const index = commands.push(command) - 1;
           const mode = commandMode(group);
-          const button = runnableNow
+          const run = runnableNow
             ? `<button type="button" class="fd-btn${mode === "read-only" ? "" : " fd-btn-warn"}" data-run="${index}" data-label="${LABELS[mode]}" title="${TITLES[mode]}">${LABELS[mode]}</button>`
             : "";
-          return commandHtml(group, button);
+          return commandHtml(group, run + copyButton(copies.push(withoutMark(command)) - 1, "command"));
         });
         // (the commands of one block stand under each other with the gap of the text around them)
         return `<div class="fd-md">${parts.join("")}</div>`;
@@ -99,14 +123,28 @@ function render(text: string, runnableNow: boolean): { html: string; commands: s
     },
   });
   const html = DOMPurify.sanitize(marked.parse(text, { async: false }) as string);
-  return { html, commands };
+  return { html, commands, copies };
 }
 
-/** An answer's Markdown, with a run button on every command of its shell code blocks. */
+/** An answer's Markdown, with a run button on every command of its shell code blocks and a
+ *  copy button on every code block. */
 export function RunnableMarkdown({ text, onRun }: { text: string; onRun?: (command: string) => Promise<void> }) {
   const canRun = Boolean(onRun);
-  const { html, commands } = useMemo(() => render(text, canRun), [text, canRun]);
+  const { html, commands, copies } = useMemo(() => render(text, canRun), [text, canRun]);
   const click = async (event: MouseEvent<HTMLDivElement>) => {
+    const copy = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-copy]");
+    if (copy) {
+      const copied = copies[Number(copy.dataset.copy)];
+      if (copied === undefined) return;
+      try {
+        await navigator.clipboard.writeText(copied);
+        copy.textContent = "copied";
+      } catch {
+        copy.textContent = "copy failed";
+      }
+      window.setTimeout(() => (copy.textContent = "copy"), COPIED_MS);
+      return;
+    }
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-run]");
     if (!button || !onRun || button.disabled) return;
     const command = commands[Number(button.dataset.run)];
