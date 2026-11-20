@@ -7,7 +7,8 @@ WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 # `npm install`, not `npm ci`: a lockfile made on Windows/macOS lacks Linux-only optional
 # native deps (rolldown/emnapi), which `npm ci`'s strict sync check rejects.
-RUN npm install --no-audit --no-fund
+# Carbon icons run IBM telemetry in their postinstall; this turns it off.
+RUN IBM_TELEMETRY_DISABLED=true npm install --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
