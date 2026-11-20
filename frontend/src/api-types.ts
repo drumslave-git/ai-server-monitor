@@ -167,7 +167,9 @@ export interface paths {
          * @description Ask a question. The reply is a server-sent-event stream:
          *     `session` {session_id}, `tool_call` {id, name, args, kind}, `tool_progress` {id, name,
          *     elapsed_s} (every few seconds while a tool is still running), `tool_result` {id, name, ok,
-         *     truncated, size, preview}, `token` {text} (the answer, in pieces), then `done`
+         *     truncated, size, preview}, `token` {text} (the answer, in pieces), `retry` {attempt, of}
+         *     (the answer broke off and is asked for again: drop its text shown since the last
+         *     `tool_call`/`tool_result`; attempt 2 of `of` = 1 + `max_retries`), then `done`
          *     {session_id, message_id, steps, usage, stopped} — or `error` {message}.
          *     For the first answer of a new conversation one more event may follow `done`:
          *     `title` {session_id, title}, the LLM-written session title (the stream closes right after;
@@ -1605,8 +1607,9 @@ export interface components {
              * Max Retries
              * @description How many times a failed model request is retried before giving up: no answer, a
              *     timeout, a temporary error of the endpoint (HTTP 408, 409, 429, 5xx), or an answer that
-             *     breaks off part-way. A tool call the model asked for is never run again because of it. Not
-             *     retried: the chat's own answer once its first words are shown.
+             *     breaks off part-way. A tool call the model asked for is never run again because of it. When
+             *     the chat's own answer breaks off after its first words are shown, the chat drops them and
+             *     the answer starts again.
              * @default 2
              */
             max_retries: number;
@@ -2728,8 +2731,9 @@ export interface components {
              * Max Retries
              * @description How many times a failed model request is retried before giving up: no answer, a
              *     timeout, a temporary error of the endpoint (HTTP 408, 409, 429, 5xx), or an answer that
-             *     breaks off part-way. A tool call the model asked for is never run again because of it. Not
-             *     retried: the chat's own answer once its first words are shown.
+             *     breaks off part-way. A tool call the model asked for is never run again because of it. When
+             *     the chat's own answer breaks off after its first words are shown, the chat drops them and
+             *     the answer starts again.
              * @default 2
              */
             max_retries: number;

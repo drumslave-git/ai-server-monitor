@@ -377,7 +377,7 @@ function Section({
           </Text>
         </Pad>
       )}
-      <Table stack head={["on", "tool", { label: "what it does", minWidth: "260px" }, "domain"]}>
+      <Table stack stickyHead head={["on", "tool", { label: "what it does", minWidth: "260px" }, "domain"]}>
         <tbody>{children}</tbody>
       </Table>
       {editing && domain && <DomainEdit domain={domain} act={act} onClose={() => setEditing(false)} />}

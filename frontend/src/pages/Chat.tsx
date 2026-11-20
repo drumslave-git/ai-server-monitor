@@ -47,6 +47,8 @@ type Turn =
       live?: boolean;
       error?: string;
       stopped?: boolean;
+      /** The answer broke off and is being asked for again (event `retry`), until its first new token. */
+      retry?: { attempt: number; of: number };
       /** The run stopped for these approvals (action ids); `text` is the waiting note. */
       waiting?: number[];
       /** Set once the note was rewritten to what was decided: action id → final status. */
@@ -322,10 +324,22 @@ export function ChatPage() {
                 if (use.kind === "write") use.approval = approvalOf(data.preview);
               }
             });
+          } else if (type === "retry") {
+            // The answer broke off and is asked for again: what it had shown since the last tool goes.
+            patchLast((t) => {
+              t.text = "";
+              t.retry = { attempt: data.attempt, of: data.of };
+            });
           } else if (type === "token") {
-            patchLast((t) => void (t.text += data.text));
+            patchLast((t) => {
+              t.text += data.text;
+              delete t.retry;
+            });
           } else if (type === "error") {
-            patchLast((t) => void (t.error = data.message));
+            patchLast((t) => {
+              t.error = data.message;
+              delete t.retry;
+            });
             finished = true;
             failed = true; // nothing of the answer is stored: keep the live thread with the error
             keepThread.current = sessionId.current;
@@ -572,6 +586,10 @@ function AssistantMessage({
         </Status>
       ) : turn.text ? (
         <RunnableMarkdown text={turn.text} onRun={turn.live ? undefined : onRun} />
+      ) : turn.live && !turn.error && turn.retry ? (
+        <Status tone="warn" blink>
+          answer broke off, asking again ({turn.retry.attempt} of {turn.retry.of})
+        </Status>
       ) : turn.live && !turn.error ? (
         <Status tone="info" blink>
           thinking…

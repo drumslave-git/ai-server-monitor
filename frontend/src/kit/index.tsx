@@ -109,7 +109,7 @@ function IconSprite() {
 
 export type NavItem = { key: string; label: string; href: string; count?: number; icon?: IconName };
 
-/** The navigation rail: brand, numbered nav, and whatever stands at its foot (children). */
+/** The navigation rail: brand, nav (icon and word each), and whatever stands at its foot (children). */
 export function Rail({
   items,
   active,
@@ -139,9 +139,8 @@ export function Rail({
           <span className="fd-meta">{[version, live ? "live" : "reconnecting"].filter(Boolean).join(" · ")}</span>
         </div>
         <nav className="fd-nav" aria-label="Main">
-          {items.map((item, i) => (
+          {items.map((item) => (
             <a key={item.key} className="fd-nav-item" href={item.href} aria-current={item.key === active ? "page" : undefined}>
-              <span>{String(i + 1).padStart(2, "0")}</span>
               {item.icon && <Icon name={item.icon} />}
               <span>{item.label}</span>
               {item.count ? <Count>{item.count}</Count> : null}
@@ -292,7 +291,7 @@ export function Pane({
     if (getComputedStyle(el).overflowY === "auto") el.scrollTo(0, el.scrollHeight);
     else document.scrollingElement?.scrollTo(0, document.scrollingElement.scrollHeight);
   }, [endOn]);
-  const className = cx("fd-pane", side && "fd-pane-side", bare && "fd-pane-bare");
+  const className = cx("fd-pane", side && "fd-pane-side", bare && "fd-pane-bare", endOn !== undefined && "fd-pane-thread");
   const body = (
     <>
       {(title || aside) && (
@@ -937,6 +936,8 @@ export function IconButton({
   small,
   type = "button",
   toEnd,
+  disabled,
+  onClick,
   ...rest
 }: {
   icon: IconName;
@@ -950,12 +951,16 @@ export function IconButton({
   const hintId = useId();
   const name = count === undefined ? label : `${label} (${count})`;
   const describes = hint !== undefined && hint !== name;
+  // A disabled icon button still shows its hint, which is its only label: a native disabled button
+  // gets no pointer or focus, so it is marked aria-disabled and does nothing when pressed instead.
   return (
     <>
       <button
         {...rest}
         {...({ interestfor: hintId } as object)}
-        type={type}
+        type={disabled ? "button" : type}
+        onClick={disabled ? undefined : onClick}
+        aria-disabled={disabled || undefined}
         aria-label={name}
         aria-describedby={describes ? hintId : undefined}
         className={cx(buttonClass({ variant }), "fd-btn-icon", small && "fd-btn-small")}
@@ -1550,7 +1555,7 @@ export function Code({
   );
 }
 
-/** A shell command with its buttons (action: small IconButtons) at its top right corner. */
+/** A shell command with its buttons (action: small IconButtons) in a strip of their own above it, at the right. */
 export function Command({ comment, wrap, action, children, ...where }: { comment?: ReactNode; wrap?: boolean; action?: ReactNode; children: ReactNode } & Place) {
   return (
     <div className="fd-command" style={place(where)}>
@@ -1809,12 +1814,16 @@ export function Table({
   dense,
   head,
   stack,
+  stickyHead,
   minWidth,
   children,
 }: {
   dense?: boolean;
   head?: TableColumn[];
   stack?: boolean;
+  /** The column names stay at the top of the pane that scrolls while the rows go under them.
+   *  The table then does not scroll sideways of its own: use it with stack, or where it is never wider than its place. */
+  stickyHead?: boolean;
   minWidth?: string;
   children: ReactNode;
 }) {
@@ -1822,7 +1831,7 @@ export function Table({
   // the names of the columns for the stacked rows (kit.css reads --fd-l1 … --fd-l8)
   const labels = Object.fromEntries(columns.map((c, i) => [`--fd-l${i + 1}`, JSON.stringify(c.label)]));
   return (
-    <div className="fd-table-wrap">
+    <div className={cx("fd-table-wrap", stickyHead && "fd-table-wrap-sticky")}>
       <table className={cx("fd-table", dense && "fd-table-dense", stack && "fd-table-stack")} style={{ minWidth, ...labels }}>
         {columns.length > 0 && (
           <thead>

@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, ApiError, type FieldError, type JsonObject, type LlmTestResult, type ModelInfo, type SettingsDoc } from "../api";
 import { ObjectFields, resolve, type FormContext } from "../components/SchemaForm";
-import { Button, Count, ErrorText, IconButton, List, ListItem, Live, Meta, Pad, PageHeader, Pane, Panes, Panel, SaveBar, SectionHead, Status, TestLine, Text } from "../kit";
+import { Button, Count, ErrorText, IconButton, List, ListItem, Live, Meta, Pad, PageHeader, Pane, Panes, Panel, SectionHead, Status, TestLine, Text } from "../kit";
 
 function modelDefaultsLine(info: ModelInfo): string {
   const p = info.parameters;
@@ -133,9 +133,10 @@ export function SettingsPage() {
   };
 
 
-  /** Discard and save: in the page's head, and again in the bar that stays in view while there are changes. */
+  /** Discard and save, once, in the page's head (it stays in view), with what they did or what waits beside them. */
   const buttons = (
     <>
+      {status ? <Status tone={status.kind === "ok" ? "ok" : "crit"}>{status.text}</Status> : dirty && <Status tone="warn">unsaved changes</Status>}
       <IconButton icon="discard" label="discard" disabled={!dirty || saving} onClick={() => { setValues(doc.values); setErrors({}); setStatus(null); }} />
       <Button type="submit" form={formId} variant="primary" icon="save" disabled={!dirty || saving}>
         {saving ? "saving…" : "save"}
@@ -175,14 +176,6 @@ export function SettingsPage() {
           id={formId}
           resetOn={section}
           onSubmit={(e) => { e.preventDefault(); void save(); }}
-          foot={
-            (dirty || status) && (
-              <SaveBar>
-                {status ? <Status tone={status.kind === "ok" ? "ok" : "crit"}>{status.text}</Status> : <Status tone="warn">unsaved changes</Status>}
-                {buttons}
-              </SaveBar>
-            )
-          }
         >
           <SectionHead title={doc.sections[section]} note={sectionSchema.description} />
           <ObjectFields

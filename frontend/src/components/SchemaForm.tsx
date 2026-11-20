@@ -430,8 +430,16 @@ function OptionalGroup({ title, spec, inner, value, onChange, path, ctx, inset }
   );
 }
 
+let nextEntryKey = 0;
+
 function ListOfObjects({ title, spec, item, value, onChange, path, ctx, inset }: BlockProps & { item: JsonSchema }) {
   const list = (value as Json[]) ?? [];
+  // Each entry keeps one key while it lives, so an entry's card stays open or closed with the entry
+  // itself: removing one does not hand its state to the next. An entry the list gains from elsewhere
+  // gets a new key.
+  const keys = useRef<number[]>([]);
+  while (keys.current.length < list.length) keys.current.push(nextEntryKey++);
+  keys.current.length = list.length;
   // the entry just added opens; the others stay as the owner left them
   const [added, setAdded] = useState<number | null>(null);
   const update = (i: number, v: Json) => onChange(list.map((x, j) => (j === i ? v : x)));
@@ -440,7 +448,9 @@ function ListOfObjects({ title, spec, item, value, onChange, path, ctx, inset }:
       icon="add"
       label="add"
       onClick={() => {
-        setAdded(list.length);
+        const key = nextEntryKey++;
+        keys.current.push(key);
+        setAdded(key);
         onChange([...list, defaultFor({ ...item, default: undefined }, ctx.defs)]);
       }}
     />
@@ -453,18 +463,22 @@ function ListOfObjects({ title, spec, item, value, onChange, path, ctx, inset }:
         const at = `${path}.${i}`;
         const failed = Object.keys(ctx.errors).some((p) => p === at || p.startsWith(`${at}.`));
         return (
-          <Tested key={i} spec={spec} value={entry} index={i} onEdit={(v) => update(i, v)}>
+          <Tested key={keys.current[i]} spec={spec} value={entry} index={i} onEdit={(v) => update(i, v)}>
             {(buttons, result) => (
               <Card
                 title={fields.name ? String(fields.name) : `#${i + 1}`}
                 // an entry with an on/off switch shows it, and one with an address shows that, while closed
                 status={typeof fields.enabled === "boolean" && <Status tone={fields.enabled ? "ok" : "off"}>{fields.enabled ? "on" : "off"}</Status>}
                 meta={typeof fields.url === "string" && fields.url}
-                reveal={added === i || failed}
+                reveal={added === keys.current[i] || failed}
                 aside={
                   <>
                     {buttons}
-                    <IconButton small icon="remove" label="remove" onClick={() => onChange(list.filter((_, j) => j !== i))} />
+                    <IconButton small icon="remove" label="remove" onClick={() => {
+                        keys.current.splice(i, 1);
+                        onChange(list.filter((_, j) => j !== i));
+                      }}
+                    />
                   </>
                 }
                 below={result}
