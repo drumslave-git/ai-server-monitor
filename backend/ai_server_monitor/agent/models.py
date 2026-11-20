@@ -3,18 +3,28 @@
 
 Every request goes through our own httpx client whose transport is the tracing transport, so
 each call lands in `llm_calls` (bodies, tokens, timing) whatever agent made it.
+
+Retries are the OpenAI SDK's own (`max_retries` of the profile, the SDK's waits between them).
+Its retry loop ends when the response headers are in, so `WholeBody` reads the whole answer
+before handing the response up: a streamed answer that breaks off is then a failed request the
+SDK repeats like any other. Only the chat's own answer is passed on as it arrives (`live`).
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncIterator, Iterator
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
 from openai import AsyncOpenAI
 from pydantic_ai import NativeOutput
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
@@ -23,6 +33,7 @@ from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 from pydantic_ai.settings import ModelSettings
 
 from ..config import LLMSettings, Settings
+from ..tracing.scope import trace_call
 
 log = logging.getLogger(__name__)
 
@@ -65,9 +76,40 @@ def model_profile(cfg: LLMSettings) -> ModelProfile:
 
 
 class HubModel(OpenAIChatModel):
-    """A model of the hub, knowing its profile's Settings "Structured output"."""
+    """A model of the hub, knowing its profile's Settings "Structured output".
+
+    Each request is one call group of the trace: the SDK's retries of it are logged as
+    attempt 2, 3, ... of the same call."""
 
     structured_output: str = "tool_call"
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        with trace_call():
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: Any = None,
+    ) -> AsyncIterator[StreamedResponse]:
+        async with AsyncExitStack() as stack:
+            # The HTTP request, with its retries, is made when the stream is opened; the group
+            # is set only around that, never while the caller holds the stream.
+            with trace_call():
+                stream = await stack.enter_async_context(
+                    super().request_stream(
+                        messages, model_settings, model_request_parameters, run_context
+                    )
+                )
+            yield stream
 
 
 def helper_output(model: Any, output_type: Any) -> Any:
@@ -93,6 +135,49 @@ def model_settings(cfg: LLMSettings) -> ModelSettings:
     if cfg.extra_body:
         out["extra_body"] = dict(cfg.extra_body)
     return OpenAIChatModelSettings(**out)  # type: ignore[typeddict-item]
+
+
+_live: ContextVar[bool] = ContextVar("asm_live_answer", default=False)
+
+
+@contextmanager
+def live_answer(live: bool = True) -> Iterator[None]:
+    """Streamed model requests made inside pass their answer on as it arrives (`live`, the
+    chat shows it word by word), or only once it is complete (not `live`, see `WholeBody`)."""
+    token = _live.set(live)
+    try:
+        yield
+    finally:
+        _live.reset(token)
+
+
+class WholeBody(httpx.AsyncBaseTransport):
+    """Reads the whole response body before returning the response, so an answer whose body
+    breaks off fails inside the OpenAI SDK's retry loop and is repeated like a request that got
+    no headers. Not under `live_answer()`: there the stream is passed on untouched (the chat's
+    answer), and a break ends the request with the error, as before. A request without
+    streaming is read whole by httpx anyway; this only reads it a step earlier."""
+
+    def __init__(self, inner: httpx.AsyncBaseTransport):
+        self._inner = inner
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        response = await self._inner.handle_async_request(request)
+        if _live.get():
+            return response
+        try:
+            body = b"".join([chunk async for chunk in response.stream])  # type: ignore[union-attr]
+        finally:
+            await response.aclose()
+        return httpx.Response(
+            response.status_code,
+            headers=response.headers,
+            stream=httpx.ByteStream(body),
+            extensions=response.extensions,
+        )
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
 
 
 class EffortGuard(httpx.AsyncBaseTransport):
@@ -186,7 +271,7 @@ class ModelHub:
         transport = self._transport
         if self._tracing is not None:
             transport = self._tracing.wrap_transport(transport)
-        transport = EffortGuard(transport or httpx.AsyncHTTPTransport())
+        transport = WholeBody(EffortGuard(transport or httpx.AsyncHTTPTransport()))
         client = httpx.AsyncClient(
             timeout=httpx.Timeout(cfg.timeout.total_seconds(), connect=10.0),
             transport=transport,

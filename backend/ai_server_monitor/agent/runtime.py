@@ -71,6 +71,7 @@ from pydantic_ai.usage import RunUsage
 
 from ..tracing import trace_scope
 from ..tracing.scope import current_scope
+from .models import live_answer
 from .prompts import STEP_LIMIT_NOTE, now_line
 from .safety import Scrubber, cap_text, shrink, wrap_untrusted
 
@@ -217,6 +218,10 @@ class AgentConfig:
     capabilities: Sequence[AbstractCapability[Any]] = ()
     """More Pydantic AI capabilities (the chat's MCP domains, some deferred: then the library
     adds `load_capability` and the catalog). Which ones the run loaded: `end` event `loaded`."""
+    live: bool = False
+    """The answer is passed on as it streams in (the chat). Otherwise each model request is read
+    whole first, so a stream that breaks off is retried like any failed request (`max_retries`);
+    the `token` events then come all at once."""
 
 
 @dataclass
@@ -422,7 +427,7 @@ class _Run:
         stack = contextlib.AsyncExitStack()
         await asyncio.gather(*(stack.enter_async_context(t) for t in cfg.toolsets))
         try:
-            with trace_scope(**cfg.trace):
+            with trace_scope(**cfg.trace), live_answer(cfg.live):
                 # A round ends at approval-required calls; settled at once (policy auto, an
                 # approval that covers the rest of the run), the run goes on. `limits` counts
                 # the model requests of all rounds, so the step limit ends this loop.

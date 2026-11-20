@@ -1603,7 +1603,10 @@ export interface components {
             max_output_tokens: number;
             /**
              * Max Retries
-             * @description How many times a failed model request is retried before giving up.
+             * @description How many times a failed model request is retried before giving up: no answer, a
+             *     timeout, a temporary error of the endpoint (HTTP 408, 409, 429, 5xx), or an answer that
+             *     breaks off part-way. A tool call the model asked for is never run again because of it. Not
+             *     retried: the chat's own answer once its first words are shown.
              * @default 2
              */
             max_retries: number;
@@ -2723,7 +2726,10 @@ export interface components {
             max_output_tokens: number;
             /**
              * Max Retries
-             * @description How many times a failed model request is retried before giving up.
+             * @description How many times a failed model request is retried before giving up: no answer, a
+             *     timeout, a temporary error of the endpoint (HTTP 408, 409, 429, 5xx), or an answer that
+             *     breaks off part-way. A tool call the model asked for is never run again because of it. Not
+             *     retried: the chat's own answer once its first words are shown.
              * @default 2
              */
             max_retries: number;

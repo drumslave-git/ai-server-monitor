@@ -400,7 +400,7 @@ values a fresh install starts with.
 | `llm.top_p` | number or auto | `auto` | Nucleus sampling: only the most likely words that together cover this share of the probability are considered. auto = not sent, the model's own default applies. |
 | `llm.top_k` | integer or auto | `auto` | Only the this-many most likely words are considered at each step (0 = no limit). auto = not sent, the model's own default applies. Not every endpoint honours it. |
 | `llm.timeout` | duration | `3m` | Per-request timeout. Local models on CPU can be slow. |
-| `llm.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up. |
+| `llm.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up: no answer, a timeout, a temporary error of the endpoint (HTTP 408, 409, 429, 5xx), or an answer that breaks off part-way. A tool call the model asked for is never run again because of it. Not retried: the chat's own answer once its first words are shown. |
 | `llm.extra_body` | map | empty | Extra provider-specific request fields (JSON), passed through verbatim. |
 | `llm.structured_output` | json_schema / tool_call | `json_schema` | How the short helper calls get their structured answer: picking the MCP domains a chat question needs (worker model), marking the commands of an answer read-only or write and sorting MCP tools into domains (main model). json_schema = the request carries the JSON schema (response_format) and the endpoint holds the model to it; tool_call = the model is asked to call a final_result tool, which small models sometimes skip by answering in prose. Pick tool_call if the endpoint rejects response_format (the Test button says so). Chat answers and job runs are not affected. |
 
@@ -417,7 +417,7 @@ values a fresh install starts with.
 | `worker.top_p` | number or auto | `auto` | Nucleus sampling: only the most likely words that together cover this share of the probability are considered. auto = not sent, the model's own default applies. |
 | `worker.top_k` | integer or auto | `auto` | Only the this-many most likely words are considered at each step (0 = no limit). auto = not sent, the model's own default applies. Not every endpoint honours it. |
 | `worker.timeout` | duration | `3m` | Per-request timeout. Local models on CPU can be slow. |
-| `worker.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up. |
+| `worker.max_retries` | integer (min 0, max 10) | `2` | How many times a failed model request is retried before giving up: no answer, a timeout, a temporary error of the endpoint (HTTP 408, 409, 429, 5xx), or an answer that breaks off part-way. A tool call the model asked for is never run again because of it. Not retried: the chat's own answer once its first words are shown. |
 | `worker.extra_body` | map | empty | Extra provider-specific request fields (JSON), passed through verbatim. |
 | `worker.structured_output` | json_schema / tool_call | `json_schema` | How the short helper calls get their structured answer: picking the MCP domains a chat question needs (worker model), marking the commands of an answer read-only or write and sorting MCP tools into domains (main model). json_schema = the request carries the JSON schema (response_format) and the endpoint holds the model to it; tool_call = the model is asked to call a final_result tool, which small models sometimes skip by answering in prose. Pick tool_call if the endpoint rejects response_format (the Test button says so). Chat answers and job runs are not affected. |
 
@@ -733,6 +733,15 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
 - **Dashboard:** one card per enabled summary instead of one overall card; Telegram `/summary`
   asks which summary to run, `/status` lists every enabled summary.
 - **Hardware meters** in the sidebar (see [Hardware meters](#hardware-meters)).
+
+### 0.10.1
+
+- **Model retries:** `max_retries` (Settings → Main model / Worker model) now also covers a
+  model answer that breaks off part-way (in the model call log: HTTP 200, then `ReadError`),
+  for job runs, the worker and the short helper calls. Only the model request is repeated, never
+  a tool call; the log shows each repeat as attempt 2, 3, … of the same call. The chat's own
+  answer, shown word by word, is still not retried once its first words are shown: it ends with
+  "The language model failed: Connection error." as before.
 
 ## Troubleshooting
 

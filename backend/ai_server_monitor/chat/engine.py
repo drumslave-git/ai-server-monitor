@@ -336,7 +336,8 @@ class ChatEngine:
             )
             result = None
             with trace_scope("chat_marks", link_kind="chat", link_id=session_id, turn=trace_turn):
-                # streamed like the chat's own requests
+                # streamed like the chat's own requests, but read whole before it is used, so
+                # an answer that breaks off is retried (agent.models.WholeBody)
                 async with agent.run_stream_events(marks_prompt(commands)) as stream:
                     async for event in stream:
                         if isinstance(event, AgentRunResultEvent):
@@ -477,6 +478,7 @@ class ChatEngine:
             approval_tool=mcp_approval_tool(app, who, run_key),
             notes=lambda: "\n".join([*mcp.unavailable(), *turn.notes()]),
             zone=zone,
+            live=True,
         )
         look = LookFirst() if require_look else None
         text_call = TextCall({t.name for t in tools}, look)
