@@ -759,6 +759,15 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
   command by itself on upgrade; if you edited it, press **reset to default** on its edit page
   to get it.
 
+### 0.10.2
+
+- **Image update check (`docker:updates`) counts for the model.** The command now prints the
+  `newer` and `unknown` images first and ends with one line of counts (`counts: 32 current,
+  5 newer, 4 unknown`) that the model copies, instead of counting some 40 lines itself (which
+  could use up its whole output on thinking and end the run in `error`). *Updates: packages*
+  prints the number of security updates the same way. An unedited job takes the new command by
+  itself on upgrade; if you edited it, press **reset to default** on its edit page to get it.
+
 ## Troubleshooting
 
 - **A job or a summary shows `error`** — open the run on the Jobs page: its error says why

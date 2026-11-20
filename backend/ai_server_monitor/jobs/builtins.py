@@ -54,9 +54,14 @@ DOCKER_UPDATES = (
     'd=$(echo "$r" | sed -n \'s/.*"Descriptor":{[^}]*"digest":"\\(sha256:[0-9a-f]*\\)".*/\\1/p\'); '
     'case "$d" in sha256:*) case "$l" in *"$d"*) echo "current  $i";; *) echo "newer    $i";; esac;; '
     '*) echo "unknown  $i: $(echo "$r" | head -1)";; esac; done'
+    ' | awk \'{n[$1]++; g[$1] = g[$1] $0 "\\n"} '
+    'END {printf "%s%s%s", g["newer"], g["unknown"], g["current"]; '
+    'printf "counts: %d current, %d newer, %d unknown\\n", n["current"], n["newer"], n["unknown"]}\''
 )
 """One line per image of a running container: "current", "newer" (the registry has another
-digest for its tag) or "unknown" with the first line of the answer. The registry's digest comes
+digest for its tag) or "unknown" with the first line of the answer; the "newer" lines first, then
+the "unknown", then the "current", and last one line with the three counts (so the model copies
+them instead of counting a long list). The registry's digest comes
 from the Docker daemon (Engine API `GET /distribution/<image>/json`, `Descriptor.digest`), asked
 with curl at the same $DOCKER_HOST the `docker` commands use: `tcp://` as http, `unix://` through
 the socket, unset as Docker's own default socket. Nothing is written on the host."""
@@ -125,7 +130,8 @@ volumes and build cache; much reclaimable space is one info finding.""",
         "docker",
         f"""\
 Newer images for the running containers.
-Run this ONE command; it prints one line per image:
+Run this ONE command; it prints one line per image, the "newer" and "unknown" ones first, and
+as its last line the counts ("counts: 32 current, 5 newer, 4 unknown"):
 `{DOCKER_UPDATES}`
 "current": the registry has the same image. "newer": the registry has a different image for
 that tag (an update). "unknown": the registry could not be asked (the error follows; images
@@ -133,8 +139,10 @@ built locally always show this). An answer "403 Forbidden" comes from the Docker
 service in the compose file lacks the line `DISTRIBUTION: 1`; say so in the finding.
 ok: always, unless no image could be checked at all (then: could not check, with the first
 error line).
-Each "newer" image is one info finding naming the image. Put the counts of current, newer and
-unknown images in the summary.""",
+Findings only for the "newer" and "unknown" lines: each "newer" image is one info finding
+naming the image; each "unknown" image one info finding with its error. The "current" lines
+need nothing. For the summary, take the counts from the last line and copy them as printed;
+do not count the lines yourself.""",
     ),
     _topic(
         "resources:load",
@@ -286,9 +294,10 @@ Name each timer or service and copy its line.""",
         """\
 Pending package updates.
 Run this ONE command (Debian/Ubuntu); it prints every fact you need in labelled sections:
-`echo '== upgradable (count) =='; apt list --upgradable 2>/dev/null | tail -n +2 | wc -l; echo '== security updates =='; apt list --upgradable 2>/dev/null | grep -i security | head -30; echo '== package lists updated =='; stat -c %y /var/cache/apt/pkgcache.bin`
-A second command only to follow up on something it showed. Put the upgradable count in the
-summary. Other distributions: `dnf check-update -q`, `checkupdates`.
+`echo '== upgradable (count) =='; apt list --upgradable 2>/dev/null | tail -n +2 | wc -l; echo '== security updates (count) =='; apt list --upgradable 2>/dev/null | grep -ci security; echo '== security updates =='; apt list --upgradable 2>/dev/null | grep -i security | head -30; echo '== package lists updated =='; stat -c %y /var/cache/apt/pkgcache.bin`
+A second command only to follow up on something it showed. Put the two counts (upgradable,
+security) in the summary as printed; do not count lines yourself. Other distributions:
+`dnf check-update -q`, `checkupdates`.
 The shell cannot refresh the package lists: say how old they are.
 ok: no security updates pending.
 warn: security updates pending.
