@@ -1113,7 +1113,9 @@ export function Field({
 }
 
 export function Input({ invalid, flex, width, ...rest }: { invalid?: boolean } & Pick<Place, "flex" | "width"> & Omit<NoLook<InputHTMLAttributes<HTMLInputElement>>, "width">) {
-  return <input {...rest} className="fd-input" style={place({ flex, width })} aria-invalid={invalid || undefined} />;
+  // (--fd-placeholder: the room its placeholder needs, which a field in a compact head keeps)
+  const look = { ...place({ flex, width }), ...(rest.placeholder ? { "--fd-placeholder": `${rest.placeholder.length}ch` } : {}) } as CSSProperties;
+  return <input {...rest} className="fd-input" style={look} aria-invalid={invalid || undefined} />;
 }
 
 export function Textarea({ invalid, ...rest }: { invalid?: boolean } & NoLook<TextareaHTMLAttributes<HTMLTextAreaElement>>) {

@@ -610,20 +610,33 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 }
 /* Wider than a phone, a head whose tools are a row of fields turns into one row as it turns compact:
    the title, its buttons, then the fields; the fields' names fold (they stay for screen readers).
+   A select keeps the width of its longest option, a search field takes the room left but never
+   less than its placeholder; what does not fit whole goes to a second row.
    (A toolbar over Panes keeps its own row: its parts line up with the panes.) */
+@media (min-width: 761px) {
+  .fd-head-sticky:has(> .fd-head-tools > .fd-toolbar:not(.fd-toolbar-panes)) > .fd-head-tools {
+    & .fd-field:has(> .fd-select) { min-width: max-content; }
+    & .fd-field:has(> .fd-input) { min-width: min-content; }
+    & .fd-field > .fd-input { min-width: calc(var(--fd-placeholder, 0ch) + 2 * var(--space-3) + 2px); }
+  }
+}
 @supports ((animation-timeline: scroll()) and (animation-range: 0% 100%)) {
   @media (min-width: 761px) {
     .fd-head-sticky:has(> .fd-head-tools > .fd-toolbar:not(.fd-toolbar-panes)) {
       animation-name: fd-head-compact, fd-head-row;
       & > .fd-head-text { animation-name: fd-head-row-text; }
       & > .fd-head-tools { animation-name: fd-head-row-tools; }
-      & > .fd-head-tools > .fd-toolbar { animation-name: fd-head-row; }
       & > .fd-head-tools .fd-field { animation-name: fd-head-row-field; }
+      & > .fd-head-tools .fd-field:has(> .fd-select) { animation-name: fd-head-row-select; }
+      & > .fd-head-tools .fd-field:has(> .fd-input) { animation-name: fd-head-row-search; }
       & > .fd-head-tools > .fd-toolbar > :not(.fd-field) { animation-name: fd-head-row-item; }
       & > .fd-head-tools .fd-field-label { overflow: hidden; animation-name: fd-head-note; }
-      & :is(.fd-head-text, .fd-head-tools, .fd-toolbar, .fd-toolbar > *, .fd-field-label) { animation-timing-function: linear; animation-fill-mode: both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
+      & :is(.fd-head-text, .fd-head-tools, .fd-toolbar > *, .fd-field, .fd-field-label) { animation-timing-function: linear; animation-fill-mode: both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
+      /* the parts change their layout at once half way (the head's height moves the scroll range, so
+         the timeline may stop short of its end: an interpolated width would stay between) */
+      & :is(.fd-head-text, .fd-head-tools, .fd-toolbar > *, .fd-field) { animation-timing-function: steps(2, jump-none); }
       @media (prefers-reduced-motion: reduce) {
-        & :is(.fd-head-text, .fd-head-tools, .fd-toolbar, .fd-toolbar > *, .fd-field-label) { animation-timing-function: step-end; }
+        & .fd-field-label { animation-timing-function: step-end; }
       }
     }
   }
@@ -633,6 +646,8 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 @keyframes fd-head-row-text { to { flex: 0 0 auto; } }
 @keyframes fd-head-row-tools { to { flex: 1 1 0; } }
 @keyframes fd-head-row-field { to { gap: 0; } }
+@keyframes fd-head-row-select { to { gap: 0; flex: 0 0 auto; } }
+@keyframes fd-head-row-search { to { gap: 0; flex: 1 1 0; } }
 @keyframes fd-head-compact { to { padding-top: var(--space-3); padding-bottom: var(--space-3); border-bottom-color: var(--line); } }
 @keyframes fd-head-title { to { font-size: var(--head-title-compact); } }
 @keyframes fd-head-note { to { opacity: 0; block-size: 0; } }
@@ -664,6 +679,10 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
   .fd-hint { inset: auto; margin: var(--space-1) 0; position-area: block-start; position-try-fallbacks: flip-block; }
   /* a button of the page head: below it, towards the start, so it never covers the title */
   .fd-head-actions .fd-hint { position-area: block-end span-inline-start; }
+  /* a button at the end of a table row: above it, towards the start, so it stays inside the pane */
+  @container (width >= 640px) {
+    .fd-table td.fd-right .fd-hint { position-area: block-start span-inline-start; }
+  }
 }
 
 /* Card: one of several things of a kind (an MCP server); its head always seen, its form opens */
@@ -724,8 +743,14 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
   .fd-toolbar-side { flex: 1 0 100%; }
 }
 
-/* Table stickyHead: no scroll box of its own, so its column names stick to the pane that scrolls */
-.fd-table-wrap-sticky { overflow: visible; }
+/* Table stickyHead: no scroll box of its own, so its column names stick to the pane that scrolls.
+   A wider table makes the pane scroll sideways and its card grows with it, so the card's border
+   goes round the whole table: the pane, not the table, is then the container its stacked layout asks about. */
+.fd-table-wrap-sticky { overflow: visible; container-type: normal; }
+.fd-pane-scroll:has(.fd-table-wrap-sticky) { container-type: inline-size; }
+@container (width >= 640px) {
+  .fd-panel:has(> .fd-table-wrap-sticky) { min-width: min-content; }
+}
 .fd-table-wrap-sticky thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); box-shadow: inset 0 -1px var(--line-strong); }
 /* It stays only while a row of its table is in view: once the table's end is less than the heading's
    height (one line and its padding) below the top of the pane, every row is gone and so is the heading. */
