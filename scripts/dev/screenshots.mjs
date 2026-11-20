@@ -4,6 +4,8 @@
 // Needs Chrome at the usual Windows path or CHROME_PATH, and an instance at base-url that holds
 // demo data: jobs with runs, and a chat that waits for an approval. It only reads from it.
 // SHOT_SCHEME=light takes them in the light theme. Development only.
+// The hardware meters never show the machine the script runs on: /api/hardware is answered with
+// the invented reading HARDWARE below.
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,18 +16,29 @@ const base = process.argv[3] ?? "http://127.0.0.1:8099";
 const chrome = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Application/chrome.exe";
 mkdirSync(out, { recursive: true });
 
+const only = process.argv[4]?.split(",");
+
 // The newest conversation is the one the chat picture shows.
-const newest = (await (await fetch(`${base}/api/chat/sessions?limit=1`)).json()).items[0];
+const newest = !only || only.includes("chat-approval")
+  ? (await (await fetch(`${base}/api/chat/sessions?limit=1`)).json()).items[0]
+  : { id: "" };
 if (!newest) throw new Error(`${base} has no conversation to show`);
 
 const shots = [
   { name: "dashboard", route: "dashboard", width: 1440, height: 900 },
   { name: "jobs", route: "jobs", width: 1440, height: 900 },
-  { name: "job-run", route: "jobs/docker", width: 1440, height: 900 },
+  { name: "job-run", route: "jobs/summary:health", width: 1440, height: 900 },
   { name: "chat-approval", route: `chat/${newest.id}`, width: 1440, height: 1000 },
 ];
 
-const only = process.argv[4]?.split(",");
+const GIB = 1024 ** 3;
+const HARDWARE = {
+  cpu_percent: 23.4,
+  ram_used: Math.round(11.6 * GIB),
+  ram_total: 64 * GIB,
+  gpus: [{ name: "Demo Accelerator 9000", util_percent: 37, vram_used: 6 * GIB, vram_total: 16 * GIB }],
+};
+
 const port = 9333;
 const proc = spawn(chrome, [
   "--headless=new", "--disable-gpu", "--hide-scrollbars", `--remote-debugging-port=${port}`,
@@ -48,12 +61,26 @@ const pending = new Map();
 ws.onmessage = (m) => {
   const msg = JSON.parse(m.data);
   if (msg.id && pending.has(msg.id)) pending.get(msg.id)(msg.result ?? msg.error);
+  if (msg.method === "Fetch.requestPaused") {
+    ws.send(JSON.stringify({
+      id: ++id,
+      method: "Fetch.fulfillRequest",
+      params: {
+        requestId: msg.params.requestId,
+        responseCode: 200,
+        responseHeaders: [{ name: "content-type", value: "application/json" }],
+        body: Buffer.from(JSON.stringify(HARDWARE)).toString("base64"),
+      },
+    }));
+  }
 };
 const call = (method, params = {}) => new Promise((resolve) => {
   const n = ++id;
   pending.set(n, resolve);
   ws.send(JSON.stringify({ id: n, method, params }));
 });
+
+await call("Fetch.enable", { patterns: [{ urlPattern: "*/api/hardware*" }] });
 
 for (const s of shots.filter((x) => !only || only.includes(x.name))) {
   await call("Emulation.setEmulatedMedia", {

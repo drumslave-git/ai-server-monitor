@@ -1,4 +1,4 @@
-# AI Server Monitor — Design (0.8)
+# AI Server Monitor — Design
 
 One container on the monitored host: a FastAPI backend (`backend/ai_server_monitor/`) and a
 React/Vite SPA (`frontend/`, served by the backend). The rule since 0.7: **nothing is collected
