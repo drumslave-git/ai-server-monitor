@@ -66,6 +66,40 @@ from the Docker daemon (Engine API `GET /distribution/<image>/json`, `Descriptor
 with curl at the same $DOCKER_HOST the `docker` commands use: `tcp://` as http, `unix://` through
 the socket, unset as Docker's own default socket. Nothing is written on the host."""
 
+DOCKER_STATUS = (
+    DOCKER_PS + " | awk -F'\\t' '"
+    '{if ($2 ~ /\\(unhealthy\\)/) g = "unhealthy"; '
+    'else if ($2 ~ /^Restarting/) g = "restarting"; '
+    'else if ($2 ~ /^Exited \\(0\\)/) g = "exited0"; '
+    'else if ($2 ~ /^Exited/) g = "exited"; '
+    'else if ($2 ~ /^Created/) g = "created"; '
+    'else if ($2 ~ /^Up/ && $2 !~ /\\(Paused\\)/) g = "up"; '
+    'else g = "other"; '
+    'n[g]++; l[g] = l[g] $0 "\\n"} '
+    'END {printf "%s%s%s%s%s%s%s", l["unhealthy"], l["restarting"], l["exited"], '
+    'l["other"], l["created"], l["exited0"], l["up"]; '
+    'printf "counts: %d up, %d unhealthy, %d restarting, %d exited non-zero, %d other, '
+    '%d created, %d exited 0\\n", n["up"], n["unhealthy"], n["restarting"], '
+    'n["exited"], n["other"], n["created"], n["exited0"]}\''
+)
+"""`docker ps -a` (DOCKER_PS) with the lines unchanged but in a fixed order: unhealthy,
+restarting, exited with a non-zero code, other (paused, dead, being removed), created, exited
+with code 0, and the running ones last; then one line with the count of each, so the model reads
+the top and copies the counts instead of scanning every line."""
+
+DOCKER_RESOURCES = (
+    f"s=$({DOCKER_STATS}); "
+    'echo "by CPU:"; echo "$s" | LC_ALL=C sort -k2,2rn; '
+    'echo "by memory:"; echo "$s" | LC_ALL=C sort -k6,6rn; '
+    'echo "$s" | awk \'NF {n++; if ($6 + 0 > 90) h++} '
+    'END {printf "counts: %d containers, %d above 90 %% of their memory limit\\n", n, h}\''
+)
+"""`docker stats` (DOCKER_STATS) asked once and printed twice, sorted by CPU % and then by
+memory % of the limit, the largest first; then one line with the number of containers and how
+many are above the 90 % the prompt warns at. Fields by blanks: 2 is CPU %, 6 memory %
+("1.2GiB / 15GiB" is fields 3-5). `LC_ALL=C`: docker prints a decimal point whatever the
+host's locale."""
+
 JOURNAL_COUNTS = "sort | uniq -c | sort -rn"
 
 
@@ -80,16 +114,22 @@ TOPICS: tuple[JobDef, ...] = (
         "docker",
         f"""\
 Containers that are not running as they should.
-Command (one call; do not inspect containers one by one):
-- `{DOCKER_PS}`
-  (Status shows "Up", "Restarting", "(unhealthy)", "Exited (code)" and "Created")
+Run this ONE command (do not inspect containers one by one). It prints the containers that
+need a look first (unhealthy, restarting, exited non-zero, other, created), then those that
+exited with code 0, then the running ones, and as its last line the counts
+("counts: 30 up, 1 unhealthy, 0 restarting, 2 exited non-zero, 0 other, 1 created, 4 exited 0"):
+`{DOCKER_STATUS}`
+(Status shows "Up", "Restarting", "(unhealthy)", "Exited (code)" and "Created"; "other" is
+paused, dead or being removed)
 ok: the running containers are up, and healthy where they have a healthcheck.
 warn: a container that is restarting, unhealthy, or exited with a non-zero code recently.
 crit: an important container (database, reverse proxy, the main services) down, restarting
 or unhealthy.
 Copy the Status column exactly as printed. "Created" means the container was created but never
 started: it is not "Exited" and has no exit code; mention such containers only as one info
-finding. Containers that exited with code 0 are one-off tasks: ignore them.""",
+finding. Containers that exited with code 0 are one-off tasks: ignore them. The lines before
+the "exited 0" ones are all that need a finding; for the summary, copy the counts from the
+last line as printed; do not count the lines yourself.""",
     ),
     _topic(
         "docker:issues",
@@ -115,12 +155,17 @@ Quote the error lines short, with the container name and how often they occurred
         f"""\
 CPU and memory of each container, and the disk space Docker uses.
 Commands:
-- `{DOCKER_STATS}`
+- one call; it prints every container sorted by CPU (largest first), then the same containers
+  sorted by memory % of their limit (largest first), and as its last line the counts
+  ("counts: 40 containers, 1 above 90 % of their memory limit"):
+  `{DOCKER_RESOURCES}`
 - `docker system df`
 ok: every container below 90 % of its memory limit.
 warn: a container above 90 % of its memory limit.
 This check has no crit.
-Name the containers that use the most CPU and memory, with the numbers as printed. From
+Name the containers at the top of each list, with the numbers as printed; the ones above
+90 % are the first lines under "by memory:". Take the count above 90 % from the last line as
+printed; do not scan or count the lines yourself. From
 `docker system df`, copy the size and the reclaimable space of images, containers, local
 volumes and build cache; much reclaimable space is one info finding.""",
     ),
