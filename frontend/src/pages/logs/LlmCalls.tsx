@@ -185,7 +185,7 @@ function CallRow({ call: c, maxTokens, maxMs }: { call: LlmCallSummary; maxToken
       </Td>
       <Td>
         <Stack>
-          <Text kind="label" nowrap>
+          <Text kind="label">
             {purposeLabel(c.purpose).toLowerCase()}
             {c.attempt > 1 && ` · retry ${c.attempt}`}
             {c.tool_calls_count > 0 && ` · ${c.tool_calls_count} tool call${c.tool_calls_count === 1 ? "" : "s"}`}

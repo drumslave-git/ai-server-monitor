@@ -299,9 +299,9 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 .fd-check input:checked { border-color: var(--ok); background: var(--ok) linear-gradient(var(--on-fill), var(--on-fill)) center / 8px 8px no-repeat; }
 .fd-check input:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* Spinner: a lamp that blinks while something runs */
-.fd-spin { animation: fd-blink 1s steps(2, start) infinite; }
-@keyframes fd-blink { to { visibility: hidden; } }
+/* Spinner: a lamp that blinks while something runs (it dims, the square never goes) */
+.fd-spin { animation: fd-blink 1s step-end infinite; }
+@keyframes fd-blink { 50% { opacity: 0.5; } }
 @media (prefers-reduced-motion: reduce) { .fd-spin { animation: none; } }
 
 /* Markdown written by the model */
@@ -608,6 +608,31 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
     .fd-head-sticky, .fd-head-sticky h1, .fd-head-sticky :is(.fd-head-note, .fd-head-over .fd-meta) { animation-timing-function: step-end; }
   }
 }
+/* Wider than a phone, a head whose tools are a row of fields turns into one row as it turns compact:
+   the title, its buttons, then the fields; the fields' names fold (they stay for screen readers).
+   (A toolbar over Panes keeps its own row: its parts line up with the panes.) */
+@supports ((animation-timeline: scroll()) and (animation-range: 0% 100%)) {
+  @media (min-width: 761px) {
+    .fd-head-sticky:has(> .fd-head-tools > .fd-toolbar:not(.fd-toolbar-panes)) {
+      animation-name: fd-head-compact, fd-head-row;
+      & > .fd-head-text { animation-name: fd-head-row-text; }
+      & > .fd-head-tools { animation-name: fd-head-row-tools; }
+      & > .fd-head-tools > .fd-toolbar { animation-name: fd-head-row; }
+      & > .fd-head-tools .fd-field { animation-name: fd-head-row-field; }
+      & > .fd-head-tools > .fd-toolbar > :not(.fd-field) { animation-name: fd-head-row-item; }
+      & > .fd-head-tools .fd-field-label { overflow: hidden; animation-name: fd-head-note; }
+      & :is(.fd-head-text, .fd-head-tools, .fd-toolbar, .fd-toolbar > *, .fd-field-label) { animation-timing-function: linear; animation-fill-mode: both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
+      @media (prefers-reduced-motion: reduce) {
+        & :is(.fd-head-text, .fd-head-tools, .fd-toolbar, .fd-toolbar > *, .fd-field-label) { animation-timing-function: step-end; }
+      }
+    }
+  }
+}
+@keyframes fd-head-row { to { flex-wrap: nowrap; } }
+@keyframes fd-head-row-item { to { flex-wrap: nowrap; flex-shrink: 0; } }
+@keyframes fd-head-row-text { to { flex: 0 0 auto; } }
+@keyframes fd-head-row-tools { to { flex: 1 1 0; } }
+@keyframes fd-head-row-field { to { gap: 0; } }
 @keyframes fd-head-compact { to { padding-top: var(--space-3); padding-bottom: var(--space-3); border-bottom-color: var(--line); } }
 @keyframes fd-head-title { to { font-size: var(--head-title-compact); } }
 @keyframes fd-head-note { to { opacity: 0; block-size: 0; } }
@@ -637,6 +662,8 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 .fd-hint { max-width: 320px; margin: 0; padding: var(--space-1) var(--space-2); border: 1px solid var(--line-strong); background: var(--panel); color: var(--text); font: 400 12px/1.5 var(--font-mono); pointer-events: none; }
 @supports (position-area: block-end) {
   .fd-hint { inset: auto; margin: var(--space-1) 0; position-area: block-start; position-try-fallbacks: flip-block; }
+  /* a button of the page head: below it, towards the start, so it never covers the title */
+  .fd-head-actions .fd-hint { position-area: block-end span-inline-start; }
 }
 
 /* Card: one of several things of a kind (an MCP server); its head always seen, its form opens */
@@ -700,3 +727,10 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 /* Table stickyHead: no scroll box of its own, so its column names stick to the pane that scrolls */
 .fd-table-wrap-sticky { overflow: visible; }
 .fd-table-wrap-sticky thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); box-shadow: inset 0 -1px var(--line-strong); }
+/* It stays only while a row of its table is in view: once the table's end is less than the heading's
+   height (one line and its padding) below the top of the pane, every row is gone and so is the heading. */
+@supports ((animation-timeline: view()) and (animation-range: 0% 100%)) {
+  .fd-table-wrap-sticky > .fd-table { view-timeline: --fd-rows block; }
+  .fd-table-wrap-sticky thead th { animation: fd-rows-gone linear forwards; animation-timeline: --fd-rows; animation-range: cover calc(100% - 1lh - 20px) cover 100%; }
+}
+@keyframes fd-rows-gone { from, to { visibility: hidden; } }

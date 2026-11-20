@@ -332,7 +332,7 @@ function RunButton({ job, names, disabled, onRun, main }: { job: Job; names: Rec
   const where = job.summaries.map((s) => names[s] ?? s).join(", ");
   const { word, label, hint } =
     job.kind === "summary"
-      ? { word: "run now", label: `Run ${job.name} now: its ${job.members.length} jobs, then the summary`, hint: `Run its ${job.members.length} jobs, then the summary` }
+      ? { word: "run now", label: `Run ${job.name} now: its ${job.members.length} jobs, then the summary`, hint: "Run the summary now" }
       : job.summaries.length === 0
         ? { word: "run now", label: `Run ${job.name} now`, hint: undefined }
         : { word: "run alone", label: `Run ${job.name} alone, without ${where}`, hint: "Run only this job" };
