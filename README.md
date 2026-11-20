@@ -610,6 +610,26 @@ log and the model call logs are kept; the rest of the old data is deleted by the
 - The model connection test also checks structured output and says when the endpoint rejects
   it, with the way back to `tool_call`.
 
+### 0.9.0
+
+- **New web UI.** Every page is rebuilt in one look (dark by default, light when the system
+  asks for light) from one kit of components in `frontend/src/kit`. Nothing changes in the
+  API, the settings or the data; no action is needed after the upgrade.
+- **Dashboard:** the overall status as one word with the summary's headline, the count of
+  findings by severity, and every job as a line of cells: its runs of the last 12 hours (one
+  cell = 30 minutes, coloured by result) and the runs scheduled for the next 3 hours.
+- **Pause automation** moved from the top of every page to the foot of the navigation; while
+  paused, a notice with **resume** stays on top of every page.
+- **Jobs:** a job's page shows the opened run beside the list of runs, each with a bar for how
+  long it took; the editor previews when an interval schedule fires in the next 24 hours.
+- **MCP tools:** the domains are a list on the left and the opened domains' tools are on the
+  right; a domain's *select all*, *deselect all* and *rename* show when it is opened.
+- **Logs:** the calls of a page are comparable by their bars (tokens in; total time with the
+  time to the first token inside it); one call shows its turn as bars on one time axis.
+- **Settings:** a choice of up to five values is a row of buttons instead of a dropdown.
+- A command in a chat answer that is marked write, or not marked, has an amber **run** button.
+- The fonts ship with the app; the UI loads nothing from other hosts.
+
 ## Troubleshooting
 
 - **A job or the summary shows `error`** — open the run on the Jobs page: its error says why
