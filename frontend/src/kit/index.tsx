@@ -10,6 +10,19 @@ import "@fontsource/ibm-plex-mono/500.css";
 import "./tokens.css";
 import "./kit.css";
 import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type Announcements,
+  type DragEndEvent,
+  type UniqueIdentifier,
+} from "@dnd-kit/core";
+import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   useEffect,
   useId,
   useLayoutEffect,
@@ -272,17 +285,20 @@ export function Notice({ title, children, action, tone }: { title?: ReactNode; c
   );
 }
 
-/** The top of the dashboard: one status word, the sentence under it, its buttons (children), and counters beside (aside). */
+/** The top of the dashboard: one status word, the sentence under it, its buttons (children), and counters beside (aside).
+ *  compact: one of several side by side (a smaller word; the headline is a second-level heading). */
 export function Hero({
   meta,
   status,
   word,
   tone,
   headline,
+  compact,
   children,
   aside,
 }: {
   meta?: ReactNode;
+  compact?: boolean;
   /** A Status shown above the word while something is in progress. */
   status?: ReactNode;
   word?: ReactNode;
@@ -292,12 +308,12 @@ export function Hero({
   aside?: ReactNode;
 }) {
   return (
-    <div className="fd-hero">
+    <div className={cx("fd-hero", compact && "fd-hero-compact")}>
       <div className="fd-hero-text">
         {meta && <span className="fd-meta">{meta}</span>}
         {status}
         {word && <span className={cx("fd-hero-word", toneText(tone))}>{word}</span>}
-        <h1 className="fd-hero-headline">{headline}</h1>
+        {compact ? <h2 className="fd-hero-headline">{headline}</h2> : <h1 className="fd-hero-headline">{headline}</h1>}
         {children}
       </div>
       {aside}
@@ -401,6 +417,275 @@ export function Dialog({ title, onClose, children }: { title: ReactNode; onClose
         {children}
       </div>
     </dialog>
+  );
+}
+
+/** A modal <dialog> that opens when it mounts. Closing goes through dialog.close(), so the browser gives
+ *  focus back to the control that opened it. */
+function useModal() {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = ref.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  }, []);
+  return ref;
+}
+
+/** A question before something that cannot be taken back (delete, reset). The safe answer has the focus;
+ *  Esc is the same as "cancel". onConfirm runs only for the confirm button; onClose runs either way. */
+export function Confirm({
+  title,
+  confirm,
+  variant = "danger",
+  onConfirm,
+  onClose,
+  children,
+}: {
+  title: ReactNode;
+  /** The confirm button's words: "delete", "reset". */
+  confirm: string;
+  variant?: "danger" | "warn" | "primary";
+  onConfirm: () => void;
+  onClose: () => void;
+  children?: ReactNode;
+}) {
+  const ref = useModal();
+  const titleId = useId();
+  const textId = useId();
+  const closed = () => {
+    const dialog = ref.current;
+    const yes = dialog?.returnValue === "yes";
+    if (dialog) dialog.returnValue = "";
+    if (yes) onConfirm();
+    onClose();
+  };
+  return (
+    <dialog ref={ref} className="fd-dialog" aria-labelledby={titleId} aria-describedby={children ? textId : undefined} onClose={closed}>
+      <form method="dialog" className="fd-dialog-body">
+        <h2 id={titleId}>{title}</h2>
+        {children && <div id={textId}>{children}</div>}
+        <div className="fd-actions fd-dialog-actions">
+          <button className={buttonClass({})} value="" autoFocus>
+            cancel
+          </button>
+          <button className={buttonClass({ variant })} value="yes">
+            {confirm}
+          </button>
+        </div>
+      </form>
+    </dialog>
+  );
+}
+
+export type PickerItem = { value: string; title: ReactNode; meta?: ReactNode; /** What the filter looks in. */ text: string };
+export type PickerGroup = { label: string; items: PickerItem[] };
+
+/** A dialog to pick one thing from a long list: a filter box over the things in their groups.
+ *  Picking closes it; onClose runs either way. */
+export function Picker({
+  title,
+  groups,
+  onPick,
+  onClose,
+  filterLabel = "filter",
+  empty = "Nothing to pick.",
+}: {
+  title: ReactNode;
+  groups: PickerGroup[];
+  onPick: (value: string) => void;
+  onClose: () => void;
+  filterLabel?: string;
+  empty?: ReactNode;
+}) {
+  const ref = useModal();
+  const titleId = useId();
+  const filterId = useId();
+  const [filter, setFilter] = useState("");
+  const words = filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = groups
+    .map((g) => ({ ...g, items: g.items.filter((it) => words.every((w) => it.text.toLowerCase().includes(w))) }))
+    .filter((g) => g.items.length);
+  const count = shown.reduce((n, g) => n + g.items.length, 0);
+  const pick = (value: string) => {
+    onPick(value);
+    ref.current?.close();
+  };
+  return (
+    <dialog ref={ref} className="fd-dialog fd-dialog-wide" aria-labelledby={titleId} onClose={onClose}>
+      <div className="fd-dialog-body">
+        <h2 id={titleId}>{title}</h2>
+        <div className="fd-field">
+          <label className="fd-field-label" htmlFor={filterId}>
+            {filterLabel}
+          </label>
+          <input id={filterId} className="fd-input" type="search" autoFocus value={filter} onChange={(e) => setFilter(e.target.value)} autoComplete="off" />
+        </div>
+        <div className="fd-sr" role="status">
+          {filter ? `${count} found` : ""}
+        </div>
+        <div className="fd-picker">
+          {shown.length === 0 && <div className="fd-empty">{groups.some((g) => g.items.length) ? "Nothing matches." : empty}</div>}
+          {shown.map((g) => (
+            <section key={g.label} className="fd-picker-group" aria-label={g.label}>
+              <h3 className="fd-picker-head">{g.label}</h3>
+              <div className="fd-list">
+                {g.items.map((it) => (
+                  <div key={it.value} className="fd-item">
+                    <button type="button" className="fd-item-main" onClick={() => pick(it.value)}>
+                      <span className="fd-item-body">
+                        <span className="fd-item-title">{it.title}</span>
+                        {it.meta && <span className="fd-meta">{it.meta}</span>}
+                      </span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+        <div className="fd-actions fd-dialog-actions">
+          <button type="button" className={buttonClass({})} onClick={() => ref.current?.close()}>
+            close
+          </button>
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
+export type SortableEntry = {
+  id: string;
+  /** Plain words for what is read out and for the controls' names. */
+  name: string;
+  title: ReactNode;
+  meta?: ReactNode;
+  trailing?: ReactNode;
+};
+
+/** A list whose order matters and can be changed: drag a row by its number (mouse or touch), pick it up
+ *  with the keyboard (space, arrows, space; Esc cancels), or use its "up" and "down" buttons.
+ *  onMove gets the old and the new index; onRemove, when given, adds a "remove" button to each row. */
+export function SortableList({
+  label,
+  items,
+  onMove,
+  onRemove,
+}: {
+  /** What the list holds, for screen readers: "jobs of Health". */
+  label: string;
+  items: SortableEntry[];
+  onMove: (from: number, to: number) => void;
+  onRemove?: (id: string) => void;
+}) {
+  const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+  const [said, setSaid] = useState("");
+  const listRef = useRef<HTMLDivElement>(null);
+  const refocus = useRef<{ id: string; which: "up" | "down" } | null>(null);
+  const at = (id: UniqueIdentifier) => items.findIndex((it) => it.id === id);
+  const name = (id: UniqueIdentifier) => items[at(id)]?.name ?? String(id);
+  const place = (index: number) => `position ${index + 1} of ${items.length}`;
+  const announcements: Announcements = {
+    onDragStart: ({ active }) => `Picked up ${name(active.id)}, ${place(at(active.id))}.`,
+    onDragOver: ({ active, over }) => (over ? `${name(active.id)} is over ${place(at(over.id))}.` : `${name(active.id)} is outside the list.`),
+    onDragEnd: ({ active, over }) => (over ? `${name(active.id)} dropped at ${place(at(over.id))}.` : `${name(active.id)} dropped where it was.`),
+    onDragCancel: ({ active }) => `Moving ${name(active.id)} was cancelled; it stays at ${place(at(active.id))}.`,
+  };
+  const dragEnd = ({ active, over }: DragEndEvent) => {
+    if (over && active.id !== over.id) onMove(at(active.id), at(over.id));
+  };
+  const step = (index: number, by: -1 | 1) => {
+    const to = index + by;
+    if (to < 0 || to >= items.length) return;
+    refocus.current = { id: items[index].id, which: by < 0 ? "up" : "down" };
+    setSaid("");
+    onMove(index, to);
+    window.setTimeout(() => setSaid(`${items[index].name} is now at ${place(to)}.`), 500);
+  };
+  useLayoutEffect(() => {
+    const want = refocus.current;
+    if (!want) return;
+    refocus.current = null;
+    const row = listRef.current?.querySelector<HTMLElement>(`[data-sort-id="${CSS_ESCAPE(want.id)}"]`);
+    const buttons = row ? [...row.querySelectorAll<HTMLButtonElement>("button[data-step]")] : [];
+    const same = buttons.find((b) => b.dataset.step === want.which && !b.disabled);
+    (same ?? buttons.find((b) => !b.disabled))?.focus();
+  });
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragEnd={dragEnd}
+      accessibility={{
+        announcements,
+        screenReaderInstructions: {
+          draggable: "To move this row, press space, then the up and down arrows, then space to drop it. Escape cancels.",
+        },
+      }}
+    >
+      <SortableContext items={items.map((it) => it.id)} strategy={verticalListSortingStrategy}>
+        <div ref={listRef} className="fd-sort" role="list" aria-label={label}>
+          {items.map((it, i) => (
+            <SortableRow key={it.id} entry={it} index={i} count={items.length} onStep={(by) => step(i, by)} onRemove={onRemove} />
+          ))}
+        </div>
+      </SortableContext>
+      <div className="fd-sr" role="status">
+        {said}
+      </div>
+    </DndContext>
+  );
+}
+
+/** The global CSS (dnd-kit's CSS helper has the same name). */
+const CSS_ESCAPE = (value: string) => globalThis.CSS.escape(value);
+
+function SortableRow({
+  entry,
+  index,
+  count,
+  onStep,
+  onRemove,
+}: {
+  entry: SortableEntry;
+  index: number;
+  count: number;
+  onStep: (by: -1 | 1) => void;
+  onRemove?: (id: string) => void;
+}) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: entry.id });
+  const look: CSSProperties = { transform: CSS.Translate.toString(transform), transition };
+  return (
+    <div ref={setNodeRef} className={cx("fd-sort-item", isDragging && "fd-sort-dragging")} style={look} role="listitem" data-sort-id={entry.id}>
+      <button
+        ref={setActivatorNodeRef}
+        type="button"
+        className="fd-sort-handle"
+        {...attributes}
+        {...listeners}
+        aria-label={`Move ${entry.name}, ${index + 1} of ${count}`}
+        aria-pressed={isDragging}
+      >
+        {String(index + 1).padStart(2, "0")}
+      </button>
+      <span className="fd-sort-body">
+        <span className="fd-item-title">{entry.title}</span>
+        {entry.meta && <span className="fd-meta">{entry.meta}</span>}
+      </span>
+      {entry.trailing && <span className="fd-sort-trailing">{entry.trailing}</span>}
+      <span className="fd-sort-buttons">
+        <button type="button" className="fd-btn fd-btn-small" data-step="up" disabled={index === 0} onClick={() => onStep(-1)} aria-label={`Move ${entry.name} up`}>
+          up
+        </button>
+        <button type="button" className="fd-btn fd-btn-small" data-step="down" disabled={index === count - 1} onClick={() => onStep(1)} aria-label={`Move ${entry.name} down`}>
+          down
+        </button>
+        {onRemove && (
+          <button type="button" className="fd-btn fd-btn-small" onClick={() => onRemove(entry.id)} aria-label={`Remove ${entry.name}`}>
+            remove
+          </button>
+        )}
+      </span>
+    </div>
   );
 }
 

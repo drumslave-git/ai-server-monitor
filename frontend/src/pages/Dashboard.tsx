@@ -4,7 +4,7 @@ import { api, type StatusResponse } from "../api";
 import { ExplainButton } from "../components/Explain";
 import { Findings } from "../components/Findings";
 import { ago, clock, until } from "../fmt";
-import { errorText, findingCounts, firstLine, runJob, STATUS_LEVEL, STATUS_TEXT, useRunning, type Job, type JobRun } from "../jobs";
+import { errorText, findingCounts, firstLine, runJob, scheduleWord, STATUS_LEVEL, STATUS_TEXT, useRunning, type Job, type JobRun } from "../jobs";
 import {
   Actions,
   Button,
@@ -16,6 +16,7 @@ import {
   Hero,
   Lane,
   Legend,
+  LinkButton,
   Meta,
   Notice,
   Panel,
@@ -26,26 +27,18 @@ import {
   type Tone,
 } from "../kit";
 import { useStream } from "../live";
-import { Markdown, useNow, usePoll } from "../ui";
+import { useNow, usePoll } from "../ui";
 
 /** The clock of the lanes: half-hour slots, twelve hours back and three ahead. */
 const SLOT_S = 1800;
 const PAST_SLOTS = 24;
 const FUTURE_SLOTS = 6;
 
-/** Until the Dashboard shows every summary: the one whose newest run gives the overall status. */
-function leadSummary(overall: StatusResponse["overall"] | undefined) {
-  const found = overall?.summaries.find((x) => x.status === overall.status);
-  return overall && found ? { ...found, status: overall.status } : null;
-}
+type SummaryState = NonNullable<StatusResponse["overall"]>["summaries"][number];
 
 export function DashboardPage() {
   const status = usePoll(() => api.get<StatusResponse>("/api/status"), 30_000);
   const jobs = usePoll(() => api.get<{ items: Job[] }>("/api/jobs"), 30_000);
-  const runId = leadSummary(status.data?.overall)?.run_id ?? null;
-  const overallRun = usePoll(() => (runId ? api.get<JobRun>(`/api/jobs/runs/${runId}`) : Promise.resolve(null)), 300_000);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => overallRun.reload(), [runId]);
   const { state: auto } = useAutomation();
   const now = useNow();
   const items = jobs.data?.items ?? [];
@@ -61,13 +54,16 @@ export function DashboardPage() {
   if (!status.data || !jobs.data) return <Meta>Loading…</Meta>;
   const s = status.data;
   const paused = Boolean(auto?.paused);
-  const overall = leadSummary(s.overall);
-  const summary = items.find((j) => j.slug === overall?.slug) ?? items.find((j) => j.kind === "summary");
+  const summaries = items.filter((j) => j.kind === "summary");
+  const enabled = summaries.filter((j) => j.enabled);
+  const states: Record<string, SummaryState> = Object.fromEntries((s.overall?.summaries ?? []).map((x) => [x.slug, x]));
   const topics = items.filter((j) => j.kind !== "summary");
-  const neverRan = items.every((j) => !j.last_run) && running.size === 0;
-  const shown = overallRun.data && overall && overallRun.data.id === overall.run_id ? overallRun.data : null;
-  // what the summary said about each topic, by job
-  const clauses = Object.fromEntries((shown?.topics ?? []).map((t) => [t.slug, t.clause]));
+  // what the summaries said about each job, the newest summary run winning
+  const clauses: Record<string, string> = {};
+  for (const job of [...enabled].sort((a, b) => (a.last_run?.finished ?? 0) - (b.last_run?.finished ?? 0)))
+    for (const t of job.last_run?.topics ?? []) clauses[t.slug] = t.clause;
+  const withFindings = enabled.filter((j) => (j.last_run?.findings ?? []).length > 0);
+  const findings = withFindings.reduce((n, j) => n + (j.last_run?.findings.length ?? 0), 0);
 
   return (
     <>
@@ -76,7 +72,27 @@ export function DashboardPage() {
           <a href="#/settings/llm">Open the model settings</a>
         </Notice>
       )}
-      <Overall overall={overall} run={shown} summary={summary} running={summary ? running.has(summary.slug) : false} paused={paused} now={now} neverRan={neverRan} />
+      {enabled.length === 0 ? (
+        <Panel>
+          <Hero meta="no summary is on" headline="Nothing sums up the jobs yet">
+            <Empty>
+              A summary runs its jobs one after another and sets the status shown here.{" "}
+              {summaries.length > 0 ? "Turn one on, or create one, on the Jobs page." : "Create one on the Jobs page."}
+            </Empty>
+            <Actions>
+              <LinkButton variant="primary" href="#/jobs">
+                open jobs
+              </LinkButton>
+            </Actions>
+          </Hero>
+        </Panel>
+      ) : (
+        <Split>
+          {enabled.map((job) => (
+            <SummaryCard key={job.slug} job={job} state={states[job.slug]} running={running.has(job.slug)} paused={paused} now={now} />
+          ))}
+        </Split>
+      )}
 
       <Panel
         title="Jobs on the clock"
@@ -96,23 +112,18 @@ export function DashboardPage() {
             No jobs yet. <a href="#/jobs/new">Create one</a>
           </Empty>
         ) : (
-          [...topics, ...(summary ? [summary] : [])].map((job) => (
+          [...topics, ...summaries].map((job) => (
             <JobLane key={job.slug} job={job} runs={history.data[job.slug] ?? []} clause={clauses[job.slug]} running={running.has(job.slug)} paused={paused} now={now} />
           ))
         )}
       </Panel>
 
-      {shown && (
-        <Split>
-          <Panel title="Findings" meta={shown.findings.length > 0 ? `${shown.findings.length} from the summary` : undefined} flex="3 1 520px">
-            {shown.findings.length > 0 ? <Findings findings={shown.findings} runId={shown.id} /> : <Empty>No findings in the summary.</Empty>}
-          </Panel>
-          {withoutFirstLine(shown.summary ?? "") && (
-            <Panel title="What the summary says" pad flex="2 1 340px">
-              <Markdown text={withoutFirstLine(shown.summary ?? "")} />
-            </Panel>
-          )}
-        </Split>
+      {withFindings.length > 0 && (
+        <Panel title="Findings" meta={`${findings} from ${withFindings.length === 1 ? withFindings[0].name : `${withFindings.length} summaries`}`}>
+          {withFindings.map((job) => (
+            <Findings key={job.slug} findings={job.last_run?.findings ?? []} runId={job.last_run?.id} source={withFindings.length > 1 ? job.name : undefined} />
+          ))}
+        </Panel>
       )}
     </>
   );
@@ -166,31 +177,22 @@ function JobLane({ job, runs, clause, running, paused, now }: { job: Job; runs: 
   );
 }
 
-function Overall({
-  overall,
-  run,
-  summary,
-  running,
-  paused,
-  now,
-  neverRan,
-}: {
-  overall: ReturnType<typeof leadSummary>;
-  /** The summary run behind `overall`, once loaded. */
-  run: JobRun | null;
-  summary: Job | undefined;
-  running: boolean;
-  paused: boolean;
-  now: number;
-  neverRan: boolean;
-}) {
+/** One enabled summary: its state, headline and counts, when it ran and runs next, run now. */
+function SummaryCard({ job, state, running, paused, now }: { job: Job; state: SummaryState | undefined; running: boolean; paused: boolean; now: number }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const run = job.last_run ?? null;
+  const result = state?.status ?? null;
+  const finished = state?.finished ?? run?.finished ?? null;
+  const tone: Tone = result ? STATUS_LEVEL[result] : "off";
+  const counts = findingCounts(run?.findings);
+  const jobsWord = `${job.members.length} job${job.members.length === 1 ? "" : "s"}`;
+  const next = paused ? "schedule paused" : job.next_run ? `next ${until(job.next_run, now)}` : null;
+
   const start = () => {
-    if (!summary) return;
     setBusy(true);
     setError(null);
-    runJob(summary.slug).then(
+    runJob(job.slug).then(
       () => setBusy(false),
       (e) => {
         setBusy(false);
@@ -198,65 +200,62 @@ function Overall({
       },
     );
   };
-  const nextText = !summary ? null : !summary.enabled ? "summary job is turned off" : paused ? "schedule paused" : summary.next_run ? `next ${until(summary.next_run, now)}` : null;
-  const tone: Tone = overall ? STATUS_LEVEL[overall.status] : "off";
-  const counts = findingCounts(run?.findings);
-  const needsOwner = overall?.status === "crit" || overall?.status === "error";
 
   return (
-    <Panel hazard={needsOwner ? "crit" : undefined}>
+    <Panel hazard={result === "crit" || result === "error" ? "crit" : undefined} flex="1 1 460px">
       <Hero
+        compact
         meta={
           <>
-            {overall?.finished ? (
-              <span title={clock(overall.finished)}>summary · ran {ago(overall.finished, now)}</span>
-            ) : neverRan ? (
-              "the first runs come on schedule, or start one with run summary now"
-            ) : (
-              "the summary job sums up the latest results of the topic jobs"
-            )}
-            {nextText && <> · {nextText}</>}
-            {summary && (
+            {job.name} · {scheduleWord(job)}
+            {finished ? (
               <>
                 {" · "}
-                <a href={`#/jobs/${summary.slug}`}>history</a>
+                <span title={clock(finished)}>ran {ago(finished, now)}</span>
               </>
-            )}
+            ) : null}
+            {next && <> · {next}</>}
+            {" · "}
+            <a href={`#/jobs/${job.slug}`} aria-label={`History of ${job.name}`}>
+              history
+            </a>
           </>
         }
         status={
           running ? (
             <Status tone="info" blink>
-              summary running
+              running: its {jobsWord}, then the summary
             </Status>
           ) : undefined
         }
-        word={overall ? STATUS_TEXT[overall.status] : undefined}
+        word={result ? STATUS_TEXT[result] : undefined}
         tone={tone}
-        headline={overall ? overall.headline || "The summary has no headline" : neverRan ? "The jobs have not run yet" : "The summary job has not run yet"}
+        headline={result ? state?.headline || firstLine(run?.summary) || `${job.name} has no headline` : `${job.name} has not run yet`}
         aside={
           run ? (
-            <Counters flex="1 1 320px">
-              <Counter value={counts.crit} label="critical" tone={counts.crit ? "crit" : "off"} />
-              <Counter value={counts.warn} label="warning" tone={counts.warn ? "warn" : "off"} />
-              <Counter value={counts.info} label="info" tone={counts.info ? "info" : "off"} />
+            <Counters flex="1 1 220px">
+              <Counter size="sm" value={counts.crit} label="critical" tone={counts.crit ? "crit" : "off"} />
+              <Counter size="sm" value={counts.warn} label="warning" tone={counts.warn ? "warn" : "off"} />
+              <Counter size="sm" value={counts.info} label="info" tone={counts.info ? "info" : "off"} />
             </Counters>
           ) : undefined
         }
       >
-        {run?.status === "error" && run.error && run.error.trim() !== overall?.headline && <Code wrap>{run.error}</Code>}
+        {run?.status === "error" && run.error && run.error.trim() !== state?.headline && <Code wrap>{run.error}</Code>}
         {error && <ErrorText>{error}</ErrorText>}
         <Actions>
-          {summary && (
-            <Button variant="primary" onClick={start} disabled={busy || running}>
-              {running ? "running…" : "run summary now"}
-            </Button>
-          )}
+          <Button
+            variant="primary"
+            onClick={start}
+            disabled={busy || running}
+            title={`Runs its ${jobsWord} one after another, then the summary`}
+            aria-label={`Run ${job.name} now: its ${jobsWord}, then the summary`}
+          >
+            {running ? "running…" : "run now"}
+          </Button>
           {run && <ExplainButton runId={run.id} />}
         </Actions>
       </Hero>
     </Panel>
   );
 }
-
-const withoutFirstLine = (md: string) => md.trim().split("\n").slice(1).join("\n").trim();

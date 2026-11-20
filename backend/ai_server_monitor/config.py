@@ -312,6 +312,9 @@ class LogsSettings(_Model):
 
 
 class TelegramSettings(_Model):
+    """The bot for chatting with the monitor. Which job and summary results it sends, and when,
+    is set per summary and job on the Jobs page (notify)."""
+
     enabled: bool = False
     """Turn the Telegram bot on (needs a bot token and at least one allowed chat id)."""
     token: Secret = SecretStr("")

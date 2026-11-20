@@ -401,6 +401,7 @@ values a fresh install starts with.
 
 | Setting | Type | Default | What it does |
 |---|---|---|---|
+| **outputs.telegram** | group |  | The bot for chatting with the monitor. Which job and summary results it sends, and when, is set per summary and job on the Jobs page (notify). |
 | `outputs.telegram.enabled` | boolean | off | Turn the Telegram bot on (needs a bot token and at least one allowed chat id). |
 | `outputs.telegram.token` | secret | empty | Bot token from @BotFather. |
 | `outputs.telegram.allowed_chat_ids` | list of integer | empty | Only these chats may talk to the bot. Don't know a chat id? Send /id to the bot: it answers in any chat. |

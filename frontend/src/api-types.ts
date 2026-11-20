@@ -2418,7 +2418,11 @@ export interface components {
             /** Status */
             status: ("ok" | "warn" | "crit" | "error") | null;
         };
-        /** TelegramSettings */
+        /**
+         * TelegramSettings
+         * @description The bot for chatting with the monitor. Which job and summary results it sends, and when,
+         *     is set per summary and job on the Jobs page (notify).
+         */
         TelegramSettings: {
             /**
              * Allowed Chat Ids

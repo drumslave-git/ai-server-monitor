@@ -65,6 +65,40 @@ export function scheduleWord(job: Pick<Job, "interval_s" | "cron">): string {
   return "no schedule";
 }
 
+/** When a summary or a job in no summary sends its result to Telegram (the API's notify values). */
+export const NOTIFY_CHOICES: { value: Job["notify"]; label: string }[] = [
+  { value: "changed", label: "when the result changes" },
+  { value: "warn_crit", label: "on warning, critical or error" },
+  { value: "always", label: "after every run" },
+  { value: "never", label: "never (only when asked)" },
+];
+export const NOTIFY_WORD = Object.fromEntries(NOTIFY_CHOICES.map((c) => [c.value, c.label])) as Record<Job["notify"], string>;
+
+/** Where a job runs, inside a line of lowercase words: "in Health, Daily", its own schedule, or
+ *  "no schedule (manual)". `names`: summary slug → name. */
+export function whereWord(job: Pick<Job, "kind" | "summaries" | "interval_s" | "cron">, names: Record<string, string>): string {
+  if (job.kind === "topic" && job.summaries.length) return `in ${job.summaries.map((s) => names[s] ?? s).join(", ")}`;
+  if (job.interval_s || job.cron) return scheduleWord(job);
+  return "no schedule (manual)";
+}
+
+/** The group a job is shown in: the part of a builtin's slug before ":", "other builtins" for a
+ *  builtin without one, "own jobs" for everything the owner or the LLM made. */
+export const OWN_GROUP = "own jobs";
+export const OTHER_GROUP = "other builtins";
+export function jobGroups<T extends Pick<Job, "slug" | "builtin" | "name">>(jobs: T[]): { label: string; jobs: T[] }[] {
+  const groups = new Map<string, T[]>();
+  for (const job of jobs) {
+    const prefix = job.slug.includes(":") ? job.slug.slice(0, job.slug.indexOf(":")) : "";
+    const label = !job.builtin ? OWN_GROUP : prefix || OTHER_GROUP;
+    groups.set(label, [...(groups.get(label) ?? []), job]);
+  }
+  const rank = (label: string) => (label === OWN_GROUP ? 2 : label === OTHER_GROUP ? 1 : 0);
+  return [...groups.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
+    .map(([label, list]) => ({ label, jobs: list }));
+}
+
 export const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** First readable line of a markdown summary, without heading and emphasis marks. */

@@ -40,7 +40,10 @@ The design kit with live previews of every component: https://claude.ai/artifact
   `link`), `LinkButton`, `Switch`, `Checkbox` (`some` = partly selected; `CheckboxBlank` keeps its
   room), `Field` with `Input` / `Textarea` / `Select` / `Segmented`, `Joined` (an input with its button
   attached), `FieldValue` (a value that cannot be changed here), `Chip` (a chosen thing with
-  "remove"), `Tabs`, `Dialog`.
+  "remove"), `Tabs`, `Dialog`, `Confirm` (a yes/no question before something that cannot be undone;
+  `variant` colours the yes button), `Picker` (a dialog that lists groups of things to choose one
+  from, with a filter), `SortableList` (rows put in order by dragging the handle, by keyboard on the
+  handle — space, arrows, space — or by the up/down buttons; `onRemove` adds "remove").
 - Status: `Status` (a lamp plus a word; never colour alone), `Lamp`, `Tag`, `Count`, `Counter`.
 - Data: `Schedule` and `Lane` (time as cells), `Meter` (an amount out of a maximum shared by the list;
   `fluid`), `Bar` (a span on a shared axis: queued, first part, rest), `Axis`, `Cells`, `Code`
@@ -49,7 +52,7 @@ The design kit with live previews of every component: https://claude.ai/artifact
   640px (otherwise it scrolls sideways inside itself).
 - Content: `List` and `ListItem` (a link, or with `onClick` alone a button that says `expanded`;
   `action` is a control of its own beside the row), `Finding`, `Message` (`typed`, `says`, `running`,
-  `wide`), `Approval` (`decided`, `actions`), `Fold`, `Notice` (`tone`), `Empty`, `Hero`, `Prose`
+  `wide`), `Approval` (`decided`, `actions`), `Fold`, `Notice` (`tone`), `Empty`, `Hero` (`compact`: one of several side by side, e.g. a card per summary), `Prose`
   (Markdown already made safe HTML), `Clamp` (three lines, then "show more").
 - Words: `Text` (`kind="data"` or `"label"`, `dim`, `tone`, `wrap`, `nowrap`, `keep`, `block`), `Meta`,
   `Heading`, `TitleLink`, `ErrorText`.
