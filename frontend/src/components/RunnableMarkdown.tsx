@@ -52,23 +52,11 @@ export function commandMode(group: string): "read-only" | "write" | "unmarked" {
   return marks.has("write") ? "write" : "unmarked";
 }
 
-const LINE_MARK = /^(\s*#)\s*\[(?:read-only|write)\]\s*/i;
-
-/** What copy puts on the clipboard: the command as run sends it, without its mark (a comment
- *  line that held only the mark goes). */
-export function withoutMark(command: string): string {
-  return command
-    .split("\n")
-    .map((line) => line.replace(LINE_MARK, "$1 "))
-    .filter((line) => line.trim() !== "#")
-    .join("\n");
-}
-
 /** How long a copy button says "copied". */
 const COPIED_MS = 1500;
 
 const copyButton = (index: number, what: string) =>
-  `<button type="button" class="fd-btn" data-copy="${index}" title="Copy this ${what} to the clipboard">copy</button>`;
+  `<button type="button" class="fd-btn fd-btn-copy" data-copy="${index}" title="Copy this ${what} to the clipboard">copy</button>`;
 
 const LABELS = {
   "read-only": "run",
@@ -95,7 +83,7 @@ function commandHtml(group: string, button: string): string {
 
 /** `runnableNow`: the commands get their run buttons (not while the answer is still written
  *  or another command runs). Every code block gets a copy button: a shell block one per
- *  command (what run sends, without the mark), any other block one for its text. */
+ *  command (exactly what run sends), any other block one for its text. */
 function render(text: string, runnableNow: boolean): { html: string; commands: string[]; copies: string[] } {
   const commands: string[] = [];
   const copies: string[] = [];
@@ -115,7 +103,7 @@ function render(text: string, runnableNow: boolean): { html: string; commands: s
           const run = runnableNow
             ? `<button type="button" class="fd-btn${mode === "read-only" ? "" : " fd-btn-warn"}" data-run="${index}" data-label="${LABELS[mode]}" title="${TITLES[mode]}">${LABELS[mode]}</button>`
             : "";
-          return commandHtml(group, run + copyButton(copies.push(withoutMark(command)) - 1, "command"));
+          return commandHtml(group, run + copyButton(copies.push(command) - 1, "command"));
         });
         // (the commands of one block stand under each other with the gap of the text around them)
         return `<div class="fd-md">${parts.join("")}</div>`;
@@ -140,7 +128,7 @@ export function RunnableMarkdown({ text, onRun }: { text: string; onRun?: (comma
         await navigator.clipboard.writeText(copied);
         copy.textContent = "copied";
       } catch {
-        copy.textContent = "copy failed";
+        copy.textContent = "failed";
       }
       window.setTimeout(() => (copy.textContent = "copy"), COPIED_MS);
       return;

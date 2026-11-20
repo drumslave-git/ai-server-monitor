@@ -248,6 +248,8 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 .fd-command { display: flex; align-items: stretch; min-width: 0; }
 .fd-command .fd-code { flex: 1; min-width: 0; }
 .fd-command .fd-btn { border-left: 0; }
+/* A copy button keeps one width for all its labels (copy, copied, failed): nothing next to it moves */
+.fd-btn-copy { min-width: calc(6ch + 2 * var(--space-4) + 2px); }
 
 /* Message header; fold inside running text */
 .fd-msg-who { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3); }
