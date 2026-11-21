@@ -163,7 +163,7 @@ Built-in jobs (worker model, no schedule of their own, notify `warn_crit`):
 | `docker:status` | containers that are not running as they should |
 | `docker:issues` | trouble inside the containers: errors in their logs, restarts, out-of-memory kills |
 | `docker:resources` | CPU and memory of each container, the disk space Docker uses |
-| `docker:updates` | newer images for the running containers |
+| `docker:updates` | newer images for the running containers; images that could not be checked (registry rate limit, registry error) and images built on the host are reported apart |
 | `resources:load` | CPU load, memory, swap and temperatures, the processes that use the most |
 | `resources:gpu` | GPU load, video memory and temperature |
 | `storage:usage` | disk space and inodes of the host's filesystems |
@@ -797,6 +797,25 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
   settings are deleted on upgrade); Prometheus is reached through an MCP server now.
 - **The 16 px text fits where it did at 14 px.** The LLM calls table keeps inside its pane (two long
   column names and the timing text may wrap) and the phone's bottom bar keeps its label size.
+- **The image check (`docker:updates`) sorts every image into one of five classes and reports each
+  one by name.** The command prints `newer`, `limited`, `unknown`, `local` and `current` lines and
+  ends with `counts: 5 newer, 3 limited, 4 unknown, 2 local, 32 current`. An image built or loaded
+  on the host (no registry digest) is `local`, "cannot be checked" and an info finding, and no
+  registry is asked for it. A registry answer `toomanyrequests` (Docker Hub's anonymous rate
+  limit) is `limited`, any other failure `unknown`; both are warn findings, "Not checked, ...:
+  <image>", with the registry's text, and make the job's status warn. Nothing is logged in to,
+  retried or cached: what could help is a registry login, spacing the checks out, or a registry
+  mirror, and that is the owner's call. Each finding carries its image in the title and the
+  command's line as evidence (before, nine findings of a live run had an empty detail).
+- **A finding with a field the schema does not have is sent back to the model** (Extra inputs
+  are not permitted: `description`), instead of dropping the field without a word.
+- **The summary lists what was not checked, and its headline states only what the findings
+  show.** A check that could not look at some of what it covers (unchecked images, with the cause)
+  is carried into the summary as a warn finding "not checked: ...", not only as a count in a topic
+  line, and the headline no longer comments on the checks themselves ("now operational"). A
+  topic's status in the summary input is a line of its own (`status: warn`, then `last run: 14 s
+  ago`), and the schema says the model writes only that word. An unedited job takes the new
+  prompts on upgrade; an edited one gets them with **reset to default**.
 
 ## Troubleshooting
 

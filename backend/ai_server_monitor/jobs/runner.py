@@ -48,6 +48,10 @@ Trigger = Literal["schedule", "manual", "llm"]
 
 
 class Finding(BaseModel):
+    # A field the model made up ("description" for `detail`) is refused and sent back with its
+    # name, not dropped: live run 445 stored nine findings without their text.
+    model_config = ConfigDict(extra="forbid")
+
     severity: Literal["info", "warn", "crit"]
     title: str = Field(description="Short title of the problem.")
     detail: str = Field(default="", description="Numbers, names, paths.")
@@ -126,7 +130,10 @@ TopicStatus = Literal["ok", "warn", "crit", "error", "none"]
 
 class TopicLine(BaseModel):
     slug: str = Field(description="The topic job's slug, as in the results.")
-    status: TopicStatus = Field(description="Its run's status copied from the results.")
+    status: TopicStatus = Field(
+        description="One word, the one after `status:` in its section of the results "
+        "(not the whole line)."
+    )
     clause: str = Field(description="One short clause with its key number.")
 
 

@@ -62,7 +62,7 @@ def test_a_failed_job_does_not_stop_the_queue_and_the_summary_is_told(
         assert shell == ["df -h /"]  # the job after the failed one still ran
         text = models.requests[-1]["text"]
         docker = text.split("(docker:status)")[1].split("## ")[0]
-        assert "ago: error" in docker and "error: ran no command" in docker
+        assert "status: error" in docker and "error: ran no command" in docker
         assert "Root has room." in text
         queue = client.get(f"/api/jobs/runs/{summary['id']}").json()["queue"]
         assert [(r["job_slug"], r["status"]) for r in queue] == [

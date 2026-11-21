@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 
 from ai_server_monitor.config import Bootstrap, Settings
 from ai_server_monitor.jobs.builtins import BUILTINS, BY_SLUG, DAILY, TOPICS
+from ai_server_monitor.jobs.builtins import SUMMARY_PROMPT as SUMMARY_PROMPT_BUILTIN
+from ai_server_monitor.jobs.runner import TopicLine
 from ai_server_monitor.main import create_app
 
 from .conftest import LLM_URL
@@ -448,6 +450,62 @@ def test_findings_must_quote_command_output(
             finish("ok", "Fine.", [{"severity": "info", "title": "note"}]),
         ]
         assert run(client, "storage:usage")["findings"][0]["verified"] is True
+
+
+def test_a_finding_with_a_key_the_schema_does_not_have_is_sent_back_naming_it(
+    bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
+) -> None:
+    """Live 0.10.2 Daily, run 445: nine findings were stored with empty detail and evidence,
+    because the model sent `description` and Pydantic dropped the key without a word."""
+    wrong = {"severity": "info", "title": "Newer image: invented/cache:2", "description": "x"}
+    right = {"severity": "info", "title": "Newer image: invented/cache:2", "detail": "x"}
+    models.script = [
+        tool("bash", command="df -h /"),
+        finish("ok", "One newer image.", [wrong]),
+        finish("ok", "One newer image.", [right]),
+    ]
+    with TestClient(make_app(bootstrap)) as client:
+        result = run(client, "storage:usage")
+    told = models.requests[-1]["text"]
+    assert "description" in told and "Extra inputs are not permitted" in told
+    assert result["status"] == "ok" and result["findings"][0]["detail"] == "x"
+
+
+def test_the_summary_input_gives_the_status_as_a_line_of_its_own(
+    bootstrap: Bootstrap, models: ScriptedModels, shell: list[str]
+) -> None:
+    """Live 0.10.2 Daily: the model put "last run 14 s ago: ok" into a topic's status, because
+    that was how the input showed it. The status is one word on its own line now, and the
+    schema says so."""
+    models.script = [
+        tool("bash", command="df -h /"),
+        finish("warn", "Root is 40% full.", [FINDING]),
+        finish("warn", "Disk."),
+    ]
+    with TestClient(make_app(bootstrap)) as client:
+        make_summary(client, "night", ["storage:usage"])
+        run(client, "night")
+    seen = models.requests[-1]
+    # (`text` is the repr of the messages: its line breaks are written as \n)
+    section = seen["text"].split("(storage:usage)", 1)[1].split("## ", 1)[0]
+    assert section.startswith("\\nstatus: warn\\nlast run: ")
+    assert " ago: " not in section
+    assert "One word" in TopicLine.model_fields["status"].description
+    assert "only the one word after" in seen["instructions"]
+
+
+def test_the_check_prompts_say_how_unchecked_images_and_the_headline_are_reported() -> None:
+    """Live 0.10.2 Daily: seven images that could not be checked were a count in a topic line
+    and no finding, and the headline praised the check ("now operational")."""
+    images = BY_SLUG["docker:updates"].prompt
+    for kind in ("newer", "limited", "unknown", "local"):
+        assert f'"{kind}"' in images
+    assert "one finding of its own" in images and "no `description`" in images
+    assert "Local image, cannot be checked" in images and "registry rate limit" in images
+    assert "Not checked, registry error" in images
+    assert "not checked: <what> (<cause>)" in SUMMARY_PROMPT_BUILTIN
+    assert "now operational" in SUMMARY_PROMPT_BUILTIN  # named as what not to write
+    assert "states only what the findings of the checks show" in SUMMARY_PROMPT_BUILTIN
 
 
 def test_lists_sent_as_json_strings_are_accepted(

@@ -24,6 +24,8 @@ case "$1" in
   image) case "${@: -1}" in
       registry.example.invalid/team/app:1.0) echo "registry.example.invalid/team/app@sha256:aaa1";;
       invented/cache:2) echo "invented/cache@sha256:bbb1";;
+      invented/limited:1) echo "invented/limited@sha256:ddd1";;
+      invented/gone:1) echo "Error: No such image: invented/gone:1" >&2; exit 1;;
       *same*|*update*) echo "invented/any@sha256:aaa1";;
     esac;;
 esac
@@ -43,6 +45,8 @@ desc() {  # the daemon's answer, fields in its order
 case "${@: -1}" in
   */registry.example.invalid/team/app:1.0/json) desc sha256:aaa1;;
   */invented/cache:2/json) desc sha256:ccc2;;
+  */invented/limited:1/json)
+    echo '{"message":"toomanyrequests: retry-after: 1.5ms, allowed: 10/minute"}';;
   *same*) desc sha256:aaa1;;
   *update*) desc sha256:ccc2;;
   *) echo '{"message":"errors: denied: requested access to the resource is denied"}';;
@@ -105,48 +109,79 @@ def test_the_digest_comes_from_the_daemon_at_docker_host(
     env = {"DOCKER_HOST": docker_host} if docker_host else {}
     lines, calls = run(tmp_path, **env)
     assert lines == [
-        "newer    invented/cache:2",
-        "unknown  local-build:dev: "
-        '{"message":"errors: denied: requested access to the resource is denied"}',
+        "newer    invented/cache:2 | local: invented/cache@sha256:bbb1 | registry: sha256:ccc2",
+        "local    local-build:dev",
         "current  registry.example.invalid/team/app:1.0",
-        "counts: 1 current, 1 newer, 1 unknown",
+        "counts: 1 newer, 0 limited, 0 unknown, 1 local, 1 current",
     ]
     assert calls[0] == expected
-    assert len(calls) == 3  # each image once, nothing else asked
+    assert len(calls) == 2  # each registry image once; the local image has no registry to ask
+
+
+def test_a_local_image_is_its_own_class_and_no_registry_is_asked(tmp_path: Path) -> None:
+    """Fault 2 of the first 0.10.2 Daily: images built on the host showed as registry errors."""
+    lines, calls = run(tmp_path, FAKE_IMAGES="local-build:dev", DOCKER_HOST="tcp://192.0.2.10:2375")
+    assert lines == [
+        "local    local-build:dev",
+        "counts: 0 newer, 0 limited, 0 unknown, 1 local, 0 current",
+    ]
+    assert calls == []
+
+
+def test_the_registrys_rate_limit_is_its_own_class_with_its_answer(tmp_path: Path) -> None:
+    """Fault 3: `toomanyrequests` was one of the "unknown registry errors"."""
+    lines, _ = run(
+        tmp_path,
+        FAKE_IMAGES="invented/limited:1 invented/cache:2 invented/gone:1",
+        DOCKER_HOST="tcp://192.0.2.10:2375",
+    )
+    assert lines == [
+        "newer    invented/cache:2 | local: invented/cache@sha256:bbb1 | registry: sha256:ccc2",
+        "limited  invented/limited:1: "
+        '{"message":"toomanyrequests: retry-after: 1.5ms, allowed: 10/minute"}',
+        "unknown  invented/gone:1: Error: No such image: invented/gone:1",
+        "counts: 1 newer, 1 limited, 1 unknown, 0 local, 0 current",
+    ]
 
 
 def test_a_proxy_without_distribution_gives_unknown_with_its_answer(tmp_path: Path) -> None:
     lines, _ = run(tmp_path, DOCKER_HOST="tcp://192.0.2.10:2375", PROXY_403="1")
-    images = ("invented/cache:2", "local-build:dev", "registry.example.invalid/team/app:1.0")
+    images = ("invented/cache:2", "registry.example.invalid/team/app:1.0")
     assert lines == [
         *(f"unknown  {image}: <html><body><h1>403 Forbidden</h1>" for image in images),
-        "counts: 0 current, 0 newer, 3 unknown",
+        "local    local-build:dev",
+        "counts: 0 newer, 0 limited, 2 unknown, 1 local, 0 current",
     ]
 
 
-def test_without_curl_every_image_is_unknown_with_the_shells_error(tmp_path: Path) -> None:
+def test_without_curl_every_registry_image_is_unknown_with_the_shells_error(
+    tmp_path: Path,
+) -> None:
     lines, calls = run(tmp_path, curl=False, DOCKER_HOST="tcp://192.0.2.10:2375")
     assert calls == []
     assert len(lines) == 4
-    assert all(line.startswith("unknown  ") for line in lines[:3])
-    assert all(line.endswith("curl: command not found") for line in lines[:3])
-    assert lines[3] == "counts: 0 current, 0 newer, 3 unknown"
+    assert all(line.startswith("unknown  ") for line in lines[:2])
+    assert all(line.endswith("curl: command not found") for line in lines[:2])
+    assert lines[2] == "local    local-build:dev"
+    assert lines[3] == "counts: 0 newer, 0 limited, 2 unknown, 1 local, 0 current"
 
 
-def test_newer_then_unknown_then_current_and_the_counts_last(tmp_path: Path) -> None:
+def test_newer_then_the_not_checked_then_local_then_current_and_the_counts_last(
+    tmp_path: Path,
+) -> None:
     """Many images of mixed result: the lines the model must act on come first, whatever the
     image names, and it copies the counts instead of counting the lines."""
     names = [f"invented/{kind}-{n:02}:1" for n in range(14) for kind in ("same", "update", "own")]
     lines, _ = run(tmp_path, FAKE_IMAGES=" ".join(names), DOCKER_HOST="tcp://192.0.2.10:2375")
     kinds = [line.split()[0] for line in lines[:-1]]
-    assert kinds == ["newer"] * 14 + ["unknown"] * 14 + ["current"] * 14
-    assert lines[0] == "newer    invented/update-00:1"
-    assert lines[14].startswith("unknown  invented/own-00:1: ")
+    assert kinds == ["newer"] * 14 + ["local"] * 14 + ["current"] * 14
+    assert lines[0].startswith("newer    invented/update-00:1 | local: invented/any@sha256:aaa1")
+    assert lines[14] == "local    invented/own-00:1"
     assert lines[28] == "current  invented/same-00:1"
-    assert lines[-1] == "counts: 14 current, 14 newer, 14 unknown"
+    assert lines[-1] == "counts: 14 newer, 0 limited, 0 unknown, 14 local, 14 current"
 
 
 def test_no_running_container_still_prints_the_counts(tmp_path: Path) -> None:
     lines, calls = run(tmp_path, FAKE_IMAGES=" ", DOCKER_HOST="tcp://192.0.2.10:2375")
-    assert lines == ["counts: 0 current, 0 newer, 0 unknown"]
+    assert lines == ["counts: 0 newer, 0 limited, 0 unknown, 0 local, 0 current"]
     assert calls == []

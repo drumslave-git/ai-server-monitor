@@ -49,22 +49,30 @@ DOCKER_UPDATES = (
     'h=${DOCKER_HOST:-unix:///var/run/docker.sock}; s=; b=$h; case "$h" in '
     "tcp://*) b=http://${h#tcp://};; unix://*) s=${h#unix://}; b=http://localhost;; esac; "
     "for i in $(docker ps --format '{{.Image}}' | sort -u); do "
-    'l=$(docker image inspect --format \'{{join .RepoDigests " "}}\' "$i" 2>/dev/null); '
+    'l=$(docker image inspect --format \'{{join .RepoDigests " "}}\' "$i" 2>&1) '
+    '|| { echo "unknown  $i: $(echo "$l" | head -1)"; continue; }; '
+    '[ -n "$l" ] || { echo "local    $i"; continue; }; '
     'r=$(curl -sS ${s:+--unix-socket "$s"} "$b/distribution/$i/json" 2>&1); '
     'd=$(echo "$r" | sed -n \'s/.*"Descriptor":{[^}]*"digest":"\\(sha256:[0-9a-f]*\\)".*/\\1/p\'); '
-    'case "$d" in sha256:*) case "$l" in *"$d"*) echo "current  $i";; *) echo "newer    $i";; esac;; '
-    '*) echo "unknown  $i: $(echo "$r" | head -1)";; esac; done'
+    'case "$d" in sha256:*) case "$l" in *"$d"*) echo "current  $i";; '
+    '*) echo "newer    $i | local: $l | registry: $d";; esac;; '
+    '*) case "$r" in *toomanyrequests*) k="limited ";; *) k="unknown ";; esac; '
+    'echo "$k $i: $(echo "$r" | head -1)";; esac; done'
     ' | awk \'{n[$1]++; g[$1] = g[$1] $0 "\\n"} '
-    'END {printf "%s%s%s", g["newer"], g["unknown"], g["current"]; '
-    'printf "counts: %d current, %d newer, %d unknown\\n", n["current"], n["newer"], n["unknown"]}\''
+    'END {printf "%s%s%s%s%s", g["newer"], g["limited"], g["unknown"], g["local"], g["current"]; '
+    'printf "counts: %d newer, %d limited, %d unknown, %d local, %d current\\n", '
+    'n["newer"], n["limited"], n["unknown"], n["local"], n["current"]}\''
 )
-"""One line per image of a running container: "current", "newer" (the registry has another
-digest for its tag) or "unknown" with the first line of the answer; the "newer" lines first, then
-the "unknown", then the "current", and last one line with the three counts (so the model copies
-them instead of counting a long list). The registry's digest comes
-from the Docker daemon (Engine API `GET /distribution/<image>/json`, `Descriptor.digest`), asked
-with curl at the same $DOCKER_HOST the `docker` commands use: `tcp://` as http, `unix://` through
-the socket, unset as Docker's own default socket. Nothing is written on the host."""
+"""One line per image of a running container, by class: "newer" (the registry has another digest
+for its tag; the line carries both digests), "limited" (the registry answered `toomanyrequests`,
+its rate limit, so the image was not checked), "unknown" (any other failure, with the first line
+of the answer), "local" (`docker image inspect` shows no registry digest: built or loaded on
+this host, nothing to ask a registry; no request is made for it) and "current". The classes come
+in that order, and last one line with the five counts (so the model copies them instead of
+counting a long list). The registry's digest comes from the Docker daemon (Engine API
+`GET /distribution/<image>/json`, `Descriptor.digest`), asked with curl at the same $DOCKER_HOST
+the `docker` commands use: `tcp://` as http, `unix://` through the socket, unset as Docker's own
+default socket. Nothing is written on the host."""
 
 DOCKER_STATUS = (
     DOCKER_PS + " | awk -F'\\t' '"
@@ -175,19 +183,33 @@ volumes and build cache; much reclaimable space is one info finding.""",
         "docker",
         f"""\
 Newer images for the running containers.
-Run this ONE command; it prints one line per image, the "newer" and "unknown" ones first, and
-as its last line the counts ("counts: 32 current, 5 newer, 4 unknown"):
+Run this ONE command; it prints one line per image, grouped by the word each line starts with,
+and as its last line the counts ("counts: 5 newer, 3 limited, 4 unknown, 2 local, 32 current"):
 `{DOCKER_UPDATES}`
-"current": the registry has the same image. "newer": the registry has a different image for
-that tag (an update). "unknown": the registry could not be asked (the error follows; images
-built locally always show this). An answer "403 Forbidden" comes from the Docker proxy: its
-service in the compose file lacks the line `DISTRIBUTION: 1`; say so in the finding.
-ok: always, unless no image could be checked at all (then: could not check, with the first
-error line).
-Findings only for the "newer" and "unknown" lines: each "newer" image is one info finding
-naming the image; each "unknown" image one info finding with its error. The "current" lines
-need nothing. For the summary, take the counts from the last line and copy them as printed;
-do not count the lines yourself.""",
+- "current": the registry has the same image.
+- "newer": the registry has a different image for that tag (an update); the line shows this
+  host's digest after "local:" and the registry's after "registry:".
+- "limited": the registry refused the question because of its rate limit (toomanyrequests);
+  the image was NOT checked.
+- "unknown": the registry could not be asked for another reason (the answer follows); the
+  image was NOT checked. An answer "403 Forbidden" comes from the Docker proxy: its service in
+  the compose file lacks the line `DISTRIBUTION: 1`; say so in the finding.
+- "local": built or loaded on this host, it has no registry, so it cannot be checked. This is
+  normal, not an error.
+Every "newer", "limited", "unknown" and "local" line is one finding of its own, the title names
+its image, and the line is copied as its evidence. The fields are `severity`, `title`, `detail`
+and `evidence` (the text goes into `detail`; there is no `description`):
+- newer: info; title "Newer image: <image>"; detail "this host has <digest after local:>, the
+  registry has <digest after registry:>".
+- limited: warn; title "Not checked, registry rate limit: <image>"; detail the answer's text.
+- unknown: warn; title "Not checked, registry error: <image>"; detail the answer's text.
+- local: info; title "Local image, cannot be checked: <image>"; detail "no registry digest
+  (built or loaded on this host)".
+The "current" lines need no finding.
+ok: no "limited" and no "unknown" line. warn: at least one "limited" or "unknown" line (images
+that were not checked). This check has no crit.
+In the summary, name the counts of the last line as printed (do not count the lines yourself)
+and, when some images were not checked, why.""",
     ),
     _topic(
         "resources:load",
@@ -370,6 +392,10 @@ after another just now, in this order.
 - First, loudly: every check that did NOT work (its run is an error, or it reported "could
   not check") is a warn finding "not checked: <check> (<reason>)", listed first, and counts
   as warn for the status. Never make it an info finding.
+- A check that could not look at some of what it covers (images the registry did not answer
+  for, with its rate limit or error as the cause) has warn findings that say so: carry them
+  over as a warn finding "not checked: <what> (<cause>)" that names those things (merged, with
+  how many). Never leave them as a count in a topic line.
 - status: the worst current status of the checks (crit > warn > ok).
 - Keep the concrete numbers and counts of the checks (sizes, percentages, how many updates),
   copied as they are. Compare with the previous summary: what is new, what got better.
@@ -378,11 +404,14 @@ after another just now, in this order.
 - Only facts from the check results or your commands: no words they do not contain (no
   "unchanged" unless you compared with the previous summary, no thresholds they do not state).
   Call a thing by the word its check used: failed units are "failed".
-- summary: one headline sentence of facts from the checks, then at most 4 short lines on what
-  needs attention.
-- topics: one entry per check, the fine ones too: its slug, its status copied, and one clause
-  with its key number (e.g. "38 updates pending, 3 security", "no errors; kernel audit
-  messages rate-limited 238 times").
+- summary: one headline sentence that states only what the findings of the checks show (what
+  is wrong, what is new), then at most 4 short lines on what needs attention. No comment on
+  how the checks themselves are doing ("now operational", "working again", "all checks
+  succeeded") unless a result says exactly that.
+- topics: one entry per check, the fine ones too: its slug, its status (only the one word
+  after "status:" in its section: ok, warn, crit or error), and one clause with its key
+  number (e.g. "38 updates pending, 3 security", "no errors; kernel audit messages
+  rate-limited 238 times").
 - findings: only what needs the owner's attention, merged across checks, most severe first,
   each with the evidence line copied from the check result or your command."""
 
