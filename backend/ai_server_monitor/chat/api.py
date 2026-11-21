@@ -63,6 +63,8 @@ class ChatCard(BaseModel):
     answered: float | None = None
     answered_via: str | None = None
     """web | telegram"""
+    telegram_error: str | None = None
+    """Telegram's error when the card could not be sent there (null: sent, or Telegram is off)."""
 
 
 class CardAnswer(BaseModel):

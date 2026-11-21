@@ -20,6 +20,7 @@ const EVENT_TYPES = [
   "chat.message.updated",
   "chat.card",
   "chat.card.answered",
+  "chat.card.telegram",
   "memory.changed",
 ];
 

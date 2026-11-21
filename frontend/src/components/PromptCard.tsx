@@ -90,6 +90,11 @@ export function PromptCard({ card, onAnswered }: { card: ChatCard; onAnswered?: 
       {questions.map((q, i) => (
         <QuestionControls key={i} card={card.id} index={i} q={q} draft={drafts[i]} many={questions.length > 1} onChange={(p) => change(i, p)} />
       ))}
+      {card.telegram_error && (
+        <Text block tone="warn" wrap>
+          Not sent to Telegram: {card.telegram_error}
+        </Text>
+      )}
       {error && <ErrorText>{error}</ErrorText>}
     </Approval>
   );

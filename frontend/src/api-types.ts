@@ -1177,6 +1177,8 @@ export interface components {
             session_id: string;
             /** Status */
             status: string;
+            /** Telegram Error */
+            telegram_error?: string | null;
         };
         /** ChatMessage */
         ChatMessage: {

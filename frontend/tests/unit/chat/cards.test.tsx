@@ -222,6 +222,28 @@ describe("a card while the answer streams, and cards from the event stream", () 
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 
+  it("shows the line that Telegram refused the card as soon as the event says so (event chat.card.telegram), and no line while it is fine", async () => {
+    store([card({ questions: [QUESTIONS[0]] })]);
+    renderChat("#/chat/s-x");
+    await screen.findByText("Question");
+    expect(screen.queryByText(/Not sent to Telegram/)).not.toBeInTheDocument();
+    const refused = card({ questions: [QUESTIONS[0]], telegram_error: "bot was blocked by the user" });
+    store([refused]);
+    act(() => FakeEventSource.current().emit("chat.card.telegram", refused));
+    expect(await screen.findByText("Not sent to Telegram: bot was blocked by the user")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "sda" })).toBeInTheDocument(); // the card stays answerable here
+    store([card({ questions: [QUESTIONS[0]] })]); // a later send went through: the error is cleared
+    act(() => FakeEventSource.current().emit("chat.card.telegram", card({ questions: [QUESTIONS[0]] })));
+    await waitFor(() => expect(screen.queryByText(/Not sent to Telegram/)).not.toBeInTheDocument());
+  });
+
+  it("an answered card shows no Telegram line, whatever Telegram said before", async () => {
+    store([card({ status: "answered", answered_via: "web", answers: [{ chosen: ["sda"], text: "" }], questions: [QUESTIONS[0]], telegram_error: "chat not found" })], thread({ answered: true }));
+    renderChat("#/chat/s-x");
+    expect(await screen.findByText("answered in the web chat")).toBeInTheDocument();
+    expect(screen.queryByText(/Not sent to Telegram/)).not.toBeInTheDocument();
+  });
+
   it("does not load another conversation's card", async () => {
     store([card({ questions: [QUESTIONS[0]] })]);
     renderChat("#/chat/s-x");

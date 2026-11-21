@@ -71,6 +71,8 @@ class FakeTelegram:
         self.fail_get_updates = 0
         self.refuse_entities = False
         """sendMessage with entities answers 400, as Telegram does for entities it cannot use."""
+        self.refuse_sends = ""
+        """When set, sendMessage answers 403 with this description (the bot was blocked, say)."""
         self._updates: list[dict[str, Any]] = []
         self._update_id = 100
         self._message_id = 1000
@@ -107,6 +109,9 @@ class FakeTelegram:
                 "description": "Bad Request: can't parse entities",
             }
             return httpx.Response(400, json=refused)
+        if method == "sendMessage" and self.refuse_sends:
+            refused = {"ok": False, "error_code": 403, "description": self.refuse_sends}
+            return httpx.Response(403, json=refused)
         if method == "sendMessage":
             self._message_id += 1
             result = {

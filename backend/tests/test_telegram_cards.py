@@ -12,6 +12,7 @@ from ai_server_monitor.config import Bootstrap
 
 from .jobfakes import ScriptedModels, tool
 from .test_chat import FakeLLM
+from .test_chat import ask as web_ask
 from .test_telegram import (
     CHAT,
     STRANGER,
@@ -298,3 +299,32 @@ def test_cards_answered_while_the_bot_was_down_are_edited_and_unsent_ones_are_se
         assert "reply_markup" not in edit
         fresh = wait_for(lambda: card_messages(tg)[1:])[0]
         assert "Question #2" in fresh["text"] and keys(fresh)
+
+
+def the_card(client: TestClient, session_id: str) -> dict[str, Any]:
+    return client.get(f"/api/chat/sessions/{session_id}").json()["cards"][0]
+
+
+def test_a_card_telegram_refuses_carries_telegrams_error_until_a_send_goes_through(
+    bootstrap: Bootstrap, models: ScriptedModels
+) -> None:
+    tg = FakeTelegram()
+    tg.refuse_sends = "Forbidden: bot was blocked by the user"
+    first = make_app(bootstrap, tg, llm=FakeLLM())
+    with running(first, tg) as client:
+        sub = first.state.ctx.events.subscribe("chat.card")
+        models.script = [tool("ask_owner", questions=ONE)]
+        events = web_ask(client, "check my server")
+        session = next(e for e in events if e["type"] == "card")["card"]["session_id"]
+        kinds: list[str] = []
+        while "chat.card.telegram" not in kinds:  # chat.card, then the failure that follows it
+            kinds.append(client.portal.call(sub.__anext__).type)  # type: ignore[union-attr]
+        card = the_card(client, session)
+        assert "blocked by the user" in card["telegram_error"]
+        assert card["status"] == "open"  # still open: the web chat can answer it
+        assert tg.of("sendMessage") and not tg.of("editMessageText")
+    tg.refuse_sends = ""
+    second = make_app(bootstrap, tg, llm=FakeLLM())  # a restart retries once
+    with running(second, tg) as client:
+        wait_for(lambda: the_card(client, session)["telegram_error"] is None)
+        assert card_messages(tg)  # the card went out this time

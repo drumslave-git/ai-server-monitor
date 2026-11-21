@@ -146,7 +146,11 @@ Telegram sends the card as one message with signed inline buttons (`co:` option,
 `cs:` send); a card with one single or text question is "immediate" (the tap or the reply answers
 it), others keep drafts in `telegram_card_drafts` until Send. Message ids are in
 `telegram_card_messages`, so after a restart the cards answered meanwhile are edited to their
-outcome. There is no timeout: a card stays open until answered.
+outcome. A chat that refuses the card (`TelegramError`) is logged as a warning and leaves
+Telegram's error text in `chat_cards.telegram_error` (migration 0026; a send that goes through,
+here or in the catch-up after a restart, clears it); a change of that column publishes
+`chat.card.telegram` (the card as `card_view`), and the web card shows "Not sent to Telegram: …".
+No retry beyond the catch-up after a start. There is no timeout: a card stays open until answered.
 
 `host_command` (`bash_write`) runs `nsenter --target 1 --mount --uts --ipc --net --pid -- bash
 -c CMD` as root; `ChangeShell.probe()` checks at start whether that works, and

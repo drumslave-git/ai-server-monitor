@@ -273,6 +273,10 @@ before the timeout).
   answer is a reply to the card's message, and a card with one single-choice or free-text
   question is answered by the tap or the reply. Answered in either place, the card is closed in
   both and shows what was answered and where. An open card and its waiting run survive a restart.
+  When Telegram refuses the card (the bot was blocked, the chat is not found, no connection), the
+  open web card says so in one line, "Not sent to Telegram: …", with Telegram's own error; the
+  card stays answerable in the web chat, and the line goes away when a later send (after a
+  restart) goes through.
 - **Memory** — notes that outlive a conversation. The main model keeps them itself: in the chat
   and in a summary run that uses the main model it has `memory_list`, `memory_read`,
   `memory_write` (a new note, or an update of one it wrote) and `memory_delete` (its own notes

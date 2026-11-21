@@ -1404,11 +1404,22 @@ class TelegramBot:
         return InlineKeyboardMarkup(rows) if rows else None
 
     async def _announce_card(self, card: dict[str, Any]) -> None:
+        """Send the card to every allowed chat. A chat that refuses it leaves Telegram's error on
+        the card (the web card shows it); a later send that goes through clears it."""
+        errors: list[str] = []
         for chat_id in sorted(self.allowed):
             try:
                 await self._send_card(chat_id, card)
             except TelegramError as exc:
                 log.warning("telegram: could not send a card to chat %s: %s", chat_id, exc)
+                errors.append(str(exc) or type(exc).__name__)
+        if not self.allowed:
+            return
+        cards = self.app.chat.cards
+        if await cards.set_telegram_error(int(card["id"]), errors[0] if errors else None):
+            current = await cards.get(int(card["id"]))
+            if current is not None:
+                self.app.events.publish("chat.card.telegram", current)
 
     async def _send_card(self, chat_id: int, card: dict[str, Any]) -> None:
         known = await self.app.db.fetchone(

@@ -130,6 +130,7 @@ def card_view(row: Any) -> dict[str, Any]:
         "created": row["created"],
         "answered": row["answered"],
         "answered_via": row["answered_via"],
+        "telegram_error": row["telegram_error"],
     }
 
 
@@ -159,6 +160,15 @@ class Cards:
             "SELECT * FROM chat_cards WHERE run_id = ? ORDER BY id", (run_id,)
         )
         return [card_view(r) for r in rows]
+
+    async def set_telegram_error(self, card_id: int, error: str | None) -> bool:
+        """Record why the card could not be sent to Telegram (None: it was sent). True when the
+        stored text changed."""
+        changed = await self.db.write(
+            "UPDATE chat_cards SET telegram_error = ? WHERE id = ? AND telegram_error IS NOT ?",
+            (error, card_id, error),
+        )
+        return changed > 0
 
     async def answer(self, card_id: int, answers: list[Answer], via: str) -> bool:
         """Close an open card with its answers; False when it was not open (answered already:

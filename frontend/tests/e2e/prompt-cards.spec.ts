@@ -65,6 +65,16 @@ test.describe("Chat, prompt cards", () => {
     await expectNoSidewaysScroll(page);
   });
 
+  test("the line that Telegram refused the card wraps inside the card, whatever Telegram said", async ({ page, network }) => {
+    const said = `Forbidden: ${"the bot was blocked by the user and cannot start a conversation with them, ".repeat(3)}${"x".repeat(90)}`;
+    network.use(session({ telegram_error: said }));
+    await page.goto("/#/chat/s-cards");
+    const line = page.getByText(/^Not sent to Telegram: Forbidden/);
+    await expect(line).toBeVisible();
+    await expectInside(page, line);
+    await expectNoSidewaysScroll(page);
+  });
+
   test("the send button waits for every answer, then sends them", async ({ page, network }) => {
     const bodies: unknown[] = [];
     network.use(
