@@ -1,7 +1,8 @@
 """Upgrading an installation that still has data of removed features: migration 0013 (the
-*arr/qBittorrent integration, the model benchmarks, the api_call action) and migration 0014
-(collectors, digest, reports, the Prometheus planner, the hand-written LLM client) clear it and
-the app comes up clean, with no settings reset."""
+*arr/qBittorrent integration, the model benchmarks, the api_call action), migration 0014
+(collectors, digest, reports, the Prometheus planner, the hand-written LLM client) and migration
+0023 (the /metrics exporter's settings) clear it and the app comes up clean, with no settings
+reset."""
 
 from __future__ import annotations
 
@@ -33,7 +34,10 @@ OLD_SETTINGS = {
         "prometheus": {"url": "http://prom:9090", "token": "prom-secret"},
         "arr": {"enabled": "auto", "interval": "2m", "max_queue_items": 50},
     },
-    "outputs": {"telegram": {"enabled": False, "report_every": 3, "alerts": True}},
+    "outputs": {
+        "telegram": {"enabled": False, "report_every": 3, "alerts": True},
+        "metrics": {"enabled": True, "bearer_token": "scrape-secret"},
+    },
     "arr": {
         "dry_run": False,
         "timeout": "15s",
@@ -116,6 +120,7 @@ def test_upgrade_drops_removed_features_and_starts_clean(bootstrap: Bootstrap) -
     assert jobs["summary:health"]["notify"] == jobs["summary:daily"]["notify"] == "changed"
     assert "report_every" not in values["outputs"]["telegram"]
     assert "tool_mode" not in values["llm"] and "tool_mode" not in values["worker"]
+    assert "metrics" not in values["outputs"]
     assert status.status_code == 200 and status.json()["pending_approvals"] == 0
     # the old actions stay readable in the audit log
     assert "arr_search" in json.dumps(actions)
@@ -144,12 +149,13 @@ def test_upgrade_drops_removed_features_and_starts_clean(bootstrap: Bootstrap) -
             for section in ("arr", "bench", "report", "collectors"):
                 assert section not in value, (key, section)
             text = json.dumps(value)
-            for secret in ("radarr-secret", "judge-secret", "prom-secret"):
+            for secret in ("radarr-secret", "judge-secret", "prom-secret", "scrape-secret"):
                 assert secret not in text, (key, secret)
             for gone in ("tool_mode", "max_context_tokens", "stream_usage", "sample_interval"):
                 assert gone not in text, (key, gone)
             assert "report_every" not in text and '"alerts"' not in text, key
             assert "send_summary" not in value["outputs"]["telegram"], key
+            assert "metrics" not in value["outputs"], key
     assert not {t for t in tables if t.startswith("bench_")}
     assert not tables & {"collector_samples", "reports", "prom_queries"}
     assert "actions" in tables and "approval_batches" in tables

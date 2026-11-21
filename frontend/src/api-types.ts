@@ -2166,23 +2166,6 @@ export interface components {
             /** Tools */
             tools: components["schemas"]["McpTool"][];
         };
-        /** MetricsSettings */
-        MetricsSettings: {
-            /**
-             * Bearer Token
-             * Format: password
-             * @description If set, scrapers must send "Authorization: Bearer <token>" (Prometheus: authorization
-             *     in the scrape config). Empty = open to anyone who can reach the port.
-             * @default
-             */
-            bearer_token: string;
-            /**
-             * Enabled
-             * @description Expose Prometheus metrics at /metrics.
-             * @default true
-             */
-            enabled: boolean;
-        };
         /**
          * ModelInfoResult
          * @description What the selected LLM model says about itself (Ollama only), for Settings → Main model.
@@ -2201,13 +2184,6 @@ export interface components {
         };
         /** OutputsSettings */
         OutputsSettings: {
-            /**
-             * @default {
-             *       "bearer_token": "",
-             *       "enabled": true
-             *     }
-             */
-            metrics: components["schemas"]["MetricsSettings"];
             /**
              * @default {
              *       "allowed_chat_ids": [],
@@ -2328,10 +2304,6 @@ export interface components {
             mcp: components["schemas"]["McpSettings"];
             /**
              * @default {
-             *       "metrics": {
-             *         "bearer_token": "",
-             *         "enabled": true
-             *       },
              *       "telegram": {
              *         "allowed_chat_ids": [],
              *         "api_url": "",

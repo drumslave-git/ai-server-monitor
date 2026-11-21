@@ -339,20 +339,11 @@ class TelegramSettings(_Model):
     messages get a "Review" button that opens the approval there. Empty = no button."""
 
 
-class MetricsSettings(_Model):
-    enabled: bool = True
-    """Expose Prometheus metrics at /metrics."""
-    bearer_token: Secret = SecretStr("")
-    """If set, scrapers must send "Authorization: Bearer <token>" (Prometheus: authorization
-    in the scrape config). Empty = open to anyone who can reach the port."""
-
-
 class OutputsSettings(_Model):
     telegram: TelegramSettings = Field(
         default=TelegramSettings(),
         json_schema_extra={"test": "telegram", "test_modes": {"send": "Send test message"}},
     )
-    metrics: MetricsSettings = MetricsSettings()
 
 
 # --------------------------------------------------------------------------- mcp

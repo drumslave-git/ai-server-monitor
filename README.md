@@ -23,9 +23,8 @@ What it does:
   command (`bash_write`) or an MCP write; you approve it on the Approvals page or with a
   Telegram button, it runs, and the chat continues with the result by itself.
 - **Telegram** bot (questions, `/status`, `/summary`, `/run`, approvals, results by each job's
-  and summary's notify setting), **`/metrics`** for Prometheus with a Grafana dashboard, a
-  **Logs** page with every model request as sent and received, and CPU, RAM and NVIDIA GPU
-  meters in the sidebar.
+  and summary's notify setting), a **Logs** page with every model request as sent and received,
+  and CPU, RAM and NVIDIA GPU meters in the sidebar.
 
 **The models must support native tool calling** (OpenAI-style `tools`). Settings → Main model →
 **Test** checks the endpoint and the model, then runs the model the way a real run does (main:
@@ -63,8 +62,8 @@ docker compose up -d
 3. **Worker model** (`worker`): a smaller model for the topic jobs and `delegate`. Leave it
    empty to use the main model for everything; an empty base URL means the main model's
    endpoint and key.
-4. Optional: **Outputs** → Telegram (bot token, allowed chat ids) and the `/metrics` bearer
-   token; **MCP servers**; **Approvals** (whether changing commands are allowed).
+4. Optional: **Outputs** → Telegram (bot token, allowed chat ids);
+   **MCP servers**; **Approvals** (whether changing commands are allowed).
 
 The jobs start on their schedules; **Jobs** → *Run now* runs one at once.
 
@@ -92,7 +91,7 @@ six or more tabs open the page stalls.
 | `security_opt: apparmor=unconfined` | On hosts with AppArmor (Ubuntu) Docker's default profile blocks reading other processes under `/proc`. The mounts stay read-only. Hosts without AppArmor do not need it. |
 | `cap_add: DAC_READ_SEARCH` | Lets the read-only shell read root-only files (`/var/log/*`, `/root`, `du` over every directory). It reads every file and writes none. Without it the shell still works as an unprivileged user with the `adm` and `systemd-journal` groups and says when a path was unreadable. |
 | `# - SYS_ADMIN` / `# - SYS_PTRACE` | Only for **approved changes**: an approved command runs as root on the host through `nsenter` into PID 1's namespaces, which needs both (measured: either alone fails). Without them the chat only reads: `bash_write` is not offered and `/api/status` (`change_shell.reason`) says what is missing. The read-only shell keeps only `DAC_READ_SEARCH` either way. |
-| `ports: "8080:8080"` | Web UI, API and `/metrics`. |
+| `ports: "8080:8080"` | Web UI and API. |
 | `DOCKER_HOST: tcp://docker-proxy:2375` | The shell's `docker` commands go through the socket proxy below, never the real socket. |
 | `./data:/data` | Settings, jobs, runs, chats, the audit log: one SQLite file. **Back it up: it holds your API keys and tokens in clear text.** |
 | `/:/host:ro,rslave` | The host's filesystem, read-only: the shell runs the host's own programs (`chroot /host`) on the host's files. `rslave` makes mounts added later visible. |
@@ -277,17 +276,6 @@ before the timeout).
   explain conversation the same way); `GET /api/chat/sessions[/{id}]`, `DELETE /api/chat/sessions/{id}`.
   `GET /api/chat/audit` lists the commands and MCP calls the chat made. `GET /api/status`,
   `GET /api/jobs`, `GET /api/jobs/{slug}/runs` give the job picture.
-- **Metrics** — `/metrics` (`prometheus_client`): job status, last run time, duration, findings
-  by severity and runs by status (`asm_job_*`), LLM requests, tokens, errors and duration
-  (`asm_llm_*`), pending approvals and actions by result, build info. Import
-  [docs/grafana-dashboard.json](docs/grafana-dashboard.json). Scrape config:
-
-  ```yaml
-  scrape_configs:
-    - job_name: ai-server-monitor
-      authorization: { credentials: "<bearer token>" }   # only if you set one
-      static_configs: [{ targets: ["ai-server-monitor:8080"] }]
-  ```
 
 ## Hardware meters
 
@@ -296,8 +284,8 @@ of the total, and for each NVIDIA GPU its use in % and its video memory (VRAM) i
 total; with several GPUs they are numbered from 0 as `nvidia-smi` numbers them. The page asks
 every 5 seconds while it is visible.
 
-- The values are read when the page asks and nothing is stored: there is no history, no
-  `/metrics` series and no log entry for them.
+- The values are read when the page asks and nothing is stored: there is no history and no
+  log entry for them.
 - CPU and RAM are the whole machine's: the container reads the kernel's figures, so a memory or
   CPU limit set on the container does not change them (checked with a container limited to
   512 MB and one CPU: it showed the machine's full RAM, and its CPU use rose when another
@@ -471,8 +459,6 @@ values a fresh install starts with.
 | `outputs.telegram.new_session_after` | duration | `6h` | Start a fresh chat after this long without a message in a Telegram chat (the old one stays in the Chat list on the web page). 0 = never: one chat until you send /new. |
 | `outputs.telegram.api_url` | string | empty | Bot API server. Empty = https://api.telegram.org. |
 | `outputs.telegram.web_url` | string | empty | Address of this web UI as you open it, e.g. https://monitor.example.com. Approval messages get a "Review" button that opens the approval there. Empty = no button. |
-| `outputs.metrics.enabled` | boolean | on | Expose Prometheus metrics at /metrics. |
-| `outputs.metrics.bearer_token` | secret | empty | If set, scrapers must send "Authorization: Bearer &lt;token>" (Prometheus: authorization in the scrape config). Empty = open to anyone who can reach the port. |
 
 ### MCP servers (`mcp`)
 
@@ -517,7 +503,7 @@ log and the model call logs are kept; the rest of the old data is deleted by the
 - model benchmarks and their tables;
 - collectors, the health score, charts, the digest and the reports: collected samples and old
   reports are deleted; the Dashboard now shows the jobs;
-- the Prometheus input (the query planner), and the chat's generic HTTP API tool (`api_call`);
+- the query planner, and the chat's generic HTTP API tool (`api_call`);
 - the settings that only these used, plus `chat.shell`, `llm.tool_mode` and the other knobs of
   the old LLM client. Moved for you: `report.language` → `general.language`,
   `collectors.docker.url` → `general.docker_url`, the *arr approval timeout →
@@ -541,8 +527,6 @@ log and the model call logs are kept; the rest of the old data is deleted by the
 - Telegram: `/report` is gone; `/status` now shows the overall status and one line per job; new
   are `/jobs`, `/run <job>` and `/summary`. Reports and alerts are replaced by the summary
   message (`outputs.telegram.send_summary`).
-- Metrics: the `asm_health_*`, `asm_findings`, `asm_report_*` and `asm_collector_*` series are
-  gone; the jobs export `asm_job_*`. Re-import `docs/grafana-dashboard.json`.
 
 ### 0.7.1
 
@@ -808,6 +792,9 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
   again (it was 14 px); the big headings keep the size they had. **Settings → general → root font
   size** sets it in pixels (16 by default, any positive number), on the server, so every device
   that opens the UI uses it.
+- **The built-in Prometheus exporter and Grafana dashboard are removed.** There is no `/metrics`
+  endpoint, no `outputs.metrics` setting and no dashboard file any more (stored values of the two
+  settings are deleted on upgrade); Prometheus is reached through an MCP server now.
 - **The 16 px text fits where it did at 14 px.** The LLM calls table keeps inside its pane (two long
   column names and the timing text may wrap) and the phone's bottom bar keeps its label size.
 
