@@ -22,6 +22,8 @@ const PAGES: { name: string; hash: string; head: boolean; use?: () => AnyHandler
   { name: "Jobs", hash: "#/jobs", head: true },
   { name: "Job detail", hash: "#/jobs/test:disk", head: true },
   { name: "MCP tools", hash: "#/mcp", head: true },
+  { name: "Memory", hash: "#/memory", head: true },
+  { name: "Memory, one note", hash: "#/memory/1", head: true },
   { name: "Settings", hash: "#/settings", head: true },
   { name: "Settings, MCP server card", hash: "#/settings/mcp/test-main", head: true },
   { name: "Logs, LLM calls", hash: "#/logs", head: true },
@@ -29,7 +31,7 @@ const PAGES: { name: string; hash: string; head: boolean; use?: () => AnyHandler
   { name: "Logs, app log", hash: "#/logs/app", head: true },
 ];
 const PHONE_MAX = 760;
-const NAV = ["dashboard", "jobs", "approvals", "chat", "mcp tools", "logs", "settings"];
+const NAV = ["dashboard", "jobs", "approvals", "chat", "mcp tools", "memory", "logs", "settings"];
 
 async function open(page: Page, hash: string) {
   await page.goto(`/${hash}`);

@@ -22,6 +22,7 @@ code.
 | Jobs: store, builtins, prompts, runner, API, chat tools | `jobs/` | — |
 | Schedule: jobs + housekeeping, pause | `schedule.py`, `automation.py` | APScheduler 3 |
 | Chat engine and sessions | `chat/` | — |
+| Memory: notes of the main model, read by jobs; the Memory page's API | `memory/` | — |
 | Approvals and audit (the action layer) | `actions/` | — |
 | Telegram bot | `outputs/telegram.py` | python-telegram-bot |
 | Hardware meters: CPU, RAM, NVIDIA GPUs, read on request | `hardware.py` | psutil, `nvidia-smi` in the read-only shell |
@@ -265,6 +266,27 @@ classification and the model connection test get "Now: <weekday date time>, time
 the owner's zone (Settings → General, the host's by default) as a dynamic instruction, so every
 model request has the time it runs at.
 
+## Memory
+
+Notes that outlive a conversation (`memory/`). The main model writes them: the chat and a summary
+run that uses the main model get `memory_list`, `memory_read`, `memory_write` and
+`memory_delete`; a note is created or updated by title (unique, case ignored), and the model can
+change or delete only a note whose last writer is the model: an edit of the owner on the Memory
+page makes it the owner's. Every note records the chat or the run that wrote it (kind, id,
+label); the API tells whether that chat or run still exists, so the page links to it only then.
+
+A note's **area** is the same thing a job's area is: MCP domains (`memory_note_domains`,
+`job_domains`), not a second classification. A run that is not a summary on the main model (a
+worker job, a topic job) cannot write: it gets `memory_read`, which only opens notes filed
+under the domains of that job, and the titles of those notes stand in its instructions. A job
+without domains has no notes. Bodies are not put into a prompt, because a note has no size
+limit; nothing limits the number of notes either, and nothing prunes or expires them. The sorter
+of MCP tools keeps a domain that a note uses; deleting a domain only unfiles its notes.
+
+The Memory page (`#/memory`, `#/memory/<id>`, `#/memory/<id>/edit`) lists, edits and deletes
+notes through `GET /api/memory`, `PUT /api/memory/{id}`, `DELETE /api/memory/{id}`; each change
+publishes `memory.changed` on the event stream.
+
 ## Storage (SQLite, `data/monitor.db`)
 
 | Table | Holds |
@@ -280,8 +302,9 @@ model request has the time it runs at.
 | `app_log` | saved warnings and errors of the app log |
 | `mcp_domains`, `mcp_tools`, `mcp_listings` | MCP domains; every listed tool with its domain, who placed it and a sorting error; the last listing of each server |
 | `job_domains` | the MCP domains of each job (`job_runs.mcp`: what a run had) |
+| `memory_notes`, `memory_note_domains` | the notes of the main model (title unique ignoring case, text, who last wrote it: `model` or `owner`, the chat or run that wrote it) and the domains each note is filed under |
 
-Retention: `storage.retention` for chats and runs, `logs.*` for traces; actions are never pruned.
+Retention: `storage.retention` for chats and runs, `logs.*` for traces; actions and memory notes are never pruned.
 
 ## Security boundaries
 

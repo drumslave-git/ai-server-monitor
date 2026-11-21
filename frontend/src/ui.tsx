@@ -17,6 +17,19 @@ export function decodeSegment(segment: string): string {
   }
 }
 
+/** Whether a media query matches, kept up to date as the window changes. */
+export function useMatchMedia(query: string): boolean {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const list = window.matchMedia(query);
+    const onChange = () => setMatches(list.matches);
+    onChange();
+    list.addEventListener("change", onChange);
+    return () => list.removeEventListener("change", onChange);
+  }, [query]);
+  return matches;
+}
+
 export function useNow(intervalMs = 15_000): number {
   const [now, setNow] = useState(() => Date.now() / 1000);
   useEffect(() => {

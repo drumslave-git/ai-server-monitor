@@ -31,6 +31,7 @@ from .jobs import JobRunner
 from .mcp_client import McpServers
 from .mcp_client.domains import DomainStore
 from .mcp_client.oauth import McpOAuth
+from .memory.store import MemoryStore
 from .outputs.action_events import ActionEventBridge
 from .outputs.telegram import TelegramBot
 from .schedule import Schedule
@@ -96,6 +97,8 @@ class AppContext:
             mcp=self.mcp,
             change_shell=self.change_shell,
         )
+        self.memory = MemoryStore(self.db)
+        """The notes the main model keeps across conversations."""
         self.chat = ChatEngine(self)
         self.action_notifiers.append(self.chat.on_action)
         self.jobs = JobRunner(self)

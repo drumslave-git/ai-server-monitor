@@ -230,7 +230,14 @@ def test_the_summary_runs_its_jobs_in_order_and_reads_their_results(
         summary = run(client, "overview")
         assert shell == ["free -m", "df -h /"]  # the jobs ran first, in their order
         request = models.requests[-1]
-        assert request["tools"] == ["bash", "delegate"]
+        assert request["tools"] == [
+            "bash",
+            "delegate",
+            "memory_list",
+            "memory_read",
+            "memory_write",
+            "memory_delete",
+        ]  # a summary on the main model keeps notes
         assert SUMMARY_PROMPT in request["instructions"]
         text = request["text"]
         load, disk = text.index("Resources: load (resources:load)"), text.index("(storage:usage)")

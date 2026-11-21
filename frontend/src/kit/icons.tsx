@@ -29,6 +29,7 @@ import {
   Maximize,
   Minimize,
   Misuse,
+  Notebook,
   Play,
   Reset,
   RuleTest,
@@ -51,6 +52,7 @@ export const GLYPHS = {
   approvals: TaskApproved,
   chat: Chat,
   mcp: Tools,
+  memory: Notebook,
   logs: Catalog,
   settings: Settings,
   // sections of the settings page (the ones that are also pages use those pages' icons)

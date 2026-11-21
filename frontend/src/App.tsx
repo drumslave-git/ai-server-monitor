@@ -11,6 +11,7 @@ import { DashboardPage } from "./pages/Dashboard";
 import { JobsPage } from "./pages/Jobs";
 import { LogsPage } from "./pages/Logs";
 import { McpToolsPage } from "./pages/McpTools";
+import { MemoryPage } from "./pages/Memory";
 import { SettingsPage } from "./pages/Settings";
 
 const PAGES: { key: string & IconName; title: string; label: string }[] = [
@@ -19,6 +20,7 @@ const PAGES: { key: string & IconName; title: string; label: string }[] = [
   { key: "approvals", title: "Approvals", label: "approvals" },
   { key: "chat", title: "Chat", label: "chat" },
   { key: "mcp", title: "MCP tools", label: "mcp tools" },
+  { key: "memory", title: "Memory", label: "memory" },
   { key: "logs", title: "Logs", label: "logs" },
   { key: "settings", title: "Settings", label: "settings" },
 ];
@@ -108,6 +110,8 @@ export function App() {
             <ChatPage />
           ) : page === "mcp" ? (
             <McpToolsPage />
+          ) : page === "memory" ? (
+            <MemoryPage params={params} />
           ) : page === "logs" ? (
             <LogsPage params={params} />
           ) : page === "settings" ? (

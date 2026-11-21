@@ -1,5 +1,5 @@
 // The app shell: hash routing, the title of the page, the rail (nav, badge, version, lamp, text size).
-// The seven pages are replaced by stubs that print the params they got: their own tests live elsewhere.
+// The eight pages are replaced by stubs that print the params they got: their own tests live elsewhere.
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,12 +13,13 @@ vi.mock("../../../src/pages/Jobs", () => ({ JobsPage: ({ params }: { params: str
 vi.mock("../../../src/pages/Approvals", () => ({ ApprovalsPage: ({ params }: { params: string[] }) => <div>approvals page [{params.join("|")}]</div> }));
 vi.mock("../../../src/pages/Chat", () => ({ ChatPage: () => <div>chat page</div> }));
 vi.mock("../../../src/pages/McpTools", () => ({ McpToolsPage: () => <div>mcp page</div> }));
+vi.mock("../../../src/pages/Memory", () => ({ MemoryPage: ({ params }: { params: string[] }) => <div>memory page [{params.join("|")}]</div> }));
 vi.mock("../../../src/pages/Logs", () => ({ LogsPage: ({ params }: { params: string[] }) => <div>logs page [{params.join("|")}]</div> }));
 vi.mock("../../../src/pages/Settings", () => ({ SettingsPage: () => <div>settings page</div> }));
 
 installFakeEventSource();
 
-const PAGE_LINKS = ["dashboard", "jobs", "approvals", "chat", "mcp tools", "logs", "settings"];
+const PAGE_LINKS = ["dashboard", "jobs", "approvals", "chat", "mcp tools", "memory", "logs", "settings"];
 
 function renderAt(hash: string) {
   location.hash = hash;
@@ -55,6 +56,7 @@ describe("routing", () => {
     ["approvals", "Approvals", "approvals page []", "approvals"],
     ["chat", "Chat", "chat page", "chat"],
     ["mcp", "MCP tools", "mcp page", "mcp tools"],
+    ["memory", "Memory", "memory page []", "memory"],
     ["logs", "Logs", "logs page []", "logs"],
     ["settings", "Settings", "settings page", "settings"],
   ])("#/%s shows that page, titles the tab %s and marks %s in the navigation", (key, title, text, linkName) => {
@@ -132,14 +134,14 @@ describe("routing", () => {
 });
 
 describe("navigation", () => {
-  it("has the same seven links, in order, in the rail and in the bottom bar", () => {
+  it("has the same eight links, in order, in the rail and in the bottom bar", () => {
     renderAt("");
     const navs = screen.getAllByRole("navigation", { name: "Main" });
     expect(navs).toHaveLength(2);
     for (const nav of navs) {
       const links = within(nav).getAllByRole("link");
       expect(links.map((a) => a.textContent)).toEqual(PAGE_LINKS);
-      expect(links.map((a) => a.getAttribute("href"))).toEqual(["#/dashboard", "#/jobs", "#/approvals", "#/chat", "#/mcp", "#/logs", "#/settings"]);
+      expect(links.map((a) => a.getAttribute("href"))).toEqual(["#/dashboard", "#/jobs", "#/approvals", "#/chat", "#/mcp", "#/memory", "#/logs", "#/settings"]);
     }
   });
 

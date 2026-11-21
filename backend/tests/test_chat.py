@@ -242,6 +242,10 @@ def test_bash_answers_the_question_and_everything_is_persisted(
             "summary_member",
             "job_run",
             "ask_owner",
+            "memory_list",
+            "memory_read",
+            "memory_write",
+            "memory_delete",
         }
         assert first["messages"][0]["role"] == "system"
         assert "read-only shell" in first["messages"][0]["content"]

@@ -28,6 +28,9 @@ from ..chat.explain import host_zone
 from ..config import Settings
 from ..llm.text import strip_reasoning
 from ..mcp_client import turn as mcp_turn
+from ..memory.store import Writer
+from ..memory.tools import WRITER_NOTE, memory_tools, titles_section
+from ..memory.tools import read_tool as memory_read_tool
 from .evidence import EvidenceCheck, RecordingShell
 from .images import daemon_client, image_check_tool
 from .prompts import summary_input, summary_instructions, topic_instructions
@@ -329,7 +332,7 @@ class JobRunner:
                     started = time.monotonic()
                     try:
                         async with asyncio.timeout(timeout):
-                            fields.update(await self._agent(job, turn, results))
+                            fields.update(await self._agent(job, turn, results, run_id))
                     except TimeoutError:
                         fields.update(
                             status="error",
@@ -386,6 +389,7 @@ class JobRunner:
         job: dict[str, Any],
         turn: str,
         results: list[tuple[dict[str, Any], dict[str, Any]]] | None = None,
+        run_id: int | None = None,
     ) -> dict[str, Any]:
         app = self.app
         settings = app.settings
@@ -427,6 +431,17 @@ class JobRunner:
         else:
             instructions = topic_instructions(host, language, job["prompt"], owner)
             prompt = "Run the check now, then call final_result."
+        # Memory. A summary on the main model keeps notes like the chat does and sees every
+        # title; any other run gets the titles of the notes of its domains and may read them.
+        writes = topic_check is not None and job["model"] == "main"
+        area = None if writes else list(job.get("domains") or [])
+        if writes:
+            tools += memory_tools(app, Writer("run", str(run_id), slug))
+            instructions += "\n" + WRITER_NOTE
+        if titles := titles_section(await app.memory.notes(area)):
+            instructions += "\n" + titles
+            if not writes:
+                tools.append(memory_read_tool(app.memory, area))
         sources.append(prompt)  # the summary may quote the topic results it was given
         evidence = EvidenceCheck(sources)
         commands = CommandCheck(sources) if topic_check is None else None

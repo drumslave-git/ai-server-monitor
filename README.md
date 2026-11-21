@@ -273,6 +273,19 @@ before the timeout).
   answer is a reply to the card's message, and a card with one single-choice or free-text
   question is answered by the tap or the reply. Answered in either place, the card is closed in
   both and shows what was answered and where. An open card and its waiting run survive a restart.
+- **Memory** — notes that outlive a conversation. The main model keeps them itself: in the chat
+  and in a summary run that uses the main model it has `memory_list`, `memory_read`,
+  `memory_write` (a new note, or an update of one it wrote) and `memory_delete` (its own notes
+  only). A worker run, a job run and a topic job on the main model only read: `memory_read`,
+  for the notes filed under the domains of the job (the MCP domains of **Jobs → domains**; a
+  job without domains gets no notes). The chat sees the titles of all notes in its instructions,
+  a job those of its area, and both open a note when they need it. The **Memory** page lists the
+  notes (title, areas, when it changed) with a search and an area filter; a note shows its text,
+  its areas, and the chat or run that wrote it as a link. You can edit a note (title, text, areas)
+  or delete it. A note you edited is yours: the model can read it but not change or delete it.
+  Nothing limits how many notes there are or how long they are, and retention does not remove
+  them. `GET /api/memory`, `PUT /api/memory/{id}`, `DELETE /api/memory/{id}` (migration `0025`).
+  Notes are kept in the database; the tool calls are in the chat audit.
 - **Approvals** — what waits for your decision, and the permanent audit log of every action
   (`GET /api/approvals`, `GET /api/actions`, one action at `GET /api/actions/{id}`).
 - **Logs** — every request to a model exactly as sent and received (messages, tool definitions,
@@ -862,6 +875,12 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
   topic's status in the summary input is a line of its own (`status: warn`, then `last run: 14 s
   ago`), and the schema says the model writes only that word. An unedited job takes the new
   prompts on upgrade; an edited one gets them with **reset to default**.
+
+- **Memory.** The main model keeps notes that outlive a conversation, jobs read the notes of
+  their area, and the new **Memory** page (between *MCP tools* and *Logs*) lists, edits and
+  deletes them. See *Memory* under *Using it*. The page shows one pane at a time up to 760 px
+  and the list beside the note above it. The sorter that places MCP tools in domains keeps a
+  domain a note uses, and deleting a domain only unfiles its notes.
 
 ## Troubleshooting
 

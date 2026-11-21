@@ -137,7 +137,7 @@ async def test_database_at_schema_4_migrates_to_latest(tmp_path: Path) -> None:
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 24
+        assert await db.schema_version() == 25
         info = await db.fetchall("PRAGMA table_info(telegram_batch_messages)")
         cols = {r["name"] for r in info}
         assert cols == {"batch_id", "chat_id", "message_id", "created_ts"}
@@ -160,7 +160,7 @@ async def test_database_at_schema_5_loses_the_planner_query_table(tmp_path: Path
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 24
+        assert await db.schema_version() == 25
         assert not await db.fetchall("PRAGMA table_info(prom_queries)")
     finally:
         await db.close()

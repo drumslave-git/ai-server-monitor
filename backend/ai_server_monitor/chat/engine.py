@@ -52,6 +52,8 @@ from ..agent.tools import (
 from ..jobs.tools import job_tools
 from ..llm.text import strip_reasoning
 from ..mcp_client import turn as mcp_turn
+from ..memory.store import Writer
+from ..memory.tools import WRITER_NOTE, memory_tools, titles_section
 from ..tracing import trace_scope
 from ..tracing.parse import empty_answer_message
 from .audit import record_call
@@ -459,6 +461,9 @@ class ChatEngine:
         notes.append(mcp_turn.LOOKUP_NOTE)
         if turn.deferred:
             notes.append(mcp_turn.LOAD_NOTE)
+        notes.append(WRITER_NOTE)
+        if titles := titles_section(await app.memory.notes()):
+            notes.append(titles)
         instructions = chat_prompt(
             host, settings.general.language, notes, owner=settings.general.instructions
         )
@@ -975,6 +980,7 @@ def chat_tools(
         app_bash(app, session_id, shell),
         app_delegate(app, session_id, scrub, host, shell),
         *job_tools(app, session_id),
+        *memory_tools(app, Writer("chat", session_id), session=session_id),
     ]
     if change_shell_offered(app):
         tools.append(bash_write_tool(app, who, run_key))

@@ -315,6 +315,11 @@ class DomainStore:
         now = time.time()
         split = {full_name(t["server"], t["tool"]): (t["server"], t["tool"]) for t in targets}
         in_use = set(await self.used_by())
+        # A note's area is a domain too: sorting must not dissolve one a note is filed under.
+        in_use |= {
+            r["domain_id"]
+            for r in await self.db.fetchall("SELECT DISTINCT domain_id FROM memory_note_domains")
+        }
         async with self.db.transaction() as conn:
             async with conn.execute("SELECT id, name FROM mcp_domains") as cur:
                 existing = {r["name"]: r["id"] for r in await cur.fetchall()}

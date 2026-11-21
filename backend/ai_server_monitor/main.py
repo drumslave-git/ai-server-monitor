@@ -38,6 +38,7 @@ from .llm.modelinfo import read_model_info
 from .mcp_client.api import router as mcp_router
 from .mcp_client.api import sort_tested
 from .mcp_client.oauth_api import router as mcp_oauth_router
+from .memory.api import router as memory_router
 from .outputs.sse import SSE_HEADERS, event_stream, parse_types
 from .settings_store import SettingsStore, merge_secrets
 from .tracing.api import router as logs_router
@@ -126,6 +127,7 @@ def create_app(
     app.include_router(logs_router)
     app.include_router(mcp_router)
     app.include_router(mcp_oauth_router)
+    app.include_router(memory_router)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz(request: Request) -> JSONResponse:

@@ -7,6 +7,7 @@ import { dashboardHandlers } from "./dashboard";
 import { jobsHandlers } from "./jobs";
 import { logsHandlers } from "./logs";
 import { mcpHandlers } from "./mcp";
+import { memoryHandlers } from "./memory";
 import { settingsHandlers } from "./settings";
 import { shellHandlers } from "./shell";
 
@@ -20,4 +21,5 @@ export const handlers = [
   ...jobsHandlers,
   ...logsHandlers,
   ...mcpHandlers,
+  ...memoryHandlers,
 ];
