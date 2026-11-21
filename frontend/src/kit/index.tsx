@@ -2139,6 +2139,9 @@ export function Cards({ children }: { children: ReactNode }) {
   return <div className="fd-cards">{children}</div>;
 }
 
+/** How long the page must keep its size before a Card opened from a link scrolls into view again. */
+export const CARD_SETTLED_MS = 500;
+
 /** A box for one of several things of the same kind (an MCP server, a header): its head is always seen,
  *  its form opens and closes. Closed unless open is asked for: defaultOpen, or reveal (it has an error,
  *  it was just added; when reveal turns true the card opens). Searching the page for text inside opens it too.
@@ -2161,7 +2164,7 @@ export function Card({
   aside?: ReactNode;
   defaultOpen?: boolean;
   reveal?: boolean;
-  /** The card a link points at: it opens and scrolls into view when it appears. */
+  /** The card a link points at: it opens and scrolls into view when it appears, and once more when the page has settled. */
   focus?: boolean;
   below?: ReactNode;
   children: ReactNode;
@@ -2174,7 +2177,26 @@ export function Card({
     if (reveal) setOpen(true);
   }, [reveal]);
   useEffect(() => {
-    if (focus) card.current?.scrollIntoView({ block: "start" });
+    const el = card.current;
+    if (!focus || !el) return;
+    el.scrollIntoView({ block: "start" });
+    // What arrives after it (the shell's data, the text size) can push it away, under the phone's bottom bar:
+    // once the page has stopped changing size for CARD_SETTLED_MS, it scrolls into view once more.
+    // (Without a ResizeObserver, as in the test DOM, the one scroll stays.)
+    if (typeof ResizeObserver === "undefined") return;
+    let quiet: ReturnType<typeof setTimeout> | undefined;
+    const page = new ResizeObserver(() => {
+      clearTimeout(quiet);
+      quiet = setTimeout(() => {
+        page.disconnect();
+        el.scrollIntoView({ block: "start" });
+      }, CARD_SETTLED_MS);
+    });
+    page.observe(document.documentElement);
+    return () => {
+      clearTimeout(quiet);
+      page.disconnect();
+    };
   }, [focus]);
   // hidden="until-found": closed, yet the browser's find in page still reaches the fields and opens the card
   useLayoutEffect(() => {
