@@ -11,6 +11,8 @@ import { settingsHandlers } from "./settings";
 import { shellHandlers } from "./shell";
 
 export const handlers = [
+  // before the shell's small GET /api/settings, so the Settings page gets the full document in both layers
+  ...settingsHandlers,
   ...shellHandlers,
   ...approvalsHandlers,
   ...chatHandlers,
@@ -18,5 +20,4 @@ export const handlers = [
   ...jobsHandlers,
   ...logsHandlers,
   ...mcpHandlers,
-  ...settingsHandlers,
 ];

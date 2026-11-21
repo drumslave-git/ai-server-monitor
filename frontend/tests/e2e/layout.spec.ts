@@ -19,6 +19,14 @@ const PAGES: { name: string; hash: string; head: boolean; use?: () => AnyHandler
   { name: "Dashboard", hash: "#/dashboard", head: false, use: () => [http.get("/api/status", () => HttpResponse.json(dashboardStatus()))] },
   { name: "Approvals", hash: "#/approvals", head: true },
   { name: "Chat", hash: "#/chat", head: true },
+  { name: "Jobs", hash: "#/jobs", head: true },
+  { name: "Job detail", hash: "#/jobs/test:disk", head: true },
+  { name: "MCP tools", hash: "#/mcp", head: true },
+  { name: "Settings", hash: "#/settings", head: true },
+  { name: "Settings, MCP server card", hash: "#/settings/mcp/test-main", head: true },
+  { name: "Logs, LLM calls", hash: "#/logs", head: true },
+  { name: "Logs, one call", hash: "#/logs/llm/1", head: true },
+  { name: "Logs, app log", hash: "#/logs/app", head: true },
 ];
 const PHONE_MAX = 760;
 const NAV = ["dashboard", "jobs", "approvals", "chat", "mcp tools", "logs", "settings"];
@@ -30,7 +38,19 @@ async function open(page: Page, hash: string) {
   await page.evaluate(() => document.fonts.ready);
 }
 
-const isPhone = (page: Page) => (page.viewportSize()?.width ?? 0) <= PHONE_MAX;
+/** A control the head shows right now. The compact head (after a scroll) folds its meta line away by design: opacity 0 and
+ *  no height inside an overflow-hidden box. Links in it are not controls on the screen, and a user cannot press them. */
+const shownInHead = (control: Locator) =>
+  control.evaluate((el) => {
+    if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
+    for (let e: Element | null = el; e; e = e.parentElement) {
+      const s = getComputedStyle(e);
+      if (s.overflow !== "visible" && e.getBoundingClientRect().height === 0) return false;
+    }
+    return true;
+  });
+
+const isPhone =(page: Page) => (page.viewportSize()?.width ?? 0) <= PHONE_MAX;
 
 /** Scroll everything that scrolls on this page to its end: the document on a phone, the main part and the panes beside the rail. */
 async function scrollToEnd(page: Page) {
@@ -130,7 +150,7 @@ for (const { name, hash, head: hasHead, use } of PAGES) {
       const controls = head.locator("button, a, input, select");
       for (let i = 0; i < (await controls.count()); i++) {
         const control = controls.nth(i);
-        if (await control.isVisible()) await expect(control).toBeInViewport();
+        if (await shownInHead(control)) await expect(control).toBeInViewport();
       }
     });
 
@@ -183,9 +203,15 @@ for (const { name, hash, head: hasHead, use } of PAGES) {
       for (let i = 0; i < count; i++) {
         const button = buttons.nth(i);
         await button.scrollIntoViewIfNeeded();
-        await button.hover();
         const hint = page.locator(".fd-hint:popover-open");
-        await expect(hint).toBeVisible({ timeout: 3000 });
+        // a page that is still settling (the Settings card scrolls itself into place once the layout is quiet) can
+        // move the button from under the pointer, so the hover is repeated until the hint opens
+        await expect(async () => {
+          await page.mouse.move(0, 0);
+          await button.scrollIntoViewIfNeeded();
+          await button.hover();
+          await expect(hint).toBeVisible({ timeout: 1500 });
+        }).toPass({ timeout: 10000 });
         const at = await settledBox(hint);
         const view = page.viewportSize()!;
         expect(at.x).toBeGreaterThanOrEqual(0);

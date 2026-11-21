@@ -16,6 +16,8 @@ export default defineConfig({
       reporter: ["text-summary", "text"],
       // the numbers are worth seeing when a test fails too
       reportOnFailure: true,
+      // the owner's gate (80 % for the frontend as for the backend)
+      thresholds: { lines: 80 },
     },
   },
 });

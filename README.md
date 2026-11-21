@@ -875,7 +875,7 @@ Two layers, both run in CI (the *Frontend* job). Neither talks to a real server:
 ```bash
 cd frontend
 npm test                # Vitest + React Testing Library + happy-dom: pages and kit components, by role and label
-npm run test:coverage   # the same with the line-coverage report of frontend/src (CI runs this one)
+npm run test:coverage   # the same with the line-coverage report of frontend/src; fails under 80 % lines (CI runs this one)
 npm run test:e2e        # Playwright, real Chromium: layout rules at 390, 768 and 1280 px, dark and light
 ```
 
@@ -885,13 +885,14 @@ npm run test:e2e        # Playwright, real Chromium: layout rules at 390, 768 an
 - **Layout (Playwright, `tests/e2e`)**: builds the app, serves it with `vite preview` and checks every page
   at the three widths in both colour schemes: no horizontal overflow, the page itself scrolls only on a
   phone (beside the rail the main part and its panes scroll), the head stays in view, cut text has a tooltip
-  with the full text, the phone has its bottom bar, hints fit in the window. First run: `npx playwright install chromium`.
+  with the full text, the phone has its bottom bar, hints fit in the window; dialogs open inside the window
+  and close with Esc. First run: `npx playwright install chromium`.
 - On Windows run Playwright in the official image instead of installing a browser (the lockfile is generated
   on Windows, so Linux needs `npm install`, not `npm ci`):
 
 ```bash
-cd frontend   # the named volume keeps the Linux node_modules apart from the Windows ones
-docker run --rm --ipc=host -v "${PWD}:/work" -v asm-e2e-modules:/work/node_modules -w /work \
+cd frontend   # the named volumes keep the Linux node_modules and the build apart from the Windows ones
+docker run --rm --ipc=host -v "${PWD}:/work" -v asm-e2e-modules:/work/node_modules -v asm-e2e-dist:/work/dist -w /work \
   mcr.microsoft.com/playwright:v1.65.0-noble \
   sh -c "IBM_TELEMETRY_DISABLED=true npm install --no-audit --no-fund && npm run test:e2e"
 ```

@@ -29,5 +29,6 @@ data/
 Thumbs.db
 
 # Playwright
+frontend/coverage/
 frontend/test-results/
 frontend/playwright-report/
