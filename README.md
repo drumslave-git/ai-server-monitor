@@ -202,6 +202,18 @@ fails it says what the server answered (`HTTP 401 Unauthorized to POST /mcp`, `H
 Found …` with the path tried, connection refused, DNS lookup failed, TLS failed, no answer
 before the timeout).
 
+- **Sign in with OAuth** (Home Assistant's MCP Server integration, and any server that follows
+  the MCP authorization spec): set **Auth** to `oauth` on the server, save, then press
+  **Connect**. The browser goes to the server's login page; after you agree it comes back to
+  Settings → MCP with the server shown as *Connected*. The app keeps the login in its database
+  and refreshes it by itself; **Disconnect** forgets it. The address the server sends the
+  browser back to is the one your browser uses for this app (behind a TLS proxy the proxy must
+  send `X-Forwarded-Proto` and `X-Forwarded-Host`). Over `https` the app identifies itself with
+  a small client document it serves at `/oauth/mcp/client.json` (Home Assistant needs this);
+  the **MCP server fetches that document itself, so a login proxy in front of the app must let
+  `/oauth/mcp/client.json` through without a login**. Only `/oauth/mcp/callback` is opened by
+  your own browser, which is already logged in at the proxy, so it needs no exemption. Over
+  plain `http` the app registers itself at servers that allow that.
 - **On / off and read / write**: only the tools you switch on are offered (in Settings or on
   the MCP tools page). A tool is *read* when the server marks it `readOnlyHint` and you did not
   override its kind; reads run at once. Everything else is a *write* under the server's policy
@@ -471,6 +483,7 @@ values a fresh install starts with.
 | `mcp.servers[].enabled` | boolean | on | Off = never connected, its tools are not offered. |
 | `mcp.servers[].url` | string | required | MCP endpoint, e.g. http://homeassistant.local:8123/mcp_server/sse or https://grafana.example/mcp. Remote servers only (Streamable HTTP or the older HTTP+SSE); servers that run as a local program (stdio) are not supported. |
 | `mcp.servers[].transport` | auto / streamable_http / sse | `auto` | auto = chosen by the URL: a path ending in /sse is the older HTTP+SSE, anything else Streamable HTTP (nothing is tried first). |
+| `mcp.servers[].auth` | token / oauth | `token` | token = the bearer token and the headers below (none if both are empty); oauth = sign in at the server: save, then press Connect on this server (the token is not used). For OAuth the server fetches this app's client document at `/oauth/mcp/client.json` itself, so a login proxy in front of the app must let `/oauth/mcp/client.json` through without a login. |
 | `mcp.servers[].token` | secret | empty | Bearer token sent as `Authorization: Bearer ...`, if the server needs one. |
 | **mcp.servers[].headers** | list of groups | empty | Extra HTTP headers (for servers that want an API key header instead of a token). |
 | `mcp.servers[].headers[].name` | string | required | Header name, e.g. X-Api-Key. |

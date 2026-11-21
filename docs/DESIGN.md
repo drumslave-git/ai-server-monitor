@@ -160,6 +160,26 @@ DNS / TLS / timeout, or a request left unanswered; a 405 to the optional GET str
 DELETE is the spec's "not offered" and is not recorded). The Settings **Test**, the notes and
 the listings say that ("the server answered HTTP 401 Unauthorized to POST /mcp").
 
+**OAuth** (`mcp_client/oauth.py`, routes in `oauth_api.py`; server setting `auth: oauth`): the MCP
+SDK's `OAuthClientProvider` (an `httpx2.Auth`, handed to the transport as `auth=`) does the
+discovery (protected-resource metadata, authorization-server metadata), the registration and the
+token exchange and refresh. **Connect** (`POST /api/mcp/oauth/{server}/connect`) opens an MCP
+connection in the background; the provider's redirect handler hands the authorize URL back as the
+answer, and its callback handler waits (10 minutes) until the browser returns to
+`GET /oauth/mcp/callback?state=…&code=…`, which feeds the code to that waiting connection, lets it
+finish, and redirects to `/#/settings/mcp/<server>`. The origin in the redirect URI and in the
+client ID comes from the request (`X-Forwarded-Proto`/`-Host`, else Host); there is no public-URL
+setting. Over `https` the client ID is the address of the document `GET /oauth/mcp/client.json`
+(client ID metadata document; the MCP server fetches it itself, so it is the one path a login proxy
+must exempt); over `http` the SDK registers dynamically. Tokens, the registered client and, because
+the SDK keeps them in memory only, the token expiry and the authorization-server metadata are one
+JSON value in the `kv` table (`mcp_oauth:<server>`, with the server URL: a login is not offered to
+another URL); Disconnect and a settings save that removes the server or switches it to `token`
+forget it. Calls outside Connect (runs, Test, domains, approved writes) share one provider per
+server (the SDK serialises its refresh with a lock) and never open a login: a refresh the server
+refuses leaves the message "press Connect again" in the server's state and in the call's error.
+Not supported: servers without authorization-server metadata (it is reported as such).
+
 **Tools**: the model sees a tool as `<server>_<tool>` (server names have no `_`), with the
 server's whole description (nothing is cut; there is no token budget and no generic
 list/call pair). Only the tools the owner switched on (`tool_filter`, also switched on the MCP

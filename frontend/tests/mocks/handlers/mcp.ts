@@ -16,5 +16,9 @@ export const mcpHandlers: RequestHandler[] = [
     return HttpResponse.json(makeDomain({ id: Number(params.id), name: body.name, description: body.description }));
   }),
   http.delete("/api/mcp/domains/:id", () => new HttpResponse(null, { status: 204 })),
+  // no server signs in with OAuth unless a test says so with server.use(...)
+  http.get("/api/mcp/oauth", () => HttpResponse.json([])),
+  http.post("/api/mcp/oauth/:server/connect", () => HttpResponse.json({ authorize_url: "http://login.test/authorize?state=s1" })),
+  http.delete("/api/mcp/oauth/:server", () => new HttpResponse(null, { status: 204 })),
   http.post("/api/mcp/sort", () => HttpResponse.json({ sorted: 2, error: null, unreachable: {} })),
 ];

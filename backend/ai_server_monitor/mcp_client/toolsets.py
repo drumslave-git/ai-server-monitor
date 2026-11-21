@@ -31,7 +31,7 @@ import ssl
 import time
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx2
 from fastmcp.client.transports import SSETransport, StreamableHttpTransport
@@ -42,6 +42,9 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
 from .settings import McpServerSettings, McpSettings
+
+if TYPE_CHECKING:
+    from .oauth import McpOAuth
 
 log = logging.getLogger(__name__)
 
@@ -158,11 +161,15 @@ def _transport_failure(exc: httpx2.TransportError, request: httpx2.Request) -> s
 
 
 def server_toolset(
-    cfg: McpServerSettings, process: Any = None, seen: HttpSeen | None = None
+    cfg: McpServerSettings,
+    process: Any = None,
+    seen: HttpSeen | None = None,
+    auth: httpx2.Auth | None = None,
 ) -> MCPToolset[Any]:
     """The library's toolset for one server, from its settings. `auto` takes the transport
     FastMCP infers from the URL (`…/sse` → HTTP+SSE, else Streamable HTTP); `seen` gets what
-    the server answered wrong."""
+    the server answered wrong; `auth` (the OAuth provider of an `auth = oauth` server) replaces
+    the bearer token."""
     url = str(cfg.url)
     token = cfg.token.get_secret_value().strip() or None
     headers = {h.name: h.value.get_secret_value() for h in cfg.headers} or None
@@ -172,11 +179,11 @@ def server_toolset(
         # `auto`: as Pydantic AI builds it from a URL (the stream's read timeout = the timeout)
         extra = {"sse_read_timeout": timeout} if cfg.transport == "auto" else {}
         transport: Any = SSETransport(
-            url, headers=headers, auth=token, httpx_client_factory=factory, **extra
+            url, headers=headers, auth=auth or token, httpx_client_factory=factory, **extra
         )
     else:
         transport = StreamableHttpTransport(
-            url, headers=headers, auth=token, httpx_client_factory=factory
+            url, headers=headers, auth=auth or token, httpx_client_factory=factory
         )
     return MCPToolset(
         transport,
@@ -307,9 +314,19 @@ WriteCall = Callable[[McpServerSettings, str, dict[str, Any]], Awaitable[Any]]
 class McpServers:
     """The MCP part of one settings snapshot (`context.py` rebuilds it on every save)."""
 
-    def __init__(self, settings: McpSettings, *, audit: AuditHook | None = None):
+    def __init__(
+        self,
+        settings: McpSettings,
+        *,
+        audit: AuditHook | None = None,
+        oauth: McpOAuth | None = None,
+    ):
         self.settings = settings
         self.audit = audit
+        self.oauth = oauth
+
+    def _auth(self, cfg: McpServerSettings) -> httpx2.Auth | None:
+        return self.oauth.auth_for(cfg) if self.oauth else None
 
     def _enabled(self) -> list[McpServerSettings]:
         return [s for s in self.settings.servers if s.enabled and s.tool_filter]
@@ -330,7 +347,9 @@ class McpServers:
             if only is not None and cfg.name not in only:
                 continue
             seen = HttpSeen()
-            toolset = server_toolset(cfg, self._process(cfg, source, sink, seen), seen)
+            toolset = server_toolset(
+                cfg, self._process(cfg, source, sink, seen), seen, self._auth(cfg)
+            )
             reach = Reachable(toolset, cfg=cfg, seen=seen)
             chosen = set(cfg.tool_filter)
             view: AbstractToolset[Any] = reach.filtered(
@@ -408,7 +427,9 @@ class McpServers:
         started, error, seen = time.monotonic(), None, HttpSeen()
         try:  # (`direct_call_tool` does not go through `process_tool_call`)
             return scrub(
-                await server_toolset(cfg, seen=seen).direct_call_tool(tool, args),
+                await server_toolset(cfg, seen=seen, auth=self._auth(cfg)).direct_call_tool(
+                    tool, args
+                ),
                 cfg.secret_values(),
             )
         except Exception as exc:

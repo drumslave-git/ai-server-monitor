@@ -362,6 +362,7 @@ class OutputsSettings(_Model):
 # --------------------------------------------------------------------------- mcp
 
 McpTransport = Literal["auto", "streamable_http", "sse"]
+McpAuth = Literal["token", "oauth"]
 Policy = Literal["suggest", "approve", "auto"]
 ToolPolicy = Literal["inherit", "suggest", "approve", "auto"]
 ToolKindSetting = Literal["auto", "read", "write"]
@@ -411,6 +412,11 @@ class McpServerSettings(_Model):
     transport: McpTransport = "auto"
     """auto = chosen by the URL: a path ending in /sse is the older HTTP+SSE, anything else
     Streamable HTTP (nothing is tried first)."""
+    auth: McpAuth = "token"
+    """token = the bearer token and the headers below (none if both are empty); oauth = sign in
+    at the server: save, then press Connect on this server (the token is not used). For OAuth
+    the server fetches this app's client document at `/oauth/mcp/client.json` itself, so a login
+    proxy in front of the app must let `/oauth/mcp/client.json` through without a login."""
     token: Secret = SecretStr("")
     """Bearer token sent as `Authorization: Bearer ...`, if the server needs one."""
     headers: list[McpHeader] = Field(default_factory=list)

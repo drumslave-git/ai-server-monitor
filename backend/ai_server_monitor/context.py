@@ -30,6 +30,7 @@ from .hostenv import HostEnv, resolve_timezone
 from .jobs import JobRunner
 from .mcp_client import McpServers
 from .mcp_client.domains import DomainStore
+from .mcp_client.oauth import McpOAuth
 from .outputs.action_events import ActionEventBridge
 from .outputs.telegram import TelegramBot
 from .schedule import Schedule
@@ -85,7 +86,9 @@ class AppContext:
         """The agents' models (main, worker), rebuilt with every settings change."""
         self.change_shell = ChangeShell()
         """A root shell on the host for approved changing commands (probed at start)."""
-        self.mcp = McpServers(self.settings.mcp, audit=audit_hook(self.db, "mcp"))
+        self.oauth = McpOAuth(self.db)
+        """Logins of the MCP servers that use OAuth (lives as long as the app)."""
+        self.mcp = McpServers(self.settings.mcp, audit=audit_hook(self.db, "mcp"), oauth=self.oauth)
         self.actions = ActionService(
             self.db,
             self.settings,
@@ -96,7 +99,7 @@ class AppContext:
         self.chat = ChatEngine(self)
         self.action_notifiers.append(self.chat.on_action)
         self.jobs = JobRunner(self)
-        self.domains = DomainStore(self.db)
+        self.domains = DomainStore(self.db, oauth=self.oauth)
         """MCP tools as last listed and their domains (survives settings changes)."""
         self._listing: set[asyncio.Task[Any]] = set()
         """Runs scheduled LLM jobs; lives as long as the app (runs survive settings changes)."""
@@ -146,6 +149,7 @@ class AppContext:
         starts meanwhile waits for the sorting)."""
         servers = self.settings.mcp.servers
         await self.domains.forget_servers(s.name for s in servers)
+        await self.oauth.prune(servers)
         enabled = [s for s in servers if s.enabled]
         if not enabled:
             return
@@ -193,7 +197,7 @@ class AppContext:
             s.storage.prune_interval,
             initial_delay=timedelta(seconds=60),
         )
-        self.mcp = McpServers(s.mcp, audit=audit_hook(self.db, "mcp"))
+        self.mcp = McpServers(s.mcp, audit=audit_hook(self.db, "mcp"), oauth=self.oauth)
         self.actions = ActionService(
             self.db,
             s,

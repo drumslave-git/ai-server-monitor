@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { McpSignIn } from "./McpSignIn";
 import { McpToolPicker, mcpTools } from "./McpTools";
 import { api, type ConnectionTestResult, type Json, type JsonObject, type JsonSchema } from "../api";
 import { Button, Card, Cards, Column, ErrorText, Field as KitField, FieldError, FormGrid, FormGroup, FormGroups, FormWide, IconButton, Input, Joined, Live, Meta, Pad, Panel, SectionHead, Segmented, Select, Status, Switch, TestLine, Text, Textarea } from "../kit";
@@ -595,8 +596,12 @@ function Tested({ spec, value, index, onEdit, children }: {
     </>
   );
   const tools = kind === "mcp" && onEdit ? mcpTools(result) : null;
+  // an MCP server that signs in with OAuth shows its login state and the Connect button
+  const server = kind === "mcp" && value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  const signIn = server?.auth === "oauth" && typeof server.name === "string" && server.name !== "" ? server.name : null;
   const shown = (
     <Live>
+      {signIn && <McpSignIn name={signIn} />}
       {running !== null && <TestLine running />}
       {result && <TestLine ok={result.ok}>{result.message}</TestLine>}
       {tools && onEdit && (

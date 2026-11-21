@@ -695,6 +695,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp/oauth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Oauth States
+         * @description Per server that uses OAuth: is a login saved, and why the last attempt failed.
+         */
+        get: operations["oauth_states_api_mcp_oauth_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/oauth/{server}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect
+         * @description Forget the saved login of the server.
+         */
+        delete: operations["disconnect_api_mcp_oauth__server__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/oauth/{server}/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Connect
+         * @description Start the login at the server; the page sends the browser to `authorize_url`.
+         */
+        post: operations["connect_api_mcp_oauth__server__connect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/mcp/sort": {
         parameters: {
             query?: never;
@@ -2011,8 +2071,32 @@ export interface components {
              */
             value: string;
         };
+        /** McpOAuthStart */
+        McpOAuthStart: {
+            /** Authorize Url */
+            authorize_url: string;
+        };
+        /** McpOAuthState */
+        McpOAuthState: {
+            /** Connected */
+            connected: boolean;
+            /** Error */
+            error: string | null;
+            /** Name */
+            name: string;
+        };
         /** McpServerSettings */
         McpServerSettings: {
+            /**
+             * Auth
+             * @description token = the bearer token and the headers below (none if both are empty); oauth = sign in
+             *     at the server: save, then press Connect on this server (the token is not used). For OAuth
+             *     the server fetches this app's client document at `/oauth/mcp/client.json` itself, so a login
+             *     proxy in front of the app must let `/oauth/mcp/client.json` through without a login.
+             * @default token
+             * @enum {string}
+             */
+            auth: "token" | "oauth";
             /**
              * Default Policy
              * @description For tools that change things: suggest = only record the request; approve = ask you
@@ -4010,6 +4094,86 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    oauth_states_api_mcp_oauth_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpOAuthState"][];
+                };
+            };
+        };
+    };
+    disconnect_api_mcp_oauth__server__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    connect_api_mcp_oauth__server__connect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpOAuthStart"];
+                };
             };
             /** @description Validation Error */
             422: {

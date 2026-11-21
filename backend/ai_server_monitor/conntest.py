@@ -27,6 +27,7 @@ from pydantic import BaseModel, ValidationError
 
 from .config import McpServerSettings, OptionalHttpUrl, Secret, Settings, pattern_problem
 from .mcp_client.discovery import check_mcp_server
+from .mcp_client.oauth import McpOAuth
 from .settings_store import merge_secrets
 
 TEST_TIMEOUT = 10.0
@@ -328,6 +329,7 @@ async def run_test(
     *,
     mode: str | None = None,
     index: int | None = None,
+    oauth: McpOAuth | None = None,
 ) -> ConnResult:
     """Run the connection test `kind` against the unsaved form values `body`."""
     stored = settings.storage_dict()
@@ -341,7 +343,7 @@ async def run_test(
     try:
         if kind == "mcp":
             mcp_cfg = McpServerSettings.model_validate(merged)
-            mcp_result = await check_mcp_server(mcp_cfg)
+            mcp_result = await check_mcp_server(mcp_cfg, oauth)
             run = _done(ConnResult(mcp_result.ok, mcp_result.message, mcp_result.details))
         elif kind == "telegram":
             tg_cfg = TelegramConn.model_validate(

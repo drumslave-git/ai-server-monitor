@@ -15,7 +15,7 @@ import re
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry
@@ -26,6 +26,9 @@ from ..db import Database
 from ..tracing import trace_scope
 from .settings import McpServerSettings
 from .toolsets import SEPARATOR, HttpSeen, failure_text, server_toolset
+
+if TYPE_CHECKING:
+    from .oauth import McpOAuth
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
 NAME_RULE = "a domain name is lowercase letters, digits and '-' (up to 24)"
@@ -70,10 +73,10 @@ def listed(tools: Iterable[Any]) -> list[ListedTool]:
     return out
 
 
-async def list_server(cfg: McpServerSettings) -> list[ListedTool]:
+async def list_server(cfg: McpServerSettings, oauth: McpOAuth | None = None) -> list[ListedTool]:
     """Connect one server and list its tools (raises with a text safe to show)."""
     seen = HttpSeen()
-    toolset = server_toolset(cfg, seen=seen)
+    toolset = server_toolset(cfg, seen=seen, auth=oauth.auth_for(cfg) if oauth else None)
     try:
         async with toolset:
             return listed(await toolset.list_tools())
@@ -82,8 +85,9 @@ async def list_server(cfg: McpServerSettings) -> list[ListedTool]:
 
 
 class DomainStore:
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, *, oauth: McpOAuth | None = None):
         self.db = db
+        self.oauth = oauth
         self._sorting = asyncio.Lock()
         """One sorting at a time: a run that needs its tools sorted waits for a running sort
         and then finds them placed."""
@@ -195,7 +199,7 @@ class DomainStore:
         tools without a domain, or with `again` the servers' tools as `sort_tools` says.
         Returns {"sorted": n, "error": sorting error or None, "unreachable": {server: why}}."""
         results = await asyncio.gather(
-            *(list_server(cfg) for cfg in servers), return_exceptions=True
+            *(list_server(cfg, self.oauth) for cfg in servers), return_exceptions=True
         )
         unreachable: dict[str, str] = {}
         reached = []

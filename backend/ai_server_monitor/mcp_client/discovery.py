@@ -9,10 +9,13 @@ never includes secrets. The result has the shape of `conntest.ConnResult` (ok, m
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .settings import McpServerSettings
 from .toolsets import HttpSeen, failure_text, kind_of, server_toolset, transport_label
+
+if TYPE_CHECKING:
+    from .oauth import McpOAuth
 
 
 @dataclass
@@ -22,9 +25,9 @@ class McpCheck:
     details: dict[str, Any] = field(default_factory=dict)
 
 
-async def check_mcp_server(cfg: McpServerSettings) -> McpCheck:
+async def check_mcp_server(cfg: McpServerSettings, oauth: McpOAuth | None = None) -> McpCheck:
     seen = HttpSeen()
-    toolset = server_toolset(cfg, seen=seen)
+    toolset = server_toolset(cfg, seen=seen, auth=oauth.auth_for(cfg) if oauth else None)
     try:
         async with toolset:
             tools = await toolset.list_tools()
