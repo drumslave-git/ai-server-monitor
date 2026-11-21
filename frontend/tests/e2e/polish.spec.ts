@@ -194,12 +194,89 @@ test.describe("Settings, pair names", () => {
 });
 
 test.describe("Settings, panes", () => {
-  test("no pane scrolls sideways (a choice of words too long for its column is cut, not spilled)", async ({ page }) => {
+  test("no pane scrolls sideways", async ({ page }) => {
     await page.goto("/#/settings");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(page.getByRole("radiogroup").first()).toBeVisible();
     await expectNoSidewaysScroll(page);
   });
+
+  // 761 px is the narrowest window with the rail beside the page; from 1024 px the list of sections is beside the form
+  for (const width of [761, 768, 900, 1023, 1100]) {
+    test(`the form has the room for its words at ${width} px (a tablet's select above it, a wide window's list beside it)`, async ({ page }, testInfo) => {
+      test.skip(!testInfo.project.name.startsWith("desktop-1280-dark"), "the width is set here");
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/#/settings");
+      const form = page.locator(".fd-pane-narrow");
+      await expect(form.getByRole("radiogroup").first()).toBeVisible();
+      const formWidth = (await form.boundingBox())!.width;
+      const picker = page.locator(".fd-picker-select");
+      if (width < 1024) {
+        // the section select stands above the form and the form has the whole width of the main part
+        await expect(picker).toBeVisible();
+        await expect(page.getByRole("navigation", { name: "Settings sections" })).toBeHidden();
+        const main = (await page.locator(".fd-panes").boundingBox())!;
+        expect(formWidth, "the form takes the whole row").toBeGreaterThanOrEqual(main.width - 1);
+        const [p, f] = await Promise.all([picker.boundingBox(), form.boundingBox()]);
+        expect(p!.y + p!.height, "the select is above the form").toBeLessThanOrEqual(f!.y + 1);
+      } else {
+        await expect(picker).toBeHidden();
+        await expect(page.getByRole("navigation", { name: "Settings sections" })).toBeVisible();
+        expect(formWidth).toBeGreaterThanOrEqual(440);
+      }
+      // every option of every segmented control is whole: nothing is cut or spilled
+      const options = await page.locator(".fd-seg-item").evaluateAll((els) =>
+        els.map((el) => ({ text: el.textContent, extra: el.scrollWidth - el.clientWidth, ellipsis: getComputedStyle(el).textOverflow })),
+      );
+      expect(options.length).toBeGreaterThan(0);
+      for (const o of options) {
+        expect(o.extra, `${o.text} is cut`).toBeLessThanOrEqual(0);
+        expect(o.ellipsis).toBe("clip");
+      }
+      await expectNoSidewaysScroll(page);
+    });
+  }
+
+  test("options that do not fit one row wrap to the next, each whole", async ({ page }, testInfo) => {
+    test.skip(!testInfo.project.name.startsWith("desktop-1280-dark"), "the width is set here");
+    await page.setViewportSize({ width: 320, height: 800 });
+    await page.goto("/#/settings");
+    const group = page.getByRole("radiogroup").first();
+    await expect(group).toBeVisible();
+    const items = await group.locator(".fd-seg-item").evaluateAll((els) => {
+      const box = els[0].parentElement!.getBoundingClientRect();
+      return {
+        control: { left: box.left, right: box.right },
+        items: els.map((el) => {
+          const r = el.getBoundingClientRect();
+          return { text: el.textContent, top: Math.round(r.top), left: r.left, right: r.right, extra: el.scrollWidth - el.clientWidth };
+        }),
+      };
+    });
+    expect(new Set(items.items.map((i) => i.top)).size, "the options stand on more than one row").toBeGreaterThan(1);
+    for (const i of items.items) {
+      expect(i.extra, `${i.text} is cut`).toBeLessThanOrEqual(0);
+      expect(i.left).toBeGreaterThanOrEqual(items.control.left - 1);
+      expect(i.right).toBeLessThanOrEqual(items.control.right + 1);
+    }
+    await expectNoSidewaysScroll(page);
+  });
+
+  for (const width of [390, 768, 1100, 1280]) {
+    test(`a link to one MCP server brings its card into view below the head (${width} px)`, async ({ page }, testInfo) => {
+      test.skip(!testInfo.project.name.startsWith("desktop-1280-dark"), "the width is set here");
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/#/settings/mcp/second-server");
+      const card = page.locator(".fd-card-focus");
+      await expect(card).toBeVisible();
+      await expect(async () => {
+        const [c, head] = await Promise.all([card.boundingBox(), page.locator("header.fd-head").first().boundingBox()]);
+        expect(c!.y, "the card is below the page head").toBeGreaterThanOrEqual(head!.y + head!.height - 1);
+        expect(c!.y, "the card is in the window").toBeLessThan(900);
+      }).toPass({ timeout: 5000 });
+      await expectNoSidewaysScroll(page);
+    });
+  }
 });
 
 test.describe("Approvals, links", () => {

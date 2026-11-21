@@ -135,9 +135,9 @@
 .fd-input::placeholder, .fd-textarea::placeholder { color: var(--dim); opacity: 1; }
 .fd-textarea { display: block; padding: 10px var(--space-3); resize: vertical; }
 .fd-select option { background: var(--panel); color: var(--text); }
-.fd-seg { display: flex; border: 1px solid var(--line-strong); }
-.fd-seg-item { flex: 1; min-height: 42px; padding: 0 var(--space-3); border: 0; border-left: 1px solid var(--line-strong); border-radius: 0; background: var(--bg); color: var(--text); font: 500 0.9286rem var(--font-mono); white-space: nowrap; cursor: pointer; }
-.fd-seg-item:first-child { border-left: 0; }
+/* options that do not fit one row wrap to the next; the 1 px gap, in the line colour, is the divider between neighbours and between rows */
+.fd-seg { display: flex; flex-wrap: wrap; gap: 1px; border: 1px solid var(--line-strong); background: var(--line-strong); }
+.fd-seg-item { flex: 1; min-height: 42px; padding: 0 var(--space-3); border: 0; border-radius: 0; background: var(--bg); color: var(--text); font: 500 0.9286rem var(--font-mono); white-space: nowrap; cursor: pointer; }
 .fd-seg-item[aria-pressed="true"], .fd-seg-item[aria-selected="true"] { background: var(--ok); color: var(--on-fill); }
 .fd-tabs { display: inline-flex; }
 
@@ -220,8 +220,7 @@
 /* a field that needs the whole row (a text of several lines, JSON) */
 .fd-form-cols > .fd-form-wide { flex-basis: 100%; max-width: none; }
 /* a row of choices (log level, reasoning effort) shares its column by the width of its words, not into equal parts */
-/* in a column too narrow for all its words an option is cut with an ellipsis (the kit's tooltip shows the whole word), it never spills out of the control */
-.fd-form-cols .fd-seg-item { flex: 1 1 auto; min-width: 0; padding-inline: var(--space-2); overflow: hidden; text-overflow: ellipsis; }
+.fd-form-cols .fd-seg-item { flex: 1 1 auto; padding-inline: var(--space-2); }
 @container (max-width: 36rem) { .fd-form-cols > * { flex-basis: 100%; max-width: none; } }
 .fd-split { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-4); }
 .fd-kv { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px var(--space-4); font: 400 0.9286rem/1.5 var(--font-mono); }
@@ -796,11 +795,17 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 /* a head's fold button while its tools are open: filled like a chosen segment */
 .fd-head-fold .fd-btn-icon[aria-expanded="true"] { background: var(--ok); border-color: var(--ok); color: var(--on-fill); }
 
-/* ListPicker: the list wide; on a phone one select that names the current item (the list would stand above the first field) */
+/* ListPicker: the list wide; on a phone and a tablet one select that names the current item (the list would take the width the
+   form beside it needs: at 768 px the rail, the list and the gaps leave the form 184 px) */
 .fd-picker-select { display: none; padding: var(--space-3); }
-@media (max-width: 760px) {
+@media (max-width: 1023px) {
   .fd-picker-select { display: block; }
   .fd-picker-list { display: none; }
+}
+/* beside the rail a tablet's panes stand in a row: the pane of a picker is one select now, so it stands above the form, which gets the width */
+@media (min-width: 761px) and (max-width: 1023px) {
+  .fd-panes:has(> .fd-pane-side .fd-picker-select) { flex-direction: column; }
+  .fd-panes > .fd-pane-side:has(.fd-picker-select) { flex: none; }
 }
 
 /* Table stickyHead: no scroll box of its own, so its column names stick to the pane that scrolls.
