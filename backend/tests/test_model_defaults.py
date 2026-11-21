@@ -132,6 +132,23 @@ def test_model_info_endpoint(bootstrap: Bootstrap) -> None:
 
 
 @respx.mock
+def test_worker_model_info_is_read_as_the_agents_use_the_worker(bootstrap: Bootstrap) -> None:
+    route = respx.post("http://llm.test/api/show").mock(return_value=httpx.Response(200, json=SHOW))
+    with TestClient(create_app(bootstrap)) as client:
+        values = client.get("/api/settings").json()["values"]
+        values["llm"].update(base_url=LLM_URL, model="test-model")
+        assert client.put("/api/settings", json=values).status_code == 200
+        # its own model on the main model's endpoint (its base URL is empty)
+        url = "/api/settings/llm-model-info?profile=worker"
+        got = client.post(url, json={"model": "small"}).json()
+        assert got["available"] is True
+        assert json.loads(route.calls.last.request.content) == {"model": "small"}
+        # no worker model: the main model does the sub-tasks, so it is the one asked about
+        client.post(url, json={"model": ""})
+        assert json.loads(route.calls.last.request.content) == {"model": "test-model"}
+
+
+@respx.mock
 def test_settings_test_works_with_auto_sampling(bootstrap: Bootstrap, shell: list[str]) -> None:
     respx.get(f"{LLM_URL}/models").mock(return_value=httpx.Response(404))
     route = respx.post(f"{LLM_URL}/chat/completions").mock(

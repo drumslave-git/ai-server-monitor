@@ -196,7 +196,7 @@ export function Main({ resetOn, children }: { resetOn?: unknown; children: React
 /** The head of a page. Write the title in normal case; actions go in as children.
  *  tools: a row under the title that belongs to the head (the filters of a list): it stays in view with it.
  *  fold: on a phone the tools fold behind one icon button with this name ("filters").
- *  The head stays at the top while the page scrolls and turns compact: a smaller title, no note, no meta. */
+ *  The head stays at the top while the page scrolls and turns compact: no note, no meta, tighter padding (the title keeps its size). */
 export function PageHeader({
   title,
   note,
@@ -883,6 +883,22 @@ export function Toolbar({ side, children }: { side?: ReactNode; children: ReactN
 /** Fields in columns that collapse to one on a narrow screen. */
 export function FormGrid({ children }: { children: ReactNode }) {
   return <div className="fd-form">{children}</div>;
+}
+
+/** A form of named groups, one row each: the title, then the group's fields in a fixed number of
+ *  columns (the same whatever the window's width; one column in a narrow pane), then an optional
+ *  line or more (notes) under them. Put FormGroup in FormGroups. */
+export function FormGroups({ children }: { children: ReactNode }) {
+  return <div className="fd-form-groups">{children}</div>;
+}
+export function FormGroup({ title, columns, notes, children }: { title: string; columns: 1 | 2 | 3 | 4; notes?: string[]; children: ReactNode }) {
+  return (
+    <section className="fd-form-group" aria-label={title}>
+      <h3 className="fd-form-group-title">{title}</h3>
+      <div className={cx("fd-form-cols", `fd-form-cols-${columns}`)}>{children}</div>
+      {notes?.map((note) => <Meta key={note} block>{note}</Meta>)}
+    </section>
+  );
 }
 
 // ---- controls ---------------------------------------------------------------
@@ -2089,14 +2105,62 @@ export function Card({
   );
 }
 
-/** The box a message is written in, with its buttons inside at the bottom right (send, stop).
- *  children: the Textarea. It is a form; Enter handling stays with the page. */
-export function Composer({ id, onSubmit, actions, children }: { actions: ReactNode; children: ReactNode } & AsForm) {
+/** The box a message is written in: the text on its own top row, a toolbar row under it inside the same
+ *  box (leading: secondary actions at its start; actions: the main ones at its end, send or stop last).
+ *  The text grows with what is typed up to a height, then scrolls inside the box while the toolbar stays
+ *  under it, fading out at its bottom edge while more follows. Once it scrolls, a button at the box's
+ *  top right takes the box to the pane's height and back. The rest of the props are the textarea's
+ *  (value, onChange, onKeyDown, placeholder, aria-label); Enter handling stays with the page.
+ *  An empty text (sent) is the one-line box again. It is a form. */
+export function Composer({
+  id,
+  onSubmit,
+  actions,
+  leading,
+  ...field
+}: { actions: ReactNode; leading?: ReactNode } & AsForm & NoLook<TextareaHTMLAttributes<HTMLTextAreaElement>>) {
+  const text = useRef<HTMLTextAreaElement>(null);
+  const [scrolls, setScrolls] = useState(false);
+  const [more, setMore] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const measure = () => {
+    const el = text.current;
+    if (!el) return;
+    setScrolls(el.scrollHeight > el.clientHeight + 1);
+    setMore(el.scrollHeight - el.scrollTop - el.clientHeight > 1);
+  };
+  // the text or the box changed: does the text scroll, and does more of it lie below?
+  // (an empty text, as after sending, is the one-line box again)
+  useLayoutEffect(() => {
+    if (field.value === "") setExpanded(false);
+    measure();
+  }, [field.value, expanded]);
+  useEffect(() => {
+    const el = text.current;
+    if (!el) return;
+    const watch = new ResizeObserver(measure);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, []);
   return (
-    <form id={id} className="fd-composer" onSubmit={onSubmit}>
-      <div className="fd-composer-box">
-        {children}
-        <div className="fd-composer-actions">{actions}</div>
+    <form id={id} className={cx("fd-composer", expanded && "fd-composer-expanded")} onSubmit={onSubmit}>
+      <div className={cx("fd-composer-box", scrolls && "fd-composer-scrolls", scrolls && more && "fd-composer-more")}>
+        <textarea {...field} ref={text} rows={1} className="fd-composer-text" onScroll={measure} />
+        {(scrolls || expanded) && (
+          <div className="fd-composer-expand">
+            <IconButton
+              small
+              icon={expanded ? "minimize" : "maximize"}
+              label={expanded ? "collapse" : "expand"}
+              aria-expanded={expanded}
+              onClick={() => setExpanded(!expanded)}
+            />
+          </div>
+        )}
+        <div className="fd-composer-bar">
+          <div className="fd-composer-lead">{leading}</div>
+          <div className="fd-composer-actions">{actions}</div>
+        </div>
       </div>
     </form>
   );

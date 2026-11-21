@@ -256,6 +256,10 @@ class WorkerLLMSettings(LLMSettings):
     host with the shell). Empty model = the main model does them too. Empty base URL = the
     main model's endpoint and API key with this model name (e.g. a second Ollama model)."""
 
+    base_url: OptionalHttpUrl = ""
+    """OpenAI-compatible API base URL, e.g. http://ollama:11434/v1, http://llama:8080/v1,
+    https://openrouter.ai/api/v1. Empty = the main model's endpoint and API key."""
+
 
 class JobsSettings(_Model):
     """Scheduled checks by the language model: jobs (storage:usage, docker:status, ...) on the

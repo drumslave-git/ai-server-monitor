@@ -5,7 +5,7 @@ import { HostCommand } from "../components/HostCommand";
 import { RunnableMarkdown } from "../components/RunnableMarkdown";
 import { ago } from "../fmt";
 import { takeExplain, type ExplainRequest } from "../components/Explain";
-import { Code, Column, Command, Composer, Empty, ErrorText, Fold, IconButton, Inline, LinkButton, List, ListItem, Message, Meta, PageHeader, Pad, Pane, Panes, Status, Text, Textarea, type Tone } from "../kit";
+import { Code, Column, Command, Composer, Empty, ErrorText, Fold, IconButton, Inline, LinkButton, List, ListItem, Message, Meta, PageHeader, Pad, Pane, Panes, Status, Text, type Tone } from "../kit";
 import { useStream } from "../live";
 import { useNow, usePoll } from "../ui";
 
@@ -439,24 +439,20 @@ export function ChatPage() {
                     <IconButton small type="submit" variant="primary" icon="send" label="send" disabled={!draft.trim()} />
                   )
                 }
-              >
-                <Textarea
-                  rows={2}
-                  value={draft}
-                  placeholder="Ask about the server"
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      // Enter that confirms an IME candidate (Japanese, Chinese, Korean) is not a send.
-                      // keyCode 229: Safari reports the composition as ended before this keydown.
-                      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                      e.currentTarget.form?.requestSubmit();
-                    }
-                  }}
-                  aria-label="Message"
-                />
-              </Composer>
+                value={draft}
+                placeholder="Ask about the server"
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    // Enter that confirms an IME candidate (Japanese, Chinese, Korean) is not a send.
+                    // keyCode 229: Safari reports the composition as ended before this keydown.
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                    e.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                aria-label="Message"
+              />
             }
           >
             {(loadError || turns.length > 0) && (

@@ -67,6 +67,12 @@ def get_ctx(request: Request) -> AppContext:
     return request.app.state.ctx
 
 
+def _effective_worker(ctx: AppContext, own: LLMSettings) -> LLMSettings:
+    """The given (possibly unsaved) worker settings as the agents would use them."""
+    worker = WorkerLLMSettings.model_validate(own.model_dump())
+    return worker_config(ctx.settings.model_copy(update={"worker": worker}))
+
+
 def _friendly(err: dict[str, Any]) -> str:
     if err["type"] == "string_pattern_mismatch":
         problem = pattern_problem(err)
@@ -246,26 +252,30 @@ def create_app(
         if profile == "worker":
             if not cfg.model.strip():
                 return {"ok": False, "error": "No worker model set: sub-tasks use the main model."}
-            cfg = worker_config(
-                ctx.settings.model_copy(
-                    update={"worker": WorkerLLMSettings.model_validate(cfg.model_dump())}
-                )
-            )
+            cfg = _effective_worker(ctx, cfg)
         if not cfg.configured:
             return {"ok": False, "error": "Set the base URL and model first."}
         return await check_model(cfg, ctx, profile=profile, transport=llm_transport)
 
     @app.post("/api/settings/llm-model-info")
-    async def llm_model_info(request: Request, body: JsonBody) -> api_models.ModelInfoResult:
+    async def llm_model_info(
+        request: Request, body: JsonBody, profile: Literal["main", "worker"] = "main"
+    ) -> api_models.ModelInfoResult:
         """What the model named in the given (possibly unsaved) LLM settings reports about
         itself: its own sampling defaults, capabilities and context length. Ollama only;
-        anything else answers `available: false`."""
+        anything else answers `available: false`.
+        `profile=worker` asks about the worker model as the agents would use it (endpoint and
+        key of the main model when its own base URL is empty, the main model when it has no
+        model)."""
         ctx = get_ctx(request)
-        current = ctx.settings.llm.model_dump(mode="json", context={"reveal_secrets": True})
+        stored = ctx.settings.worker if profile == "worker" else ctx.settings.llm
+        current = stored.model_dump(mode="json", context={"reveal_secrets": True})
         try:
             cfg = LLMSettings.model_validate(merge_secrets(body, current))
         except ValidationError as exc:
             raise _validation_error(exc) from exc
+        if profile == "worker":
+            cfg = _effective_worker(ctx, cfg)
         info = await read_model_info(cfg, transport=llm_transport)
         if info is None:
             return api_models.ModelInfoResult(available=False)

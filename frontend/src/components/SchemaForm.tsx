@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { McpToolPicker, mcpTools } from "./McpTools";
 import { api, type ConnectionTestResult, type Json, type JsonObject, type JsonSchema } from "../api";
-import { Button, Card, Cards, Column, ErrorText, Field as KitField, FormGrid, IconButton, Input, Joined, Live, Meta, Pad, Panel, SectionHead, Segmented, Select, Status, Switch, TestLine, Text, Textarea } from "../kit";
+import { Button, Card, Cards, Column, ErrorText, Field as KitField, FormGrid, FormGroup, FormGroups, IconButton, Input, Joined, Live, Meta, Pad, Panel, SectionHead, Segmented, Select, Status, Switch, TestLine, Text, Textarea } from "../kit";
 
 /* Renders a form from the backend's pydantic JSON schema, so every setting the backend
    defines shows up here without UI changes. Field help comes from `description`.
@@ -60,7 +60,13 @@ export type FormContext = {
   notes?: Record<string, string>;
   /** Paths of rows that do not apply and are left out. */
   hidden?: string[];
+  /** How an object's fields (by its path) are put into named rows. The fields of the object that no
+   *  group names follow in a plain grid. */
+  groups?: Record<string, FieldGroup[]>;
 };
+
+/** A named row of an object's fields: fields by key, a fixed number of columns, optional lines under them. */
+export type FieldGroup = { title: string; fields: string[]; columns: 1 | 2 | 3 | 4; notes?: string[] };
 
 export function resolve(schema: JsonSchema, defs: Record<string, JsonSchema>): JsonSchema {
   if (!schema.$ref) return schema;
@@ -160,6 +166,9 @@ export function ObjectFields({ schema, value, onChange, path, ctx, inset }: Omit
   const obj = (value ?? {}) as JsonObject;
   const blocks: ReactNode[] = [];
   let cells: ReactNode[] = [];
+  const layout = ctx.groups?.[path];
+  const grouped = new Set(layout?.flatMap((g) => g.fields));
+  const named: Record<string, ReactNode> = {};
   const closeGrid = () => {
     if (cells.length === 0) return;
     const key = `grid-${blocks.length}`;
@@ -175,10 +184,19 @@ export function ObjectFields({ schema, value, onChange, path, ctx, inset }: Omit
       closeGrid();
       if (note) blocks.push(<Meta key={`${key}-note`} block>{note}</Meta>);
       blocks.push(field);
+    } else if (grouped.has(key)) {
+      named[key] = field;
     } else {
       if (note) cells.push(<Meta key={`${key}-note`} block span="all">{note}</Meta>);
       cells.push(field);
     }
+  }
+  if (layout) {
+    const rows = layout.map((g) => {
+      const fields = g.fields.filter((f) => named[f]);
+      return fields.length > 0 && <FormGroup key={g.title} title={g.title} columns={g.columns} notes={g.notes}>{fields.map((f) => named[f])}</FormGroup>;
+    });
+    blocks.unshift(inset ? <FormGroups key="groups">{rows}</FormGroups> : <Panel key="groups" pad><FormGroups>{rows}</FormGroups></Panel>);
   }
   closeGrid();
   return <>{blocks}</>;

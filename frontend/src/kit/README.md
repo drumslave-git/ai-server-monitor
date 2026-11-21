@@ -36,13 +36,13 @@ The design kit with live previews of every component: https://claude.ai/artifact
   save bar), `resetOn` (back to the top when it changes), `endOn` (to the end when it changes: a thread)
   and `onSubmit` (the pane is a `<form>`). On a phone the panes stack and the window scrolls; a `foot`
   sticks above the bottom bar.
-- `PageHeader` sticks to the top of its scroller and turns compact while the page scrolls (smaller title,
-  no note, no meta) (a scroll-driven animation; where the browser has none it simply stays full size).
+- `PageHeader` sticks to the top of its scroller and turns compact while the page scrolls (the title keeps its
+  size; the note and meta go and the padding tightens; fields keep their rows and wrap inside the head) (a scroll-driven animation; where the browser has none it simply stays full size).
   `tools` is a row under the title that stays with it (filters); `fold` names it, and on a phone it folds
   behind an icon of that name.
 - Layout: `Split` (blocks side by side that wrap; `stretch`), `Column` (blocks under each other),
   `Inline` (small things on one wrapping line: `gap`, `align`, `between`, `nowrap`), `FormGrid` (fields
-  in columns), `Toolbar` (filters above a list; `side` is the part over a side pane, exactly as wide), `Actions` (buttons side by side), `Scroll` (a height
+  in columns), `FormGroups` with `FormGroup` (`title`, `columns`, `notes`: a form in named groups, each a titled grid of fields that stacks to one column when its container is narrow), `Toolbar` (filters above a list; `side` is the part over a side pane, exactly as wide), `Actions` (buttons side by side), `Scroll` (a height
   limit), `SectionHead` (a section's title, note and buttons), `Labeled` (a small heading over what it
   names). `gap` is a step of the spacing scale (1 = 4px … 6 = 24px). `Split`, `Column` and `Row` given
   `onSubmit` are a `<form>`.
@@ -73,7 +73,7 @@ The design kit with live previews of every component: https://claude.ai/artifact
   `wide`), `Approval` (`decided`, `actions`), `Card` in `Cards` (one form among repeated ones: closed
   by default showing `title`, `status`, `meta` and `aside` (its buttons); `reveal` opens it, for one just
   added or one with an error; `below` shows under it, open or closed), `Composer` (the message box with
-  its send or stop button inside, at the bottom right), `Fold`, `Notice` (`tone`), `Empty`, `Hero` (`compact`: one of several side by side, e.g. a card per summary), `Prose`
+  its send or stop button at the right end of a toolbar row under the text; grows to about twelve lines, then scrolls with a fade and shows an expand/collapse icon; `leading` for buttons on the left of that row), `Fold`, `Notice` (`tone`), `Empty`, `Hero` (`compact`: one of several side by side, e.g. a card per summary), `Prose`
   (Markdown already made safe HTML), `Clamp` (three lines, then "show more").
 - Markup made outside React (Markdown in `Prose`) uses `commandHtml`, `iconButtonHtml` and
   `setIconButton` to write the same command block and icon buttons; `Prose` fills in their icons and hints.

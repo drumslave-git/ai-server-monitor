@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { api, ApiError, type FieldError, type JsonObject, type LlmTestResult, type ModelInfo, type SettingsDoc } from "../api";
-import { ObjectFields, resolve, type FormContext } from "../components/SchemaForm";
+import { api, ApiError, type FieldError, type Json, type JsonObject, type JsonSchema, type LlmTestResult, type ModelInfo, type SettingsDoc } from "../api";
+import { ObjectFields, resolve, type FieldGroup, type FormContext } from "../components/SchemaForm";
 import { Button, Count, ErrorText, IconButton, type IconName, List, ListItem, Live, Meta, Pad, PageHeader, Pane, Panes, Panel, SectionHead, setRootFontSize, Status, TestLine, Text } from "../kit";
 
 /** What each settings section is, as an icon (the sections that are also pages use those pages' icons). */
@@ -26,25 +26,84 @@ function modelDefaultsLine(info: ModelInfo): string {
   return parts.filter(Boolean).join(" · ");
 }
 
-/** What the selected model reports about itself (Ollama only), re-read when the endpoint or
-    model changes. */
-function useModelInfo(baseUrl: string, model: string, llm: JsonObject): ModelInfo | null {
+/** What the model of a profile reports about itself (Ollama only), re-read when its endpoint or
+    model changes. The worker is asked about as the agents use it: with the main model's endpoint
+    when its own is empty, and the main model when it has none. */
+function useModelInfo(profile: "main" | "worker", model: JsonObject): ModelInfo | null {
   const [info, setInfo] = useState<ModelInfo | null>(null);
-  const latest = useRef(llm);
-  latest.current = llm;
+  const latest = useRef(model);
+  latest.current = model;
+  const baseUrl = String(model.base_url ?? "");
+  const name = String(model.model ?? "");
   useEffect(() => {
     setInfo(null);
-    if (!baseUrl.trim() || !model.trim()) return;
+    if (profile === "main" && (!baseUrl.trim() || !name.trim())) return;
     let stale = false;
     const timer = setTimeout(() => {
-      api.post<ModelInfo>("/api/settings/llm-model-info", latest.current).then(
+      api.post<ModelInfo>(`/api/settings/llm-model-info?profile=${profile}`, latest.current).then(
         (r) => { if (!stale) setInfo(r); },
         () => undefined,
       );
     }, 500);
     return () => { stale = true; clearTimeout(timer); };
-  }, [baseUrl, model]);
+  }, [profile, baseUrl, name]);
   return info;
+}
+
+/** The groups of a model's fields, the same for the main and the worker model. */
+function modelGroups(profile: "main" | "worker", info: ModelInfo | null): FieldGroup[] {
+  const inherits = profile === "worker" ? ["Empty base URL and API key = the main model's. Empty model = the main model does the sub-tasks too."] : [];
+  return [
+    { title: "Connection", columns: 3, fields: ["base_url", "api_key", "model"], notes: [...inherits, ...(info?.available ? [modelDefaultsLine(info)] : [])] },
+    { title: "Output", columns: 3, fields: ["max_output_tokens", "reasoning_effort"] },
+    { title: "Sampling", columns: 3, fields: ["temperature", "top_p", "top_k"] },
+    { title: "Requests", columns: 3, fields: ["timeout", "max_retries"] },
+    { title: "Advanced", columns: 3, fields: ["structured_output", "extra_body"] },
+  ];
+}
+
+/** The groups of the other sections that have more than a handful of fields. */
+const GROUPS: Record<string, FieldGroup[]> = {
+  general: [
+    { title: "Service", columns: 3, fields: ["log_level", "timezone", "docker_url"] },
+    { title: "Language and display", columns: 3, fields: ["language", "root_font_size"] },
+    { title: "Instructions", columns: 1, fields: ["instructions"] },
+  ],
+  chat: [
+    { title: "Steps", columns: 3, fields: ["max_steps", "worker_max_steps"] },
+    { title: "What the model sees", columns: 3, fields: ["history_messages", "max_tool_result_chars"] },
+    { title: "Time limits", columns: 3, fields: ["command_timeout", "tool_timeout"] },
+  ],
+  logs: [
+    { title: "Recording", columns: 3, fields: ["llm_trace", "store_bodies", "keep_app_log"] },
+    { title: "Retention", columns: 3, fields: ["retention", "max_total_mb"] },
+  ],
+};
+
+/** The form of a model: the main one and the worker one are the same groups of the same fields;
+    the worker only has its empty values mean "the main model's". */
+function ModelForm({ profile, schema, value, onChange, ctx, onModels }: {
+  profile: "main" | "worker";
+  schema: JsonSchema;
+  value: JsonObject;
+  onChange: (v: Json) => void;
+  ctx: FormContext;
+  onModels: (m: string[]) => void;
+}) {
+  const section = profile === "main" ? "llm" : "worker";
+  const info = useModelInfo(profile, value);
+  const form: FormContext = {
+    ...ctx,
+    groups: { ...ctx.groups, [section]: modelGroups(profile, info) },
+    // a model that does not report "thinking" has no reasoning to set
+    hidden: info?.available && !info.capabilities.includes("thinking") ? [`${section}.reasoning_effort`] : [],
+  };
+  return (
+    <>
+      <ObjectFields schema={schema} value={value} onChange={onChange} path={section} ctx={form} />
+      <LlmTest key={section} profile={profile} llm={value} onModels={onModels} />
+    </>
+  );
 }
 
 export function SettingsPage() {
@@ -89,9 +148,6 @@ export function SettingsPage() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
 
-  const llm = (values?.llm ?? {}) as JsonObject;
-  const modelInfo = useModelInfo(String(llm.base_url ?? ""), String(llm.model ?? ""), llm);
-
   if (loadError) {
     return (
       <>
@@ -116,9 +172,12 @@ export function SettingsPage() {
     defs,
     errors,
     suggestions: { "llm.model": models, "worker.model": models },
-    notes: modelInfo?.available ? { "llm.temperature": modelDefaultsLine(modelInfo) } : {},
-    // a model that does not report "thinking" has no reasoning to set
-    hidden: modelInfo?.available && !modelInfo.capabilities.includes("thinking") ? ["llm.reasoning_effort"] : [],
+    groups: GROUPS,
+  };
+
+  const update = (key: string, v: Json) => {
+    setValues({ ...values, [key]: v });
+    if (status) setStatus(null);
   };
 
   const save = async () => {
@@ -193,18 +252,18 @@ export function SettingsPage() {
           onSubmit={(e) => { e.preventDefault(); void save(); }}
         >
           <SectionHead title={doc.sections[section]} note={sectionSchema.description} />
-          <ObjectFields
-            schema={sectionSchema}
-            value={values[section]}
-            onChange={(v) => {
-              setValues({ ...values, [section]: v });
-              if (status) setStatus(null);
-            }}
-            path={section}
-            ctx={ctx}
-          />
-          {(section === "llm" || section === "worker") && (
-            <LlmTest key={section} profile={section === "llm" ? "main" : "worker"} llm={values[section] as JsonObject} onModels={setModels} />
+          {section === "llm" || section === "worker" ? (
+            <ModelForm
+              key={section}
+              profile={section === "llm" ? "main" : "worker"}
+              schema={sectionSchema}
+              value={values[section] as JsonObject}
+              onChange={(v) => update(section, v)}
+              ctx={ctx}
+              onModels={setModels}
+            />
+          ) : (
+            <ObjectFields schema={sectionSchema} value={values[section]} onChange={(v) => update(section, v)} path={section} ctx={ctx} />
           )}
         </Pane>
       </Panes>

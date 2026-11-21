@@ -818,6 +818,9 @@ export interface paths {
          * @description What the model named in the given (possibly unsaved) LLM settings reports about
          *     itself: its own sampling defaults, capabilities and context length. Ollama only;
          *     anything else answers `available: false`.
+         *     `profile=worker` asks about the worker model as the agents would use it (endpoint and
+         *     key of the main model when its own base URL is empty, the main model when it has no
+         *     model).
          */
         post: operations["llm_model_info_api_settings_llm_model_info_post"];
         delete?: never;
@@ -2689,7 +2692,7 @@ export interface components {
             /**
              * Base Url
              * @description OpenAI-compatible API base URL, e.g. http://ollama:11434/v1, http://llama:8080/v1,
-             *     https://openrouter.ai/api/v1. Empty = LLM not configured.
+             *     https://openrouter.ai/api/v1. Empty = the main model's endpoint and API key.
              * @default
              */
             base_url: string;
@@ -4171,7 +4174,9 @@ export interface operations {
     };
     llm_model_info_api_settings_llm_model_info_post: {
         parameters: {
-            query?: never;
+            query?: {
+                profile?: "main" | "worker";
+            };
             header?: never;
             path?: never;
             cookie?: never;

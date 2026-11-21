@@ -205,6 +205,21 @@
 /* Layout helpers used between components */
 .fd-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3) var(--space-4); }
 .fd-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: var(--space-4) var(--space-6); }
+/* Form of named groups: each group is a row with a fixed number of columns; the pane, not the window, decides when they stack */
+.fd-form-groups { container-type: inline-size; display: flex; flex-direction: column; }
+.fd-form-group { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4) 0; border-top: 1px solid var(--line); }
+.fd-form-group:first-child { padding-top: 0; border-top: 0; }
+.fd-form-group:last-child { padding-bottom: 0; }
+.fd-form-group-title { margin: 0; font: 600 0.9286rem/1.5 var(--font-mono); color: var(--dim); }
+.fd-form-group > .fd-meta { margin: 0; }
+.fd-form-cols { display: grid; gap: var(--space-4) var(--space-6); grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr)); }
+.fd-form-cols > * { min-width: 0; }
+/* a row of choices (log level, reasoning effort) shares its column by the width of its words, not into equal parts */
+.fd-form-cols .fd-seg-item { flex: 1 1 auto; min-width: 0; padding-inline: var(--space-2); }
+.fd-form-cols-2 { --cols: 2; }
+.fd-form-cols-3 { --cols: 3; }
+.fd-form-cols-4 { --cols: 4; }
+@container (max-width: 36rem) { .fd-form-cols { grid-template-columns: minmax(0, 1fr); } }
 .fd-split { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-4); }
 .fd-kv { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px var(--space-4); font: 400 0.9286rem/1.5 var(--font-mono); }
 .fd-kv dt { color: var(--dim); }
@@ -591,7 +606,8 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 /* one pane alone (a width that shows only the list) takes the whole width */
 .fd-pane-side:only-child { flex: 1 1 auto; }
 .fd-pane-bare { background: none; border: 0; }
-.fd-pane-scroll { min-width: 0; display: flex; flex-direction: column; }
+/* (positioned: a visually hidden element inside (.fd-sr is absolute) belongs to the scroller, not to the page, whose height it would grow) */
+.fd-pane-scroll { position: relative; min-width: 0; display: flex; flex-direction: column; }
 .fd-pane-bare > .fd-pane-scroll { gap: var(--space-4); }
 .fd-pane-foot { flex: none; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line); background: var(--panel); }
 .fd-pane-bare > .fd-pane-foot { padding: var(--space-4) 0 0; border-top: 0; background: none; }
@@ -609,18 +625,16 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 .fd-head-sticky :is(.fd-head-note, .fd-head-over .fd-meta) { overflow: hidden; }
 @supports ((animation-timeline: scroll()) and (animation-range: 0% 100%)) {
   .fd-head-sticky { animation: fd-head-compact linear both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
-  .fd-head-sticky h1 { animation: fd-head-title linear both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
   .fd-head-sticky :is(.fd-head-note, .fd-head-over .fd-meta) { animation: fd-head-note linear both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
   @media (prefers-reduced-motion: reduce) {
-    .fd-head-sticky, .fd-head-sticky h1, .fd-head-sticky :is(.fd-head-note, .fd-head-over .fd-meta) { animation-timing-function: step-end; }
+    .fd-head-sticky, .fd-head-sticky :is(.fd-head-note, .fd-head-over .fd-meta) { animation-timing-function: step-end; }
   }
 }
 /* Wider than a phone, in a head whose tools are a row of fields, a select keeps the width of its
    longest option and a search field starts at its placeholder and takes the room left (over the flex
    the page gives them): the search field gives up room first, and what does not fit whole goes to
-   the next row. As the head turns compact it turns into one row: the title and its buttons, then the
-   fields, whose names fold (they stay for screen readers); the title and its buttons stand on the
-   first row of fields, the further rows of fields under the first field.
+   the next row, inside the head, never past its edge. As the head turns compact it only drops its
+   help line and meta and tightens its padding; the title keeps its size and the fields keep their rows.
    (A toolbar over Panes keeps its own row: its parts line up with the panes.) */
 @media (min-width: 761px) {
   .fd-head-sticky:has(> .fd-head-tools > .fd-toolbar:not(.fd-toolbar-panes)) > .fd-head-tools {
@@ -629,35 +643,7 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
     & .fd-field > .fd-input { min-width: calc(var(--fd-placeholder, 0ch) + 2 * var(--space-3) + 2px); }
   }
 }
-@supports ((animation-timeline: scroll()) and (animation-range: 0% 100%)) {
-  @media (min-width: 761px) {
-    .fd-head-sticky:has(> .fd-head-tools > .fd-toolbar:not(.fd-toolbar-panes)) {
-      animation-name: fd-head-compact, fd-head-row;
-      & > .fd-head-text { animation-name: fd-head-row-text; }
-      & > .fd-head-actions { animation-name: fd-head-row-actions; }
-      & > .fd-head-tools { animation-name: fd-head-row-tools; }
-      & > .fd-head-tools .fd-field { animation-name: fd-head-row-field; }
-      & > .fd-head-tools > .fd-toolbar > :not(.fd-field) { animation-name: fd-head-row-item; }
-      & > .fd-head-tools .fd-field-label { overflow: hidden; animation-name: fd-head-note; }
-      & :is(.fd-head-text, .fd-head-actions, .fd-head-tools, .fd-toolbar > *, .fd-field, .fd-field-label) { animation-timing-function: linear; animation-fill-mode: both; animation-timeline: --fd-page; animation-range: 0 var(--head-shrink); }
-      /* the parts change their layout at once half way (the head's height moves the scroll range, so
-         the timeline may stop short of its end: an interpolated width would stay between) */
-      & :is(.fd-head-text, .fd-head-actions, .fd-head-tools, .fd-toolbar > *, .fd-field) { animation-timing-function: steps(2, jump-none); }
-      @media (prefers-reduced-motion: reduce) {
-        & .fd-field-label { animation-timing-function: step-end; }
-      }
-    }
-  }
-}
-@keyframes fd-head-row { to { flex-wrap: nowrap; } }
-@keyframes fd-head-row-item { to { flex-wrap: nowrap; flex-shrink: 0; } }
-/* (at the top, as tall as a field, the title at its foot: where it stands in a head of one row) */
-@keyframes fd-head-row-text { to { flex: 0 0 auto; align-self: flex-start; min-height: var(--control); justify-content: flex-end; } }
-@keyframes fd-head-row-actions { to { align-self: flex-start; } }
-@keyframes fd-head-row-tools { to { flex: 1 1 0; } }
-@keyframes fd-head-row-field { to { gap: 0; } }
 @keyframes fd-head-compact { to { padding-top: var(--space-3); padding-bottom: var(--space-3); border-bottom-color: var(--line); } }
-@keyframes fd-head-title { to { font-size: var(--head-title-compact); } }
 @keyframes fd-head-note { to { opacity: 0; block-size: 0; } }
 
 /* The head's tools: a row of their own under the title; on a phone they may fold behind one button */
@@ -713,14 +699,33 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 /* closed with hidden="until-found": the browser keeps the box (to search in it), so it must take no room */
 .fd-card-body[hidden] { padding: 0; }
 
-/* Composer: the box a message is written in, its buttons inside at the bottom right */
+/* Composer: one box; the text on its own top row, the toolbar under it inside the same box. The text grows
+   with what is typed up to a height, then scrolls inside while the toolbar stays; it fades out at the bottom
+   edge while more follows. Expanded, the box takes the pane's height. */
 .fd-composer { min-width: 0; }
-.fd-composer-box { display: flex; align-items: flex-end; gap: var(--space-2); padding-right: var(--space-1); border: 1px solid var(--line-strong); background: var(--bg); }
-.fd-composer-box:has(.fd-textarea:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
-.fd-composer-box > .fd-textarea { flex: 1 1 auto; min-width: 0; border: 0; background: transparent; resize: none; }
-.fd .fd-composer-box > .fd-textarea:focus-visible { outline: 0; }
-.fd-composer-box:has(.fd-textarea[aria-invalid="true"]) { border-color: var(--crit-text); }
-.fd-composer-actions { flex: none; display: flex; gap: var(--space-1); padding-bottom: var(--space-1); }
+.fd-composer-box { position: relative; display: flex; flex-direction: column; border: 1px solid var(--line-strong); background: var(--bg); }
+.fd-composer-box:has(.fd-composer-text:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.fd-composer-text { display: block; width: 100%; min-width: 0; min-height: calc(1lh + 2 * var(--space-3)); max-height: calc(12lh + 2 * var(--space-3)); padding: var(--space-3); border: 0; background: transparent; color: var(--text); font: 400 0.9286rem/1.5 var(--font-mono); resize: none; field-sizing: content; }
+.fd-composer-text::placeholder { color: var(--dim); opacity: 1; }
+.fd .fd-composer-text:focus-visible { outline: 0; }
+/* the expand button stands at the top right: the text keeps clear of it */
+.fd-composer-scrolls .fd-composer-text, .fd-composer-expanded .fd-composer-text { padding-right: calc(var(--control) + var(--space-1)); }
+.fd-composer-more .fd-composer-text { mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5lh), transparent); }
+.fd-composer-expand { position: absolute; top: var(--space-1); right: var(--space-1); }
+.fd-composer-bar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 0 var(--space-1) var(--space-1); }
+.fd-composer-lead, .fd-composer-actions { display: flex; align-items: center; gap: var(--space-1); }
+.fd-composer-actions { margin-left: auto; }
+/* expanded: the pane's foot takes the pane's height, the text fills the box and scrolls inside it */
+.fd-composer-expanded .fd-composer-text { flex: 1 1 auto; max-height: none; field-sizing: fixed; height: 0; }
+.fd-composer-expanded .fd-composer-box { height: 100%; }
+@media (min-width: 761px) {
+  .fd-pane:has(.fd-composer-expanded) > .fd-pane-scroll { flex: 0 1 4rem; }
+  .fd-pane-foot:has(.fd-composer-expanded) { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .fd-pane-foot > .fd-composer-expanded { flex: 1 1 auto; min-height: 0; }
+}
+@media (max-width: 760px) {
+  .fd-composer-expanded .fd-composer-box { height: 70dvh; }
+}
 
 /* Bottom bar: the phone's pages, one icon and word each; the current one is marked above it, not by colour alone */
 .fd-bottom { display: none; }
