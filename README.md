@@ -44,6 +44,8 @@ It passes only on a real tool call; a model that writes the call as text fails t
 | **Dashboard**: one card per summary, then every job's runs on a clock | **Jobs**: summaries and their jobs; turn them on and off, edit them, run one now |
 | [![A run of the Health summary with its findings and the jobs it ran](docs/samples/ui/job-run.png)](docs/samples/ui/job-run.png) | [![Chat asking to approve a command on the host](docs/samples/ui/chat-approval.png)](docs/samples/ui/chat-approval.png) |
 | **A summary run**: the headline, findings by severity, and its jobs in the order they ran | **Chat**: a change runs only after you approve the command |
+| [![A prompt card: the model asks three questions and waits for the answers](docs/samples/ui/chat-prompt-card.png)](docs/samples/ui/chat-prompt-card.png) | [![Memory: the notes the model keeps, one open](docs/samples/ui/memory.png)](docs/samples/ui/memory.png) |
+| **A prompt card**: the model asks you questions in the chat and waits; answer here or in Telegram | **Memory**: the notes the model keeps for itself and its jobs; edit or delete them |
 
 ## Quick start
 

@@ -2,7 +2,9 @@
 // DevTools protocol (Node 22+).
 //   node scripts/dev/screenshots.mjs <out-dir> [base-url] [name,name]
 // Needs Chrome at the usual Windows path or CHROME_PATH, and an instance at base-url that holds
-// demo data: jobs with runs, and a chat that waits for an approval. It only reads from it.
+// demo data: jobs with runs. It only reads from it. The pictures of the chat (an approval, a prompt
+// card) and of the Memory page come from frontend/tests/e2e/screenshots.fixed.spec.ts instead: the
+// real UI against an API answered with invented data.
 // SHOT_SCHEME=light takes them in the light theme. Development only.
 // The hardware meters never show the machine the script runs on: /api/hardware is answered with
 // the invented reading HARDWARE below.
@@ -18,17 +20,10 @@ mkdirSync(out, { recursive: true });
 
 const only = process.argv[4]?.split(",");
 
-// The newest conversation is the one the chat picture shows.
-const newest = !only || only.includes("chat-approval")
-  ? (await (await fetch(`${base}/api/chat/sessions?limit=1`)).json()).items[0]
-  : { id: "" };
-if (!newest) throw new Error(`${base} has no conversation to show`);
-
 const shots = [
   { name: "dashboard", route: "dashboard", width: 1440, height: 900 },
   { name: "jobs", route: "jobs", width: 1440, height: 900 },
   { name: "job-run", route: "jobs/summary:health", width: 1440, height: 900 },
-  { name: "chat-approval", route: `chat/${newest.id}`, width: 1440, height: 1000 },
 ];
 
 const GIB = 1024 ** 3;
