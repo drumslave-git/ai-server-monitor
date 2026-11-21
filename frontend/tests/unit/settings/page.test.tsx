@@ -255,6 +255,70 @@ describe("a link to one entry of a list", () => {
   });
 });
 
+/** A link inside the app: the address changes, the page stays (App tells nobody but the hashchange listeners). */
+const follow = (hash: string) =>
+  act(() => {
+    history.replaceState(null, "", hash);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  });
+const expanded = (name: string) => screen.getByRole("button", { name }).getAttribute("aria-expanded");
+
+describe("a link followed while the page is open", () => {
+  it("from another section: shows the section, opens the card of the server and brings it into view", async () => {
+    mockApi();
+    await open("#/settings", "Main model");
+    scrollIntoView.mockClear();
+    follow("#/settings/mcp/second-server");
+    await screen.findByRole("heading", { name: "MCP servers" });
+    expect(expanded("second-server")).toBe("true");
+    expect(expanded("test-server")).toBe("false");
+    expect(location.hash).toBe("#/settings/mcp/second-server");
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("from the same section with its cards shut: opens the card the link names, and then the next one", async () => {
+    mockApi();
+    await open("#/settings/mcp", "MCP servers");
+    expect(expanded("second-server")).toBe("false");
+    follow("#/settings/mcp/second-server");
+    await waitFor(() => expect(expanded("second-server")).toBe("true"));
+    scrollIntoView.mockClear();
+    follow("#/settings/mcp/test-server");
+    await waitFor(() => expect(expanded("test-server")).toBe("true"));
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(location.hash).toBe("#/settings/mcp/test-server");
+  });
+
+  it("decodes the name of the address like a fresh load does", async () => {
+    mockApi((doc) => {
+      ((doc.values.mcp as JsonObject).servers as JsonObject[])[1].name = "my server";
+    });
+    await open("#/settings", "Main model");
+    follow("#/settings/mcp/my%20server");
+    await screen.findByRole("heading", { name: "MCP servers" });
+    expect(expanded("my server")).toBe("true");
+  });
+
+  it("a link to a section alone drops the entry of the one before", async () => {
+    mockApi();
+    await open("#/settings/mcp/second-server", "MCP servers");
+    follow("#/settings/chat");
+    await screen.findByRole("heading", { name: "Chat" });
+    expect(location.hash).toBe("#/settings/chat");
+    follow("#/settings/mcp");
+    await screen.findByRole("heading", { name: "MCP servers" });
+    expect(expanded("second-server")).toBe("false");
+  });
+
+  it("an address of another page changes nothing here", async () => {
+    mockApi();
+    await open("#/settings/mcp", "MCP servers");
+    follow("#/jobs/mcp/second-server");
+    expect(screen.getByRole("heading", { name: "MCP servers" })).toBeInTheDocument();
+    expect(expanded("second-server")).toBe("false");
+  });
+});
+
 describe("edit, discard, save", () => {
   it("starts clean: save and discard are off and nothing is said", async () => {
     mockApi();

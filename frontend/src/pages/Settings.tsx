@@ -136,6 +136,20 @@ export function SettingsPage() {
   }, []);
 
   useEffect(() => {
+    // a link inside the app (the name of a server on another page, or on this one) changes the address while the page stays:
+    // it takes the section and the entry from the address as a fresh load does (the card opens and comes into view)
+    const onHash = () => {
+      const [, page, linked, entry] = location.hash.split("/");
+      if (page !== "settings") return;
+      linkedSection.current = linked || "llm";
+      setSection(linked || "llm");
+      setFocusEntry(entry ? decodeSegment(entry) : undefined);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  useEffect(() => {
     // the address keeps the linked entry while its section is shown, so a reload or a shared link opens the same card
     const entry = section === linkedSection.current ? focusEntry : undefined;
     history.replaceState(null, "", `#/settings/${section}${entry ? `/${encodeURIComponent(entry)}` : ""}`);

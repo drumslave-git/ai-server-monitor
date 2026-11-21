@@ -1026,7 +1026,7 @@ function JobDetail({ slug, runId }: { slug: string; runId: number | null }) {
           </Empty>
         </Panel>
       ) : (
-        <Panes>
+        <Panes stack>
           {shown ? (
             <Pane bare label="Run" resetOn={shown.id}>
               <RunView

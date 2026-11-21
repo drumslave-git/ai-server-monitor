@@ -241,7 +241,7 @@ export function McpToolsPage() {
       {servers.length === 0 ? (
         <Notice title="No MCP server is configured.">Add one under Settings → MCP servers.</Notice>
       ) : (
-        <Panes>
+        <Panes stack>
           {entries.length > 0 && (
             <Pane side label="Domains">
               <List label="Domains">

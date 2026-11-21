@@ -88,6 +88,22 @@ describe("Panes and Pane", () => {
     expect(screen.getByRole("region", { name: "Thread" })).toHaveTextContent("thread");
   });
 
+  it("stack marks the Panes that also stand under each other on a tablet", () => {
+    const { container } = render(
+      <>
+        <Panes>
+          <Pane label="One">a</Pane>
+        </Panes>
+        <Panes stack>
+          <Pane label="Two">b</Pane>
+        </Panes>
+      </>,
+    );
+    const [plain, stacked] = Array.from(container.querySelectorAll(".fd-panes"));
+    expect(plain).not.toHaveClass("fd-panes-stack");
+    expect(stacked).toHaveClass("fd-panes-stack");
+  });
+
   it("shows title, meta and aside in its head, and the foot after the body", () => {
     render(
       <Pane title="Runs" meta="3 total" aside={<button>refresh</button>} foot={<button>save all</button>}>

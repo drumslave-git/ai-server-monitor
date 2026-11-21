@@ -807,6 +807,12 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
   .fd-panes:has(> .fd-pane-side .fd-picker-select) { flex-direction: column; }
   .fd-panes > .fd-pane-side:has(.fd-picker-select) { flex: none; }
 }
+/* Panes stack: the same column for a page whose side pane is a list (domains, runs). The list is as tall as its rows up to the
+   height a ListPicker's list has (.fd-picker), then scrolls; the other pane takes what is left and scrolls on its own */
+@media (min-width: 761px) and (max-width: 1023px) {
+  .fd-panes-stack { flex-direction: column; }
+  .fd-panes-stack > .fd-pane-side { flex: 0 1 auto; max-height: min(420px, calc(100dvh - 260px)); }
+}
 
 /* Table stickyHead: no scroll box of its own, so its column names stick to the pane that scrolls.
    A wider table makes the pane scroll sideways and its card grows with it, so the card's border

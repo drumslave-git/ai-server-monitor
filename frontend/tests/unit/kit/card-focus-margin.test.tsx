@@ -32,4 +32,28 @@ describe("Card focus", () => {
     expect(card("server-a")).not.toHaveClass("fd-card-focus");
     expect(card("server-c")).not.toHaveClass("fd-card-focus");
   });
+
+  it("opens a shut card that becomes the focused one later (a link followed on the page) and brings it into view", () => {
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function () {
+      scrolled.push(this);
+    };
+    const view = (focus: boolean) => (
+      <Cards>
+        <Card title="server-a">
+          <p>form a</p>
+        </Card>
+        <Card title="server-b" focus={focus}>
+          <p>form b</p>
+        </Card>
+      </Cards>
+    );
+    const { rerender } = render(view(false));
+    const toggle = screen.getByRole("button", { name: "server-b" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(scrolled).toHaveLength(0);
+    rerender(view(true));
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(scrolled).toEqual([toggle.closest("section")]);
+  });
 });

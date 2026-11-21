@@ -254,9 +254,10 @@ export function PageHeader({
 }
 
 /** Panes side by side that fill the rest of the window and scroll each on its own (a list and what is open in it).
- *  On a phone they stand under each other and the page scrolls. */
-export function Panes({ children }: { children: ReactNode }) {
-  return <div className="fd-panes">{children}</div>;
+ *  On a phone they stand under each other and the page scrolls. stack: they stand under each other on a tablet too (761 to 1023 px),
+ *  each scrolling on its own, for a page whose second pane would be left under 360 px beside the list (the rail takes 212 px of 768). */
+export function Panes({ stack, children }: { stack?: boolean; children: ReactNode }) {
+  return <div className={cx("fd-panes", stack && "fd-panes-stack")}>{children}</div>;
 }
 
 /** One of the Panes. side: the narrow one at the left (a list of conversations, sections, domains);
@@ -2183,7 +2184,9 @@ export function Card({
     if (reveal) setOpen(true);
   }, [reveal]);
   useEffect(() => {
-    if (focus) card.current?.scrollIntoView({ block: "start" });
+    if (!focus) return;
+    setOpen(true); // a card that was already on the page (shut) when the link came
+    card.current?.scrollIntoView({ block: "start" });
   }, [focus]);
   // hidden="until-found": closed, yet the browser's find in page still reaches the fields and opens the card
   useLayoutEffect(() => {
