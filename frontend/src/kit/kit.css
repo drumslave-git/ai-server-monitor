@@ -774,6 +774,10 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
   /* the head: the title beside its buttons; the tools fold when asked to */
   .fd-head { column-gap: var(--space-3); }
   .fd-head-text { flex-basis: 140px; }
+  /* the card a link points at comes to rest below the page head, which stays at the top of the page here:
+     the head as it is once the page has scrolled (compact), one row of the title (2.5rem at line-height 0.88)
+     or its buttons, whichever is taller, its padding and its line */
+  .fd-card-focus { scroll-margin-top: calc(max(2.2rem, var(--control)) + 2 * var(--space-3) + 1px); }
 }
 
 /* Below a wide window (a phone and a tablet) the tools of a head that asks for it fold behind one button, so the

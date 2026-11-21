@@ -73,8 +73,9 @@ The design kit with live previews of every component: https://claude.ai/artifact
   `icon` puts an icon before the title, `action` is a control of its own beside the row), `Finding`, `Message` (`typed`, `says`, `running`,
   `wide`), `Approval` (`decided`, `actions`), `Card` in `Cards` (one form among repeated ones: closed
   by default showing `title`, `status`, `meta` and `aside` (its buttons); `reveal` opens it, for one just
-  added or one with an error; `focus` opens it and scrolls it into view, the card a link points at, and once
-  more after the page has kept its size for `CARD_SETTLED_MS`; `below` shows under it, open or closed), `Composer` (the message box with
+  added or one with an error; `focus` opens it and scrolls it into view, the card a link points at: on a phone,
+  where the page head stays at the top of the page, it comes to rest below the head, as tall as it is compact
+  with one row of title and buttons; `below` shows under it, open or closed), `Composer` (the message box with
   its send or stop button at the right end of a toolbar row under the text; grows to about twelve lines, then scrolls with a fade and shows an expand/collapse icon; `leading` for buttons on the left of that row), `Fold`, `Notice` (`tone`), `Empty`, `Hero` (`compact`: one of several side by side, e.g. a card per summary), `Prose`
   (Markdown already made safe HTML), `Clamp` (three lines, then "show more").
 - Markup made outside React (Markdown in `Prose`) uses `commandHtml`, `iconButtonHtml` and
