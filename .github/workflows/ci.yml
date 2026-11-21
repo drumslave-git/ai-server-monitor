@@ -1,6 +1,6 @@
 name: CI
 
-# Lint + tests for the backend, type-check + build for the frontend.
+# Lint + tests for the backend, type-check + build + Vitest + Playwright layout checks for the frontend.
 # Runs on every push/PR. The Release workflow waits for the push run; manual releases call it as a gate.
 on:
   push:
@@ -32,7 +32,7 @@ jobs:
       - run: pytest -q
 
   frontend:
-    name: Frontend (tsc, vite build)
+    name: Frontend (tsc, vite build, vitest, playwright)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -51,3 +51,15 @@ jobs:
         env:
           IBM_TELEMETRY_DISABLED: "true"
       - run: npm run build
+      - run: npm run test:coverage
+      # Chromium and its system libraries for the layout checks; they build and serve the app themselves.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v5
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore

@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "gen:api": "python ../scripts/export_openapi.py .openapi.json && npm --prefix tools/api-gen ci --silent && node tools/api-gen/node_modules/openapi-typescript/bin/cli.js .openapi.json -o src/api-types.ts && node -e \"require('fs').rmSync('.openapi.json')\""
+    "gen:api": "python ../scripts/export_openapi.py .openapi.json && npm --prefix tools/api-gen ci --silent && node tools/api-gen/node_modules/openapi-typescript/bin/cli.js .openapi.json -o src/api-types.ts && node -e \"require('fs').rmSync('.openapi.json')\"",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@carbon/icons-react": "11.92.0",
@@ -25,10 +29,21 @@
     "react-dom": "19.3.1"
   },
   "devDependencies": {
+    "@msw/playwright": "0.7.0",
+    "@playwright/test": "1.65.0",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.8",
+    "@types/node": "22.20.4",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.3.0",
+    "@vitest/coverage-v8": "5.1.0",
+    "happy-dom": "21.0.4",
+    "msw": "3.0.4",
     "typescript": "7.0.2",
-    "vite": "8.3.8"
+    "vite": "8.3.8",
+    "vitest": "5.1.0"
   }
 }
