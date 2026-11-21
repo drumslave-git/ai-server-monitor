@@ -284,6 +284,30 @@ describe("ApprovalsPage: deciding", () => {
     expect(await screen.findByText("The server could not run the tool.")).toBeInTheDocument();
   });
 
+  it("shows a refused decision on the card that was clicked, as its alert, and on no other card nor at the top", async () => {
+    const user = userEvent.setup();
+    recordDecisions(() => HttpResponse.json({ detail: "The server could not run the tool." }, { status: 500 }));
+    renderPage();
+    await screen.findByRole("article", { name: multiBatch.title });
+    await user.click(card(multiBatch.title).getByRole("button", { name: "approve all (3)" }));
+    expect(await card(multiBatch.title).findByRole("alert")).toHaveTextContent("The server could not run the tool.");
+    expect(within(screen.getByRole("article", { name: singleBatch.title })).queryByRole("alert")).not.toBeInTheDocument();
+    // one message on the page: the one on the card
+    expect(screen.getAllByText("The server could not run the tool.")).toHaveLength(1);
+  });
+
+  it("takes the message off the first card when another card is decided", async () => {
+    const user = userEvent.setup();
+    recordDecisions((id) => (id === multiBatch.id ? HttpResponse.json({ detail: "First refused." }, { status: 409 }) : HttpResponse.json({ detail: "Second refused." }, { status: 409 })));
+    renderPage();
+    await screen.findByRole("article", { name: multiBatch.title });
+    await user.click(card(multiBatch.title).getByRole("button", { name: "approve all (3)" }));
+    await card(multiBatch.title).findByText("First refused.");
+    await user.click(card(singleBatch.title).getByRole("button", { name: "approve all" }));
+    await card(singleBatch.title).findByText("Second refused.");
+    expect(screen.queryByText("First refused.")).not.toBeInTheDocument();
+  });
+
   it("reads a validation error (a list of entries) as 'field: message', not as [object Object]", async () => {
     const user = userEvent.setup();
     recordDecisions(() => HttpResponse.json({ detail: [{ loc: ["body", "items", 0], msg: "Input should be a valid integer", type: "int_parsing" }] }, { status: 422 }));

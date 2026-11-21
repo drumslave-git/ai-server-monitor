@@ -386,6 +386,36 @@ describe("app log: older records", () => {
     expect(screen.getByRole("button", { name: "older records" })).toBeInTheDocument();
   });
 
+  it("shows that error by the older records button, in the same row, and not at the top of the page", async () => {
+    const user = userEvent.setup();
+    recordLog((q) => (q.has("before") ? HttpResponse.json({ detail: "the log is not readable" }, { status: 500 }) : HttpResponse.json(appLog(manyRecords(200, 300)))));
+    render(<AppLogView />);
+    await loaded();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "older records" });
+    await user.click(button);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("the log is not readable");
+    expect(alert.parentElement).toBe(button.parentElement);
+  });
+
+  it("takes the message away when the next page of older records comes", async () => {
+    const user = userEvent.setup();
+    let fail = true;
+    recordLog((q) => {
+      if (!q.has("before")) return HttpResponse.json(appLog(manyRecords(200, 300)));
+      if (fail) return HttpResponse.json({ detail: "the log is not readable" }, { status: 500 });
+      return HttpResponse.json(appLog(manyRecords(3, 100)));
+    });
+    render(<AppLogView />);
+    await loaded();
+    await user.click(screen.getByRole("button", { name: "older records" }));
+    await screen.findByText("the log is not readable");
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "older records" }));
+    await waitFor(() => expect(screen.queryByText("the log is not readable")).not.toBeInTheDocument());
+  });
+
   it("asks for nothing when the last record has no number to page from", async () => {
     const user = userEvent.setup();
     const noNumber = Array.from({ length: 200 }, (_, i) => makeRecord({ seq: null, id: null, ts: BASE + 200 - i, message: `row ${i}` }));

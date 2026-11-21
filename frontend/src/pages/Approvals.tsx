@@ -82,11 +82,13 @@ type CardProps = {
   now: number;
   focused: boolean;
   busy: boolean;
+  /** Why the last decision on this approval failed. */
+  error?: string;
   onDecide: (batch: ApprovalBatch, decision: "approve" | "reject", items?: number[], rest?: boolean) => void;
   onAudit: (batch: ApprovalBatch) => void;
 };
 
-function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) {
+function BatchCard({ batch, now, focused, busy, error, onDecide, onAudit }: CardProps) {
   const paused = Boolean(useAutomation().state?.paused);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [all, setAll] = useState(false);
@@ -235,6 +237,7 @@ function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) 
             show in the audit log
           </Button>
         </Actions>
+        {error && <ErrorText>{error}</ErrorText>}
     </Row>
   );
 }
@@ -257,7 +260,7 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
   if (batch) query.set("batch", String(batch));
   const log = usePoll(() => api.get<Listing>(`/api/actions?${query}`), 30_000, [query.toString()]);
   const [busy, setBusy] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ batch: number; message: string } | null>(null);
   // a link to another approval while the page is open: load that one now
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => opened.reload(), [focusId]);
@@ -279,7 +282,7 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
     try {
       await api.post(`/api/approvals/${b.id}`, { decision, ...(items ? { items } : {}), ...(rest ? { rest } : {}) });
     } catch (e) {
-      setError((e as Error).message); // an ApiError's message already reads its detail (a validation list as "field: message")
+      setError({ batch: b.id, message: (e as Error).message }); // an ApiError's message already reads its detail (a validation list as "field: message")
     } finally {
       setBusy(null);
       refresh();
@@ -322,7 +325,7 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
             <IconLink small icon="close" label="close" hint="Close" href="#/approvals" />
           }
         >
-          <BatchCard batch={extra} now={now} focused={false} busy={busy === extra.id} onDecide={decide} onAudit={showAudit} />
+          <BatchCard batch={extra} now={now} focused={false} busy={busy === extra.id} error={error?.batch === extra.id ? error.message : undefined} onDecide={decide} onAudit={showAudit} />
         </Panel>
       )}
       <Panel hazard={batches.length ? "warn" : undefined}>
@@ -342,9 +345,9 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
             />
           </Pad>
           <Column gap={0} flex="1 1 560px">
-            {(error ?? pending.error ?? opened.error) && (
+            {(pending.error ?? opened.error) && (
               <Row>
-                <ErrorText>{error ?? pending.error ?? opened.error}</ErrorText>
+                <ErrorText>{pending.error ?? opened.error}</ErrorText>
               </Row>
             )}
             {pending.data && batches.length === 0 ? (
@@ -357,6 +360,7 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
                   now={now}
                   focused={b.id === focusId}
                   busy={busy === b.id}
+                  error={error?.batch === b.id ? error.message : undefined}
                   onDecide={decide}
                   onAudit={showAudit}
                 />
@@ -392,7 +396,7 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
           }
         >
           {log.error && (
-            <Row>
+            <Row column>
               <ErrorText>{log.error}</ErrorText>
             </Row>
           )}
@@ -426,7 +430,7 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
                         {a.batch_id && <ApprovalRef batch={a.batch_id} />}
                       </Stack>
                     </Td>
-                    <Td wrap>{describe(a)}</Td>
+                    <Td cut>{describe(a)}</Td>
                   </tr>
                 ))}
               </tbody>

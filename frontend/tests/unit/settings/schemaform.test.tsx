@@ -557,10 +557,18 @@ describe("names with a text each", () => {
     expect(names().map((i) => i.value)).toEqual(["limit", "limit"]);
     expect(group.getAllByPlaceholderText("value").map((i) => (i as HTMLInputElement).value)).toEqual(["10", "asc"]);
     expect(names().map((i) => i.getAttribute("aria-invalid"))).toEqual(["true", "true"]);
+    // each of the two rows says it under itself, with the element and style a field's error has
+    const messages = group.getAllByText("Name already used");
+    expect(messages).toHaveLength(2);
+    for (const [i, m] of messages.entries()) {
+      expect(m).toHaveClass("fd-field-error");
+      expect(m.parentElement).toContainElement(names()[i]);
+    }
     expect(rig.value).toEqual({ query: { limit: "10", limi: "asc" } }); // the last value without a clash
     // another name ends it: both rows go in, nothing was dropped
     await user.type(names()[1], "s");
     expect(names().map((i) => i.getAttribute("aria-invalid"))).not.toContain("true");
+    expect(group.queryByText("Name already used")).not.toBeInTheDocument();
     expect(names().map((i) => i.value)).toEqual(["limit", "limits"]);
     expect(rig.value).toEqual({ query: { limit: "10", limits: "asc" } });
   });

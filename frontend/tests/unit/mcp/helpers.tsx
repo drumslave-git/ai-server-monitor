@@ -5,13 +5,17 @@ import { McpToolsPage } from "../../../src/pages/McpTools";
 import { type McpPage, mcpPage } from "../../mocks/fixtures/mcp";
 import { server } from "../../mocks/server";
 import { installDialogBehaviour } from "../kit/part1-support";
+import { toolsAnswered, watchGets, type GetSpy } from "../tools-answer";
 
 export const CLOSED_KEY = "asm.mcp-tools.collapsed";
+
+let getSpy: GetSpy; // calls through: only to see when the page has been answered
 
 /** Every test starts with an empty browser storage and a <dialog> that behaves like a browser's. */
 export function setupBrowser() {
   let dialogs: ReturnType<typeof installDialogBehaviour>;
   beforeEach(() => {
+    getSpy = watchGets();
     localStorage.clear();
     dialogs = installDialogBehaviour();
   });
@@ -95,4 +99,8 @@ export const domainList = () => within(screen.getByRole("navigation", { name: "D
 /** The (method, path, body) of what the page sent, without the GETs. */
 export const writes = (seen: Seen[]) => seen.map((s) => `${s.method} ${s.path}`);
 
-export const waitForLoads = (state: { loads: number }, n: number) => waitFor(() => expect(state.loads).toBe(n));
+/** Waits for the `n`-th load of the page: the request is answered and the page has taken the answer. */
+export const waitForLoads = async (state: { loads: number }, n: number) => {
+  await waitFor(() => expect(state.loads).toBe(n));
+  await toolsAnswered(getSpy, n);
+};

@@ -309,6 +309,7 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 /* ---- additions after the second rebuild ---- */
 .fd-truncate { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fd-table td.fd-fill { width: 100%; max-width: 0; }
+.fd-table td.fd-cut { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fd-title-link.fd-mono { font: 500 0.9286rem/1.5 var(--font-mono); }
 .fd-panel-head h2.fd-mono { font: 500 1.0714rem/1.4 var(--font-mono); }
 .fd-table tr.fd-group td { background: var(--raised); font: 500 0.9286rem/1.5 var(--font-mono); }
@@ -491,7 +492,7 @@ dialog.fd-dialog, dialog.fd-dialog * { box-sizing: border-box; }
 .fd-joined { min-width: 0; display: flex; flex-wrap: wrap; padding: 0 1px 1px 0; }
 .fd-joined > * { margin: 0 -1px -1px 0; }
 .fd-joined > .fd-input, .fd-joined > .fd-select { flex: 1 1 120px; width: auto; min-width: 0; }
-.fd-joined > :hover, .fd-joined > :focus-visible { position: relative; z-index: 1; }
+.fd-joined > :hover, .fd-joined > :focus-visible, .fd-joined > [aria-invalid="true"] { position: relative; z-index: 1; }
 
 /* A value where a control would stand */
 .fd-field-value { display: flex; align-items: center; min-height: var(--control); font: 400 0.9286rem/1.5 var(--font-mono); overflow-wrap: anywhere; }
@@ -532,7 +533,8 @@ dialog.fd-dialog, dialog.fd-dialog * { box-sizing: border-box; }
   .fd-table-stack tr { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-2) var(--space-5); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line); }
   .fd-table-stack tbody:first-of-type tr:first-child { border-top: 0; }
   .fd-table-stack td, .fd-table-stack td:first-child, .fd-table-stack td:last-child { display: block; min-width: 0 !important; padding: 0; border: 0; }
-  .fd-table-stack td.fd-fill, .fd-table-stack td.fd-wrap, .fd-table-stack tr.fd-group td { flex: 1 1 100%; width: auto; max-width: none; }
+  .fd-table-stack td.fd-fill, .fd-table-stack td.fd-wrap, .fd-table-stack td.fd-cut, .fd-table-stack tr.fd-group td { flex: 1 1 100%; width: auto; max-width: none; }
+  .fd-table-stack td.fd-cut { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
   .fd-table-stack td.fd-nowrap { white-space: normal; }
   .fd-table-stack td:empty { display: none; }
   .fd-table-stack td::before { display: block; font: 400 0.8571rem/1.5 var(--font-mono); color: var(--dim); }

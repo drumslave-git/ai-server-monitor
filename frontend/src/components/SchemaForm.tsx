@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { McpToolPicker, mcpTools } from "./McpTools";
 import { api, type ConnectionTestResult, type Json, type JsonObject, type JsonSchema } from "../api";
-import { Button, Card, Cards, Column, ErrorText, Field as KitField, FormGrid, FormGroup, FormGroups, FormWide, IconButton, Input, Joined, Live, Meta, Pad, Panel, SectionHead, Segmented, Select, Status, Switch, TestLine, Text, Textarea } from "../kit";
+import { Button, Card, Cards, Column, ErrorText, Field as KitField, FieldError, FormGrid, FormGroup, FormGroups, FormWide, IconButton, Input, Joined, Live, Meta, Pad, Panel, SectionHead, Segmented, Select, Status, Switch, TestLine, Text, Textarea } from "../kit";
 
 /* Renders a form from the backend's pydantic JSON schema, so every setting the backend
    defines shows up here without UI changes. Field help comes from `description`.
@@ -663,11 +663,14 @@ function KeyValueInput({ value, onChange }: { value: Record<string, string>; onC
   return (
     <Column gap={2} align="start">
       {rows.map(([k, v], i) => (
-        <Joined key={i} width="100%">
-          <Input value={k} invalid={clash(k)} placeholder="name" onChange={(e) => set(rows.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} />
-          <Input value={v} placeholder="value" onChange={(e) => set(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
-          <Button onClick={() => set(rows.filter((_, j) => j !== i))}>remove</Button>
-        </Joined>
+        <Column key={i} gap={1} width="100%">
+          <Joined width="100%">
+            <Input value={k} invalid={clash(k)} placeholder="name" onChange={(e) => set(rows.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} />
+            <Input value={v} placeholder="value" onChange={(e) => set(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
+            <Button onClick={() => set(rows.filter((_, j) => j !== i))}>remove</Button>
+          </Joined>
+          {clash(k) && <FieldError>Name already used</FieldError>}
+        </Column>
       ))}
       <Button onClick={() => set([...rows, [freeName(rows), ""]])}>add</Button>
     </Column>

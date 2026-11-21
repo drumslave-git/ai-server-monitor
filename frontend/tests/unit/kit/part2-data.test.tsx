@@ -452,6 +452,24 @@ describe("Table", () => {
     expect(within(rows[2]).getAllByRole("cell").map((c) => c.textContent)).toEqual(["job b", "failed"]);
   });
 
+  it("a cut cell stays on one line (the trim tooltip shows the whole text); nowrap and fill have their own classes", () => {
+    render(
+      <Table>
+        <tbody>
+          <Tr>
+            <Td cut>a very long detail</Td>
+            <Td nowrap>kept</Td>
+            <Td fill>rest</Td>
+          </Tr>
+        </tbody>
+      </Table>,
+    );
+    expect(screen.getByText("a very long detail")).toHaveClass("fd-cut");
+    expect(screen.getByText("a very long detail")).not.toHaveClass("fd-fill");
+    expect(screen.getByText("kept")).toHaveClass("fd-nowrap");
+    expect(screen.getByText("rest")).toHaveClass("fd-fill");
+  });
+
   it("without head there is no header row", () => {
     render(
       <Table>

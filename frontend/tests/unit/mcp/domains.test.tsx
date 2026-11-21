@@ -427,11 +427,12 @@ describe("Sort into domains", () => {
   });
 
   it("clears the earlier report when a new sorting starts", async () => {
-    mockApi();
+    const api = mockApi();
     await renderLoaded();
     const first = await openDialog();
     await first.user.click(first.d.getByRole("button", { name: "sort" }));
     await screen.findByText("Sorted 2 tools into domains.");
+    await waitForLoads(api, 2); // the page loads again after the sorting; the button is off until then
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => (release = resolve));
     server.use(

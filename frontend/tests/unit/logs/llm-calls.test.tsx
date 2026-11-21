@@ -70,7 +70,15 @@ describe("LLM calls list: rows", () => {
     expect(row.getByText("test-model")).toBeInTheDocument();
     expect(row.getByText("OK")).toBeInTheDocument();
     expect(row.getByText(`${(1200).toLocaleString()} → 300`)).toBeInTheDocument();
-    expect(row.getByText("first 400 ms · total 2.50 s")).toBeInTheDocument();
+    expect(row.getByText("first 400 ms")).toBeInTheDocument();
+    expect(row.getByText("total 2.50 s")).toBeInTheDocument();
+  });
+
+  it("keeps the time cell (first token, total: one value per line) from wrapping, so its column is as wide as its longest value", async () => {
+    renderList();
+    await screen.findByRole("table");
+    const cell = rowOf("The disk on host-a is 61 percent full.").getByText("total 2.50 s").closest("td");
+    expect(cell).toHaveClass("fd-nowrap");
   });
 
   it("says how many tool calls a call asked for and what it belongs to", async () => {
@@ -97,7 +105,8 @@ describe("LLM calls list: rows", () => {
     expect(row.getByText("chat · retry 2")).toBeInTheDocument();
     // no tokens were counted: a dash, and no first token
     expect(row.getByText("—", { selector: ".fd-meta" })).toBeInTheDocument();
-    expect(row.getByText("first — · total 90 ms")).toBeInTheDocument();
+    expect(row.getByText("first —")).toBeInTheDocument();
+    expect(row.getByText("total 90 ms")).toBeInTheDocument();
   });
 
   it("shows a cancelled call with its request as the text and no owner", async () => {

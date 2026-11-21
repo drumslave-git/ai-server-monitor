@@ -46,4 +46,26 @@ describe("the action cell of the audit log with a very long server name", () => 
     expect(within(row).getByRole("link", { name: LONG_SERVER })).toBeInTheDocument();
     expect(row).toHaveTextContent("· list_everything");
   });
+
+  it("the detail of an action stays on one line: its cell is the cut one, the whole text is in it for the tooltip", async () => {
+    const reason = "This is a very long reason that the audit log must cut with an ellipsis instead of wrapping over several lines of the table";
+    server.use(
+      http.get("/api/actions", () =>
+        HttpResponse.json({
+          items: [action({ id: 8, status: "rejected", result: { detail: reason }, args: { server: "example", tool: "list_things", arguments: {} } })],
+          total: 1,
+        }),
+      ),
+    );
+    render(
+      <AutomationProvider>
+        <ApprovalsPage />
+      </AutomationProvider>,
+    );
+    const table = await screen.findByRole("table");
+    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(2));
+    const cell = within(table.querySelectorAll("tbody tr")[0] as HTMLElement).getByText(reason).closest("td");
+    expect(cell).toHaveClass("fd-cut");
+    expect(cell).toHaveTextContent(reason);
+  });
 });

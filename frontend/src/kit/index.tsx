@@ -1105,6 +1105,11 @@ export function CheckboxBlank() {
   return <span className="fd-check-blank" aria-hidden />;
 }
 
+/** The short message under an invalid control (Field shows its `error` with it; use it directly under a control Field does not wrap). */
+export function FieldError({ children }: { children: ReactNode }) {
+  return <span className="fd-field-error">{children}</span>;
+}
+
 /** A labelled control with its help line. group: the control is a set of buttons, not one input. */
 export function Field({
   label,
@@ -1128,7 +1133,7 @@ export function Field({
       <span className="fd-field-label">{label}</span>
       {children}
       {help && <span className="fd-field-help">{help}</span>}
-      {error && <span className="fd-field-error">{error}</span>}
+      {error && <FieldError>{error}</FieldError>}
     </>
   );
   if (group)
@@ -2021,12 +2026,14 @@ export function Tr({ off, selected, group, children }: { off?: boolean; selected
 }
 
 /** A cell of a Table. fill: it takes the width the other columns leave (a line that is cut with an ellipsis).
+ *  cut: one line cut with an ellipsis (the trim tooltip shows the whole text); stacked on a phone it wraps instead.
  *  wrap: long words break. right: its content stands at the right edge. */
 export function Td({
   nowrap,
   wrap,
   right,
   fill,
+  cut,
   tone,
   minWidth,
   colSpan,
@@ -2036,6 +2043,7 @@ export function Td({
   wrap?: boolean;
   right?: boolean;
   fill?: boolean;
+  cut?: boolean;
   tone?: Tone;
   minWidth?: string;
   colSpan?: number;
@@ -2043,7 +2051,7 @@ export function Td({
 }) {
   return (
     <td
-      className={cx(nowrap && "fd-nowrap", wrap && "fd-wrap", right && "fd-right", fill && "fd-fill", toneText(tone)) || undefined}
+      className={cx(nowrap && "fd-nowrap", wrap && "fd-wrap", right && "fd-right", fill && "fd-fill", cut && "fd-cut", toneText(tone)) || undefined}
       style={minWidth ? { minWidth } : undefined}
       colSpan={colSpan}
     >

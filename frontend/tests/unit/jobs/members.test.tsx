@@ -12,6 +12,7 @@ import { jobsList, mcpTools, type JobItem } from "../../mocks/fixtures/jobs";
 import { server } from "../../mocks/server";
 import { installDialogBehaviour } from "../kit/part1-support";
 import { installFakeEventSource } from "../shell/fake-event-source";
+import { toolsAnswered, watchGets, type GetSpy } from "../tools-answer";
 
 installFakeEventSource();
 // happy-dom has no ARIA reflection (element.ariaDisabled); the focus hand-over after a move reads it, as a browser has it.
@@ -22,12 +23,15 @@ afterAll(() => {
   delete (Element.prototype as unknown as Record<string, unknown>).ariaDisabled;
 });
 let dialogs: ReturnType<typeof installDialogBehaviour>;
+let getSpy: GetSpy; // calls through: only to see when the tools request has been answered
 beforeEach(() => {
   dialogs = installDialogBehaviour();
+  getSpy = watchGets();
   serve(jobsList().items);
   server.use(http.get("/api/mcp/tools", () => HttpResponse.json(mcpTools())));
 });
 afterEach(() => {
+  getSpy.mockRestore();
   dialogs.remove();
   location.hash = "";
 });
@@ -50,6 +54,7 @@ async function openForm(params: string[], title: string) {
     </AutomationProvider>,
   );
   await screen.findByRole("heading", { level: 1, name: title });
+  await toolsAnswered(getSpy);
 }
 
 /** Records what Save sends (PUT of an edit, POST of a new summary) and answers with the summary. */

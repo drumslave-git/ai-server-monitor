@@ -26,6 +26,7 @@ export function AppLogView() {
   const [rows, setRows] = useState<AppLogRecord[]>([]);
   const [more, setMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [olderError, setOlderError] = useState<string | null>(null);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const [newest, setNewest] = useState<number | null>(null);
   const [skipped, setSkipped] = useState(0);
@@ -68,6 +69,7 @@ export function AppLogView() {
         setNewest(d.newest);
         setMore(d.items.length === 200);
         setError(null);
+        setOlderError(null);
         setLoadedFor(key);
       },
       (e: Error) => {
@@ -112,9 +114,9 @@ export function AppLogView() {
       const d = await api.get<AppLogList>(`/api/logs/app?${query({ before: String(before) })}`);
       setRows((old) => [...old, ...d.items]);
       setMore(d.items.length === 200);
-      setError(null);
+      setOlderError(null);
     } catch (e) {
-      setError((e as Error).message); // shown the way a failed first page is
+      setOlderError((e as Error).message); // shown by the button that asked
     }
   };
 
@@ -177,6 +179,7 @@ export function AppLogView() {
           {more && (
             <Row>
               <Button onClick={older}>older records</Button>
+              {olderError && <ErrorText>{olderError}</ErrorText>}
             </Row>
           )}
         </Panel>

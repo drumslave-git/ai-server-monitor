@@ -13,17 +13,21 @@ import { jobsList, mcpTools, type JobItem } from "../../mocks/fixtures/jobs";
 import { server } from "../../mocks/server";
 import { installDialogBehaviour } from "../kit/part1-support";
 import { installFakeEventSource } from "../shell/fake-event-source";
+import { toolsAnswered, watchGets, type GetSpy } from "../tools-answer";
 
 installFakeEventSource();
 let dialogs: ReturnType<typeof installDialogBehaviour>;
+let getSpy: GetSpy; // calls through: only to see when the tools request has been answered
 beforeEach(() => {
   dialogs = installDialogBehaviour();
+  getSpy = watchGets();
   server.use(
     http.get("/api/jobs", () => HttpResponse.json(jobsList())),
     http.get("/api/mcp/tools", () => HttpResponse.json(mcpTools())),
   );
 });
 afterEach(() => {
+  getSpy.mockRestore();
   dialogs.remove();
   location.hash = "";
 });
@@ -34,10 +38,12 @@ const tree = (...params: string[]) => (
   </AutomationProvider>
 );
 
-/** Renders the page at `params` and waits for the form's title. */
+/** Renders the page at `params` and waits for the form's title and for the answer with the tools (the domains field
+ *  fills in from it: a click before it is lost or overwritten). */
 async function openForm(params: string[], title: string) {
   const view = render(tree(...params));
   await screen.findByRole("heading", { level: 1, name: title });
+  await toolsAnswered(getSpy);
   return view;
 }
 

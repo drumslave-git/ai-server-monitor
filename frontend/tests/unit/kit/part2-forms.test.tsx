@@ -8,6 +8,7 @@ import {
   CheckboxBlank,
   Chip,
   Field,
+  FieldError,
   FieldValue,
   FormGrid,
   FormGroup,
@@ -157,6 +158,11 @@ describe("Field", () => {
     );
     expect(screen.getByText("Between 1 and 65535")).toHaveClass("fd-field-help");
     expect(screen.getByText("Not a number")).toHaveClass("fd-field-error");
+  });
+
+  it("FieldError is the error line a field shows, also for a row that is not a Field", () => {
+    render(<FieldError>Name already used</FieldError>);
+    expect(screen.getByText("Name already used")).toHaveClass("fd-field-error");
   });
 
   it("shows no help or error element when none is given", () => {
