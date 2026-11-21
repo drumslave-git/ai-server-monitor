@@ -140,9 +140,10 @@ export function LlmCallsList({ link }: { link: CallsLink | null }) {
               "purpose · model",
               { label: "prompt or answer · where it ran", minWidth: "260px" },
               "status",
-              "tokens in → out · bar = in",
+              { label: "tokens in → out · bar = in", wrap: true },
               {
                 label: "time: first token, total",
+                wrap: true,
                 head: (
                   <Legend>
                     <span>time</span>
@@ -211,7 +212,7 @@ function CallRow({ call: c, maxTokens, maxMs }: { call: LlmCallSummary; maxToken
           <Meta>{tokens(c)}</Meta>
         </Stack>
       </Td>
-      <Td nowrap>
+      <Td>
         <Stack gap={1}>
           <Meter value={c.total_ms ?? 0} inner={c.ttft_ms ?? undefined} innerTone="info" max={maxMs} count={TIME_CELLS} tone="ok" />
           <Meta>

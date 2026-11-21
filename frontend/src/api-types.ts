@@ -1246,6 +1246,13 @@ export interface components {
              */
             log_level: "debug" | "info" | "warning" | "error";
             /**
+             * Root Font Size
+             * @description Text size of the web UI in pixels: the root font size every text of the page is sized from
+             *     (the big headings too). Applies on every device that opens the UI.
+             * @default 16
+             */
+            root_font_size: number;
+            /**
              * Timezone
              * @description Time zone of cron schedules, e.g. Europe/Berlin. Empty = the host's own time zone (its
              *     /etc/timezone or /etc/localtime), UTC when that cannot be read.
@@ -2272,6 +2279,7 @@ export interface components {
              *       "instructions": "",
              *       "language": "en",
              *       "log_level": "info",
+             *       "root_font_size": 16,
              *       "timezone": ""
              *     }
              */

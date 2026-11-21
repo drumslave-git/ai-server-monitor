@@ -1,7 +1,21 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, ApiError, type FieldError, type JsonObject, type LlmTestResult, type ModelInfo, type SettingsDoc } from "../api";
 import { ObjectFields, resolve, type FormContext } from "../components/SchemaForm";
-import { Button, Count, ErrorText, IconButton, List, ListItem, Live, Meta, Pad, PageHeader, Pane, Panes, Panel, SectionHead, Status, TestLine, Text } from "../kit";
+import { Button, Count, ErrorText, IconButton, type IconName, List, ListItem, Live, Meta, Pad, PageHeader, Pane, Panes, Panel, SectionHead, setRootFontSize, Status, TestLine, Text } from "../kit";
+
+/** What each settings section is, as an icon (the sections that are also pages use those pages' icons). */
+const SECTION_ICONS: Record<string, IconName> = {
+  general: "general",
+  llm: "model",
+  worker: "worker",
+  chat: "chat",
+  jobs: "jobs",
+  storage: "storage",
+  logs: "logs",
+  approvals: "approvals",
+  outputs: "outputs",
+  mcp: "mcp",
+};
 
 function modelDefaultsLine(info: ModelInfo): string {
   const p = info.parameters;
@@ -114,6 +128,7 @@ export function SettingsPage() {
       const result = await api.put<{ values: JsonObject }>("/api/settings", values);
       setDoc({ ...doc, values: result.values });
       setValues(result.values);
+      setRootFontSize(Number((result.values.general as JsonObject).root_font_size));
       setErrors({});
       setStatus({ kind: "ok", text: "Saved and applied." });
     } catch (e) {
@@ -150,11 +165,11 @@ export function SettingsPage() {
       <Panes>
         <Pane side label="Settings sections">
           <List label="Settings sections">
-            {Object.entries(doc.sections).map(([key, title], i) => (
+            {Object.entries(doc.sections).map(([key, title]) => (
               <ListItem
                 key={key}
                 mono
-                index={String.fromCharCode(97 + i)}
+                icon={SECTION_ICONS[key]}
                 title={title.toLowerCase()}
                 href={`#/settings/${key}`}
                 selected={key === section}

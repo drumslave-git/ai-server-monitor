@@ -69,7 +69,7 @@ The design kit with live previews of every component: https://claude.ai/artifact
   640px (otherwise it scrolls sideways inside itself), `stickyHead` keeps the column names at the top of
   the pane that scrolls (use it with `stack`).
 - Content: `List` and `ListItem` (a link, or with `onClick` alone a button that says `expanded`;
-  `action` is a control of its own beside the row), `Finding`, `Message` (`typed`, `says`, `running`,
+  `icon` puts an icon before the title, `action` is a control of its own beside the row), `Finding`, `Message` (`typed`, `says`, `running`,
   `wide`), `Approval` (`decided`, `actions`), `Card` in `Cards` (one form among repeated ones: closed
   by default showing `title`, `status`, `meta` and `aside` (its buttons); `reveal` opens it, for one just
   added or one with an error; `below` shows under it, open or closed), `Composer` (the message box with
@@ -102,4 +102,24 @@ Icons are Carbon (`@carbon/icons-react`), and only the kit imports them: `icons.
 kit uses, and pages pass a name (`icon="save"`) to `Icon`, `Button`, `LinkButton`, `IconButton` or `IconLink`. A new
 icon is a new name in `icons.tsx`. An action that repeats (in a row, a toolbar, a list) is an icon alone,
 with its word as the accessible name and the hint shown on hover or focus. The one main action of a page
-is an icon and a word. The pages in the rail and the bottom bar each have an icon. No emoji.
+is an icon and a word. The pages in the rail and the bottom bar each have an icon, and so does each section of
+the settings page (`general`, `model`, `worker`, `storage`, `outputs`; chat, jobs, logs, approvals and mcp
+use the icon of the page of that name). No emoji, and no letters or numbers standing in for icons.
+
+## Type
+
+Every `font-size` is in `rem`, never `px`, so one number scales all text: the root font size, 16px in
+`tokens.css` and then set from the server setting `general.root_font_size` (`setRootFontSize(px)`, called by
+the app once it has loaded the settings and by the settings page after a save). The display styles (the
+logo, page titles, counters) are their size in px ÷ 16, so at 16px they are what they always were; the
+other styles are their old px size ÷ 14, so body text is 16px. Spacing, widths and paddings stay in `px`.
+
+## Text that is cut
+
+A text cut by its width (`text-overflow: ellipsis`) shows its whole text in a tooltip when the mouse rests
+on it for half a second or the keyboard focus lands on it (Escape, scrolling and clicking close it).
+`TrimTips`, mounted once by `Shell`, does this for the whole page: it asks the browser whether the element
+under the pointer is really cut, so a part only has to use the ellipsis (`ListItem` titles, `TitleLink
+truncate`, the title of a `Fold`, the meta of a `Card`) and a text added later is covered the moment it is
+cut. A touch screen has no pointer to rest, so it gets no tooltip. The text of an `Input` or `Select` is
+not covered, and `Clamp` has its own "show more".

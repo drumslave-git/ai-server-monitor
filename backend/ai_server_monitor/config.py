@@ -155,6 +155,9 @@ class GeneralSettings(_Model):
     """Log verbosity of the service."""
     language: str = "en"
     """Language of chat answers and Telegram messages."""
+    root_font_size: float = Field(default=16, gt=0)
+    """Text size of the web UI in pixels: the root font size every text of the page is sized from
+    (the big headings too). Applies on every device that opens the UI."""
     docker_url: str = ""
     """Docker API the shell's `docker` commands use, e.g. tcp://docker-proxy:2375 or
     unix:///var/run/docker.sock. Empty = $DOCKER_HOST (set by the compose file), else the local

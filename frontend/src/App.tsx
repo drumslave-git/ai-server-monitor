@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type StatusResponse } from "./api";
 import { AutomationNotice, AutomationProvider, AutomationSwitch } from "./automation";
 import { HardwareMeters } from "./hardware";
-import { Main, Rail, Shell, type IconName, type NavItem } from "./kit";
+import { Main, Rail, setRootFontSize, Shell, type IconName, type NavItem } from "./kit";
 import { useConnected, useStream } from "./live";
 import { ApprovalsPage } from "./pages/Approvals";
 import { ChatPage } from "./pages/Chat";
@@ -38,10 +38,21 @@ function useVersion(): string | null {
   return version;
 }
 
+/** The text size of the page is a server setting (general.root_font_size), so every device shows the same. */
+function useRootFontSize(): void {
+  useEffect(() => {
+    api.get<{ values: { general: { root_font_size: number } } }>("/api/settings").then(
+      (s) => setRootFontSize(s.values.general.root_font_size),
+      () => undefined,
+    );
+  }, []);
+}
+
 export function App() {
   const [route, setRoute] = useState(parseHash);
   const connected = useConnected();
   const version = useVersion();
+  useRootFontSize();
   const [pending, setPending] = useState(0);
 
   useEffect(() => {

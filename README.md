@@ -385,6 +385,7 @@ values a fresh install starts with.
 |---|---|---|---|
 | `general.log_level` | debug / info / warning / error | `info` | Log verbosity of the service. |
 | `general.language` | string | `en` | Language of chat answers and Telegram messages. |
+| `general.root_font_size` | number | `16` | Text size of the web UI in pixels: the root font size every text of the page is sized from (the big headings too). Applies on every device that opens the UI. |
 | `general.docker_url` | string | empty | Docker API the shell's `docker` commands use, e.g. tcp://docker-proxy:2375 or unix:///var/run/docker.sock. Empty = $DOCKER_HOST (set by the compose file), else the local socket. |
 | `general.timezone` | string | empty | Time zone of cron schedules, e.g. Europe/Berlin. Empty = the host's own time zone (its /etc/timezone or /etc/localtime), UTC when that cannot be read. |
 | `general.instructions` | string | empty | Your standing instructions for the model, in your own words: how this server is run, what matters to you, how answers should look. Added after the built-in instructions of the chat, its worker, topic jobs and summaries. Empty = nothing is added. |
@@ -794,6 +795,21 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
   instead of making it scroll sideways.
 - The Docker image and CI turn off the IBM telemetry that the Carbon icons' install step runs
   (`IBM_TELEMETRY_DISABLED=true`).
+
+### 0.11.0
+
+- **Settings sections have icons instead of letters.** Each section of the list (general, model,
+  worker, chat, jobs, storage, logs, approvals, outputs, MCP) shows an icon before its name.
+- **Every cut text has a tooltip with the whole text.** Where the UI cuts a text with an ellipsis
+  (chat names, job and call titles, the titles of folds and cards), resting the mouse on it or
+  moving the keyboard focus onto it shows the whole text. A touch screen has no hover, so a phone
+  gets no tooltip.
+- **All text is sized in `rem`, and the root size is a setting.** The base text size is 16 px
+  again (it was 14 px); the big headings keep the size they had. **Settings → general → root font
+  size** sets it in pixels (16 by default, any positive number), on the server, so every device
+  that opens the UI uses it.
+- **The 16 px text fits where it did at 14 px.** The LLM calls table keeps inside its pane (two long
+  column names and the timing text may wrap) and the phone's bottom bar keeps its label size.
 
 ## Troubleshooting
 

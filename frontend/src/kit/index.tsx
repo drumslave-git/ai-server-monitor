@@ -40,6 +40,7 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 import { GLYPHS, SPRITE, type IconName } from "./icons";
+import { TrimTips } from "./trimtips";
 export type { IconName } from "./icons";
 
 // Interest invokers (a hint shown on hover, focus or long press) are native in Chromium 149+;
@@ -80,9 +81,16 @@ export function Shell({ children }: { children: ReactNode }) {
   return (
     <div className="fd">
       <IconSprite />
+      <TrimTips />
       {children}
     </div>
   );
+}
+
+/** The root font size in pixels: every text of the kit is sized in rem, so this scales all of it (tokens.css
+ *  says 16px until the page has been told the setting). */
+export function setRootFontSize(px: number): void {
+  document.documentElement.style.fontSize = `${px}px`;
 }
 
 /** One of the kit's icons (icons.tsx). It is decoration: the control it stands in carries the name. */
@@ -1680,6 +1688,7 @@ export function ListItem({
   title,
   meta,
   index,
+  icon,
   trailing,
   selected,
   expanded,
@@ -1691,7 +1700,10 @@ export function ListItem({
 }: {
   title: ReactNode;
   meta?: ReactNode;
+  /** A number in front of the row (the order of the rows). */
   index?: ReactNode;
+  /** An icon in front of the row (what the row is: a settings section). */
+  icon?: IconName;
   trailing?: ReactNode;
   selected?: boolean;
   expanded?: boolean;
@@ -1705,6 +1717,7 @@ export function ListItem({
   const body = (
     <>
       {index && <span className="fd-item-index">{index}</span>}
+      {icon && <span className="fd-item-icon"><Icon name={icon} /></span>}
       <span className="fd-item-body">
         <span className="fd-item-title">{title}</span>
         {meta && <span className="fd-meta">{meta}</span>}
@@ -1835,8 +1848,9 @@ export function Approval({
   );
 }
 
-/** A column of a Table: its heading (head, when the heading is more than the label), and its width. */
-export type TableColumn = string | { label: string; head?: ReactNode; width?: string; minWidth?: string };
+/** A column of a Table: its heading (head, when the heading is more than the label), and its width.
+ *  wrap: a long heading may break into lines instead of widening its column. */
+export type TableColumn = string | { label: string; head?: ReactNode; width?: string; minWidth?: string; wrap?: boolean };
 
 /** A table. head names its columns; the body is tbody elements of Tr and Td.
  *  On a narrow screen it scrolls inside itself; with stack each row becomes a block there instead,
@@ -1868,7 +1882,7 @@ export function Table({
           <thead>
             <tr>
               {columns.map((c, i) => (
-                <th key={i} scope="col" style={c.width || c.minWidth ? { width: c.width, minWidth: c.minWidth } : undefined}>
+                <th key={i} scope="col" className={c.wrap ? "fd-th-wrap" : undefined} style={c.width || c.minWidth ? { width: c.width, minWidth: c.minWidth } : undefined}>
                   {c.head ?? c.label}
                 </th>
               ))}

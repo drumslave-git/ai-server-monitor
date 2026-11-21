@@ -76,6 +76,17 @@ def test_defaults_and_json_shape() -> None:
     assert not {"report", "collectors"} & data.keys()
 
 
+def test_root_font_size_is_16_pixels_and_any_positive_number() -> None:
+    assert Settings().general.root_font_size == 16
+    assert Settings().public_dict()["general"]["root_font_size"] == 16
+    for good in (20, 17.5):
+        settings = Settings.model_validate({"general": {"root_font_size": good}})
+        assert settings.general.root_font_size == good
+    for bad in (0, -14):
+        with pytest.raises(ValidationError):
+            Settings.model_validate({"general": {"root_font_size": bad}})
+
+
 def test_secrets_masked_publicly_but_stored_in_clear() -> None:
     s = Settings(llm={"api_key": "sk-1"}, outputs={"telegram": {"token": ""}})
     assert s.public_dict()["llm"]["api_key"] == SECRET_MASK
