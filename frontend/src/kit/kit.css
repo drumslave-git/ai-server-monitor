@@ -205,21 +205,22 @@
 /* Layout helpers used between components */
 .fd-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3) var(--space-4); }
 .fd-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: var(--space-4) var(--space-6); }
-/* Form of named groups: each group is a row with a fixed number of columns; the pane, not the window, decides when they stack */
-.fd-form-groups { container-type: inline-size; display: flex; flex-direction: column; }
+/* Form of named groups: each group is a title, then its fields flowing in rows (as many as fit, each grown to share the row, none wider
+   than a field needs), so a group with fewer fields leaves no hole; the form keeps a readable width however wide the window is.
+   The pane, not the window, decides when the fields stack. */
+.fd-form-groups { container-type: inline-size; display: flex; flex-direction: column; max-width: 60rem; }
 .fd-form-group { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4) 0; border-top: 1px solid var(--line); }
 .fd-form-group:first-child { padding-top: 0; border-top: 0; }
 .fd-form-group:last-child { padding-bottom: 0; }
 .fd-form-group-title { margin: 0; font: 600 0.9286rem/1.5 var(--font-mono); color: var(--dim); }
 .fd-form-group > .fd-meta { margin: 0; }
-.fd-form-cols { display: grid; gap: var(--space-4) var(--space-6); grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr)); }
-.fd-form-cols > * { min-width: 0; }
+.fd-form-cols { display: flex; flex-wrap: wrap; gap: var(--space-4) var(--space-6); }
+.fd-form-cols > * { flex: 1 1 14rem; min-width: 0; max-width: 26rem; }
+/* a field that needs the whole row (a text of several lines, JSON) */
+.fd-form-cols > .fd-form-wide { flex-basis: 100%; max-width: none; }
 /* a row of choices (log level, reasoning effort) shares its column by the width of its words, not into equal parts */
 .fd-form-cols .fd-seg-item { flex: 1 1 auto; min-width: 0; padding-inline: var(--space-2); }
-.fd-form-cols-2 { --cols: 2; }
-.fd-form-cols-3 { --cols: 3; }
-.fd-form-cols-4 { --cols: 4; }
-@container (max-width: 36rem) { .fd-form-cols { grid-template-columns: minmax(0, 1fr); } }
+@container (max-width: 36rem) { .fd-form-cols > * { flex-basis: 100%; max-width: none; } }
 .fd-split { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-4); }
 .fd-kv { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px var(--space-4); font: 400 0.9286rem/1.5 var(--font-mono); }
 .fd-kv dt { color: var(--dim); }
@@ -365,6 +366,8 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 
 /* Narrow screens: the rail becomes a bar with a scrolling nav, the page padding tightens */
 @media (max-width: 760px) {
+  /* the bar and the page are two lines of a wrapping box: a page shorter than the window keeps the bar its own height, not the room left over */
+  .fd { align-content: flex-start; }
   .fd-rail { flex: 1 0 100%; min-width: 0; max-width: 100%; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-right: 0; border-bottom: 1px solid var(--line); }
   .fd-rail .fd-brand { flex: 1; flex-direction: row; align-items: center; gap: var(--space-3); padding: 0; }
   .fd-rail .fd-brand-mark { font-size: 2.125rem; }
@@ -753,10 +756,22 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
   /* the head: the title beside its buttons; the tools fold when asked to */
   .fd-head { column-gap: var(--space-3); }
   .fd-head-text { flex-basis: 140px; }
+}
+
+/* Below a wide window (a phone and a tablet) the tools of a head that asks for it fold behind one button, so the
+   head stays as low as the title; opened, they wrap, a toolbar over Panes included (its parts then no longer line up with the panes) */
+@media (max-width: 1023px) {
   .fd-head-fold { display: block; }
   .fd-head-tools-folds:not(.fd-head-tools-open) { display: none; }
   .fd-toolbar-panes { flex-wrap: wrap; }
   .fd-toolbar-side { flex: 1 0 100%; }
+}
+
+/* ListPicker: the list wide; on a phone one select that names the current item (the list would stand above the first field) */
+.fd-picker-select { display: none; }
+@media (max-width: 760px) {
+  .fd-picker-select { display: block; }
+  .fd-picker-list { display: none; }
 }
 
 /* Table stickyHead: no scroll box of its own, so its column names stick to the pane that scrolls.

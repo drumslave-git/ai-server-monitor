@@ -11,9 +11,26 @@ const REST_MS = 500;
 /** The space kept between the tooltip and the window's edge, and between it and its text. */
 const GAP = 8;
 
+/** An empty field whose placeholder is cut: the browser draws it with an ellipsis, but it is no text of the page to measure. */
+function placeholderCut(el: Element): boolean {
+  if (!(el instanceof HTMLInputElement) || el.value || !el.placeholder) return false;
+  const style = getComputedStyle(el);
+  const ctx = document.createElement("canvas").getContext("2d");
+  if (!ctx) return false;
+  ctx.font = style.font;
+  const room = el.clientWidth - parseFloat(style.paddingInlineStart) - parseFloat(style.paddingInlineEnd);
+  return ctx.measureText(el.placeholder).width > room;
+}
+
 /** Is this element's text cut at its end? */
 function isCut(el: Element): boolean {
+  if (placeholderCut(el)) return true;
   return getComputedStyle(el).textOverflow === "ellipsis" && el.scrollWidth > el.clientWidth;
+}
+
+/** The whole text of a cut element: the placeholder of an empty field, else its text. */
+function wholeText(el: HTMLElement): string {
+  return el instanceof HTMLInputElement && !el.value ? el.placeholder : (el.textContent ?? "");
 }
 
 /** The cut text under the pointer: the nearest element above the target (itself included) that is cut. */
@@ -50,7 +67,7 @@ export function TrimTips() {
 
     const show = (el: HTMLElement) => {
       current = el;
-      box.textContent = el.textContent;
+      box.textContent = wholeText(el);
       box.showPopover();
       // under the text, from its start; above it where there is no room below; always inside the window
       const at = el.getBoundingClientRect();

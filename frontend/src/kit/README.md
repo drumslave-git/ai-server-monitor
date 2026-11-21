@@ -42,7 +42,7 @@ The design kit with live previews of every component: https://claude.ai/artifact
   behind an icon of that name.
 - Layout: `Split` (blocks side by side that wrap; `stretch`), `Column` (blocks under each other),
   `Inline` (small things on one wrapping line: `gap`, `align`, `between`, `nowrap`), `FormGrid` (fields
-  in columns), `FormGroups` with `FormGroup` (`title`, `columns`, `notes`: a form in named groups, each a titled grid of fields that stacks to one column when its container is narrow), `Toolbar` (filters above a list; `side` is the part over a side pane, exactly as wide), `Actions` (buttons side by side), `Scroll` (a height
+  in columns), `FormGroups` with `FormGroup` (`title`, `notes`: a form in named groups, each a titled flow of fields that share its rows, with no holes, at most 60rem wide, stacking to one column when its pane is narrow; `FormWide` puts a field on a row of its own), `ListPicker` (a list that is one choice, such as the sections of Settings: on a phone one select that names the current item instead of the list), `Toolbar` (filters above a list; `side` is the part over a side pane, exactly as wide), `Actions` (buttons side by side), `Scroll` (a height
   limit), `SectionHead` (a section's title, note and buttons), `Labeled` (a small heading over what it
   names). `gap` is a step of the spacing scale (1 = 4px … 6 = 24px). `Split`, `Column` and `Row` given
   `onSubmit` are a `<form>`.

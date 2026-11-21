@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { McpToolPicker, mcpTools } from "./McpTools";
 import { api, type ConnectionTestResult, type Json, type JsonObject, type JsonSchema } from "../api";
-import { Button, Card, Cards, Column, ErrorText, Field as KitField, FormGrid, FormGroup, FormGroups, IconButton, Input, Joined, Live, Meta, Pad, Panel, SectionHead, Segmented, Select, Status, Switch, TestLine, Text, Textarea } from "../kit";
+import { Button, Card, Cards, Column, ErrorText, Field as KitField, FormGrid, FormGroup, FormGroups, FormWide, IconButton, Input, Joined, Live, Meta, Pad, Panel, SectionHead, Segmented, Select, Status, Switch, TestLine, Text, Textarea } from "../kit";
 
 /* Renders a form from the backend's pydantic JSON schema, so every setting the backend
    defines shows up here without UI changes. Field help comes from `description`.
@@ -58,6 +58,8 @@ export type FormContext = {
   suggestions: Record<string, string[]>;
   /** A line shown above the row at this path (e.g. what the model says about itself). */
   notes?: Record<string, string>;
+  /** What an empty text field shows, by its path (e.g. whose value an empty field takes). */
+  placeholders?: Record<string, string>;
   /** Paths of rows that do not apply and are left out. */
   hidden?: string[];
   /** How an object's fields (by its path) are put into named rows. The fields of the object that no
@@ -65,8 +67,8 @@ export type FormContext = {
   groups?: Record<string, FieldGroup[]>;
 };
 
-/** A named row of an object's fields: fields by key, a fixed number of columns, optional lines under them. */
-export type FieldGroup = { title: string; fields: string[]; columns: 1 | 2 | 3 | 4; notes?: string[] };
+/** A named row of an object's fields: fields by key, flowing; wide: those that take a whole row; optional lines under them. */
+export type FieldGroup = { title: string; fields: string[]; wide?: string[]; notes?: string[] };
 
 export function resolve(schema: JsonSchema, defs: Record<string, JsonSchema>): JsonSchema {
   if (!schema.$ref) return schema;
@@ -194,7 +196,7 @@ export function ObjectFields({ schema, value, onChange, path, ctx, inset }: Omit
   if (layout) {
     const rows = layout.map((g) => {
       const fields = g.fields.filter((f) => named[f]);
-      return fields.length > 0 && <FormGroup key={g.title} title={g.title} columns={g.columns} notes={g.notes}>{fields.map((f) => named[f])}</FormGroup>;
+      return fields.length > 0 && <FormGroup key={g.title} title={g.title} notes={g.notes}>{fields.map((f) => (g.wide?.includes(f) ? <FormWide key={f}>{named[f]}</FormWide> : named[f]))}</FormGroup>;
     });
     blocks.unshift(inset ? <FormGroups key="groups">{rows}</FormGroups> : <Panel key="groups" pad><FormGroups>{rows}</FormGroups></Panel>);
   }
@@ -327,7 +329,7 @@ export function Field({ name, schema, value, onChange, path, ctx, inset }: Field
         <Cell {...cell}>
           {(id, invalid) => (
             <>
-              <Input id={id} invalid={invalid} value={String(value ?? "")} list={suggestions?.length ? `${id}-list` : undefined} onChange={(e) => onChange(e.target.value)} />
+              <Input id={id} invalid={invalid} value={String(value ?? "")} placeholder={ctx.placeholders?.[path]} list={suggestions?.length ? `${id}-list` : undefined} onChange={(e) => onChange(e.target.value)} />
               {suggestions?.length ? (
                 <datalist id={`${id}-list`}>
                   {suggestions.map((o) => <option key={o} value={o} />)}

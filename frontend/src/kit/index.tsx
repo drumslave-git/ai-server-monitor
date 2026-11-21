@@ -885,20 +885,24 @@ export function FormGrid({ children }: { children: ReactNode }) {
   return <div className="fd-form">{children}</div>;
 }
 
-/** A form of named groups, one row each: the title, then the group's fields in a fixed number of
- *  columns (the same whatever the window's width; one column in a narrow pane), then an optional
- *  line or more (notes) under them. Put FormGroup in FormGroups. */
+/** A form of named groups: the title, then the group's fields flowing in rows as wide as the pane allows (a
+ *  group with fewer fields leaves no hole), then an optional line or more (notes) under them.
+ *  The form keeps a readable width in a wide window. Put FormGroup in FormGroups. */
 export function FormGroups({ children }: { children: ReactNode }) {
   return <div className="fd-form-groups">{children}</div>;
 }
-export function FormGroup({ title, columns, notes, children }: { title: string; columns: 1 | 2 | 3 | 4; notes?: string[]; children: ReactNode }) {
+export function FormGroup({ title, notes, children }: { title: string; notes?: string[]; children: ReactNode }) {
   return (
     <section className="fd-form-group" aria-label={title}>
       <h3 className="fd-form-group-title">{title}</h3>
-      <div className={cx("fd-form-cols", `fd-form-cols-${columns}`)}>{children}</div>
+      <div className="fd-form-cols">{children}</div>
       {notes?.map((note) => <Meta key={note} block>{note}</Meta>)}
     </section>
   );
+}
+/** A field of a FormGroup that takes the whole row (a text of several lines, JSON). */
+export function FormWide({ children }: { children: ReactNode }) {
+  return <div className="fd-form-wide">{children}</div>;
 }
 
 // ---- controls ---------------------------------------------------------------
@@ -1682,6 +1686,37 @@ export function Fold({
       </summary>
       <div className="fd-fold-body">{children}</div>
     </details>
+  );
+}
+
+/** A list that is one choice among several (the sections of Settings): wide, the list; on a phone, where the list
+ *  would stand above everything else, one select that names the current item. Put the List in as the children. */
+export function ListPicker({
+  label,
+  value,
+  options,
+  onChange,
+  children,
+}: {
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <>
+      <div className="fd-picker-select">
+        <Field label={label}>
+          <Select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label}>
+            {options.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+      <div className="fd-picker-list">{children}</div>
+    </>
   );
 }
 

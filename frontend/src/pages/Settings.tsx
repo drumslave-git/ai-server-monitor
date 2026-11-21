@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, ApiError, type FieldError, type Json, type JsonObject, type JsonSchema, type LlmTestResult, type ModelInfo, type SettingsDoc } from "../api";
 import { ObjectFields, resolve, type FieldGroup, type FormContext } from "../components/SchemaForm";
-import { Button, Count, ErrorText, IconButton, type IconName, List, ListItem, Live, Meta, Pad, PageHeader, Pane, Panes, Panel, SectionHead, setRootFontSize, Status, TestLine, Text } from "../kit";
+import { Button, Count, ErrorText, IconButton, type IconName, List, ListItem, ListPicker, Live, Meta, Pad, PageHeader, Pane, Panes, Panel, SectionHead, setRootFontSize, Status, TestLine, Text } from "../kit";
 
 /** What each settings section is, as an icon (the sections that are also pages use those pages' icons). */
 const SECTION_ICONS: Record<string, IconName> = {
@@ -54,29 +54,29 @@ function useModelInfo(profile: "main" | "worker", model: JsonObject): ModelInfo 
 function modelGroups(profile: "main" | "worker", info: ModelInfo | null): FieldGroup[] {
   const inherits = profile === "worker" ? ["Empty base URL and API key = the main model's. Empty model = the main model does the sub-tasks too."] : [];
   return [
-    { title: "Connection", columns: 3, fields: ["base_url", "api_key", "model"], notes: [...inherits, ...(info?.available ? [modelDefaultsLine(info)] : [])] },
-    { title: "Output", columns: 3, fields: ["max_output_tokens", "reasoning_effort"] },
-    { title: "Sampling", columns: 3, fields: ["temperature", "top_p", "top_k"] },
-    { title: "Requests", columns: 3, fields: ["timeout", "max_retries"] },
-    { title: "Advanced", columns: 3, fields: ["structured_output", "extra_body"] },
+    { title: "Connection", fields: ["base_url", "api_key", "model"], notes: [...inherits, ...(info?.available ? [modelDefaultsLine(info)] : [])] },
+    { title: "Output", fields: ["max_output_tokens", "reasoning_effort"] },
+    { title: "Sampling", fields: ["temperature", "top_p", "top_k"] },
+    { title: "Requests", fields: ["timeout", "max_retries"] },
+    { title: "Advanced", fields: ["structured_output", "extra_body"], wide: ["extra_body"] },
   ];
 }
 
 /** The groups of the other sections that have more than a handful of fields. */
 const GROUPS: Record<string, FieldGroup[]> = {
   general: [
-    { title: "Service", columns: 3, fields: ["log_level", "timezone", "docker_url"] },
-    { title: "Language and display", columns: 3, fields: ["language", "root_font_size"] },
-    { title: "Instructions", columns: 1, fields: ["instructions"] },
+    { title: "Service", fields: ["log_level", "timezone", "docker_url"] },
+    { title: "Language and display", fields: ["language", "root_font_size"] },
+    { title: "Instructions", fields: ["instructions"], wide: ["instructions"] },
   ],
   chat: [
-    { title: "Steps", columns: 3, fields: ["max_steps", "worker_max_steps"] },
-    { title: "What the model sees", columns: 3, fields: ["history_messages", "max_tool_result_chars"] },
-    { title: "Time limits", columns: 3, fields: ["command_timeout", "tool_timeout"] },
+    { title: "Steps", fields: ["max_steps", "worker_max_steps"] },
+    { title: "What the model sees", fields: ["history_messages", "max_tool_result_chars"] },
+    { title: "Time limits", fields: ["command_timeout", "tool_timeout"] },
   ],
   logs: [
-    { title: "Recording", columns: 3, fields: ["llm_trace", "store_bodies", "keep_app_log"] },
-    { title: "Retention", columns: 3, fields: ["retention", "max_total_mb"] },
+    { title: "Recording", fields: ["llm_trace", "store_bodies", "keep_app_log"] },
+    { title: "Retention", fields: ["retention", "max_total_mb"] },
   ],
 };
 
@@ -95,6 +95,7 @@ function ModelForm({ profile, schema, value, onChange, ctx, onModels }: {
   const form: FormContext = {
     ...ctx,
     groups: { ...ctx.groups, [section]: modelGroups(profile, info) },
+    placeholders: profile === "worker" ? { "worker.base_url": "main model's endpoint" } : undefined,
     // a model that does not report "thinking" has no reasoning to set
     hidden: info?.available && !info.capabilities.includes("thinking") ? [`${section}.reasoning_effort`] : [],
   };
@@ -223,25 +224,32 @@ export function SettingsPage() {
       <PageHeader title="Settings">{buttons}</PageHeader>
       <Panes>
         <Pane side label="Settings sections">
-          <List label="Settings sections">
-            {Object.entries(doc.sections).map(([key, title]) => (
-              <ListItem
-                key={key}
-                mono
-                icon={SECTION_ICONS[key]}
-                title={title.toLowerCase()}
-                href={`#/settings/${key}`}
-                selected={key === section}
-                // the page stays, the address follows (see the effect above)
-                onClick={(e) => {
-                  e.preventDefault();
-                  setSection(key);
-                }}
-              >
-                {errorCount(key) > 0 && <Count tone="crit">{errorCount(key)}</Count>}
-              </ListItem>
-            ))}
-          </List>
+          <ListPicker
+            label="section"
+            value={section}
+            options={Object.entries(doc.sections).map(([key, title]) => ({ value: key, label: errorCount(key) > 0 ? `${title.toLowerCase()} (${errorCount(key)} to fix)` : title.toLowerCase() }))}
+            onChange={setSection}
+          >
+            <List label="Settings sections">
+              {Object.entries(doc.sections).map(([key, title]) => (
+                <ListItem
+                  key={key}
+                  mono
+                  icon={SECTION_ICONS[key]}
+                  title={title.toLowerCase()}
+                  href={`#/settings/${key}`}
+                  selected={key === section}
+                  // the page stays, the address follows (see the effect above)
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setSection(key);
+                  }}
+                >
+                  {errorCount(key) > 0 && <Count tone="crit">{errorCount(key)}</Count>}
+                </ListItem>
+              ))}
+            </List>
+          </ListPicker>
         </Pane>
 
         <Pane
