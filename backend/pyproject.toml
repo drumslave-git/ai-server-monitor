@@ -32,6 +32,7 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "pytest-cov==7.1.0",
     "respx>=0.21",
     "ruff>=0.7",
 ]
@@ -46,6 +47,18 @@ packages = ["ai_server_monitor"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+# Line coverage is enforced on every run (also in CI, which runs a plain `pytest -q`): below
+# [tool.coverage.report] fail_under the run fails. A run of a single test file stays below it;
+# add `--no-cov` for such runs.
+addopts = "--cov"
+
+[tool.coverage.run]
+source = ["ai_server_monitor"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true
 
 [tool.ruff]
 line-length = 100
