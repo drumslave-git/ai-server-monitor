@@ -24,7 +24,6 @@ code.
 | Chat engine and sessions | `chat/` | — |
 | Approvals and audit (the action layer) | `actions/` | — |
 | Telegram bot | `outputs/telegram.py` | python-telegram-bot |
-| `/metrics` | `outputs/metrics.py` | prometheus_client |
 | Hardware meters: CPU, RAM, NVIDIA GPUs, read on request | `hardware.py` | psutil, `nvidia-smi` in the read-only shell |
 | Live updates (SSE), event bus | `outputs/sse.py`, `events.py` | FastAPI streaming responses |
 | Model call logs, app log | `tracing/` | — |
@@ -283,9 +282,8 @@ chose `auto`.
   a wrapper model would be ~250 lines of our own. Such models are not supported.
 - **A kept MCP connection, reconnects, backoff or a cache of failed servers**: one connection
   per run is what Pydantic AI's toolset does; a dead server costs its timeout per run.
-- **Our own scheduler, metrics registry or Telegram client**: APScheduler, prometheus_client and
-  python-telegram-bot replaced them.
-- **Collectors, reports, charts, health scores, the Prometheus query planner**: removed in 0.7;
+- **Our own scheduler or Telegram client**: APScheduler and python-telegram-bot replaced them.
+- **Collectors, reports, charts, health scores, the query planner**: removed in 0.7;
   the jobs do this with the shell.
 - Small gaps kept: over HTTP+SSE an MCP call cut off by its timeout sometimes ends as
   "Connection closed" instead of "timed out" (a race in the transport); tool names the model invents are answered by Pydantic AI itself (no

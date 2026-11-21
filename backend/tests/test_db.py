@@ -137,7 +137,7 @@ async def test_database_at_schema_4_migrates_to_latest(tmp_path: Path) -> None:
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 22
+        assert await db.schema_version() == 23
         info = await db.fetchall("PRAGMA table_info(telegram_batch_messages)")
         cols = {r["name"] for r in info}
         assert cols == {"batch_id", "chat_id", "message_id", "created_ts"}
@@ -146,7 +146,7 @@ async def test_database_at_schema_4_migrates_to_latest(tmp_path: Path) -> None:
         await db.close()
 
 
-async def test_database_at_schema_5_loses_the_prometheus_query_table(tmp_path: Path) -> None:
+async def test_database_at_schema_5_loses_the_planner_query_table(tmp_path: Path) -> None:
     import sqlite3
 
     path = tmp_path / "v5.db"
@@ -160,7 +160,7 @@ async def test_database_at_schema_5_loses_the_prometheus_query_table(tmp_path: P
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 22
+        assert await db.schema_version() == 23
         assert not await db.fetchall("PRAGMA table_info(prom_queries)")
     finally:
         await db.close()

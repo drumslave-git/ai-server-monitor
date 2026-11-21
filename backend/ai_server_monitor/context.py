@@ -15,7 +15,6 @@ from typing import Any
 
 import httpx
 
-from . import __version__
 from .actions import ActionService, Notifier
 from .agent.change_shell import ChangeShell
 from .agent.models import ModelHub
@@ -32,7 +31,6 @@ from .jobs import JobRunner
 from .mcp_client import McpServers
 from .mcp_client.domains import DomainStore
 from .outputs.action_events import ActionEventBridge
-from .outputs.metrics import MetricsHub
 from .outputs.telegram import TelegramBot
 from .schedule import Schedule
 from .settings_store import SettingsStore
@@ -68,9 +66,7 @@ class AppContext:
         self._lock = asyncio.Lock()
         # Survive settings changes (subscribers and journal history stay valid):
         self.events = EventBus()
-        self.metrics = MetricsHub(__version__)
-        self._metrics_task: asyncio.Task[None] | None = None
-        self.action_notifiers: list[Notifier] = [ActionEventBridge(self.events, self.metrics)]
+        self.action_notifiers: list[Notifier] = [ActionEventBridge(self.events)]
         """Callables `(event, record)` told about suggested/pending/finished actions.
         Survives settings changes; the event bus subscribes here."""
         # Built in start() / apply_settings():
@@ -111,7 +107,6 @@ class AppContext:
         await self.db.connect()
         self.tracing.applog.install()
         self.tracing.applog.start()
-        self._start_metrics_consumer()
         if self._seed is not None:
             await self.store.save(self._seed)
         self.settings = await self.store.load()
@@ -128,8 +123,6 @@ class AppContext:
         await self._rerun_interrupted()
         if closed := await self.actions.close_interrupted():
             log.warning("%d approved action(s) were interrupted by the last stop", closed)
-        await self._refresh_pending_metrics()
-        await self._load_job_metrics()
         log.info("started (data=%s, host root=%s)", self.bootstrap.data_dir, self.host_env.root)
 
     async def stop(self) -> None:
@@ -139,10 +132,6 @@ class AppContext:
         await self._stop_services()
         await self.jobs.close()
         self.events.close()
-        if self._metrics_task is not None:
-            self._metrics_task.cancel()
-            await asyncio.gather(self._metrics_task, return_exceptions=True)
-            self._metrics_task = None
         await self.tracing.stop()
         await self.db.close()
         log.info("stopped")
@@ -227,7 +216,6 @@ class AppContext:
         """A job was created, changed or deleted: bring the schedule in line."""
         jobs = await self.jobs.store.list()
         self.schedule.sync_jobs(jobs, self._scheduled_run)
-        self.metrics.forget_jobs(j["slug"] for j in jobs)
 
     async def _rerun_interrupted(self) -> None:
         """Jobs whose last run the stop interrupted run again shortly after the start (through
@@ -253,46 +241,6 @@ class AppContext:
     async def pending_approvals_count(self) -> int:
         row = await self.db.fetchone("SELECT COUNT(*) AS n FROM actions WHERE status = 'pending'")
         return int(row["n"]) if row else 0
-
-    async def pending_approval_batches_count(self) -> int:
-        row = await self.db.fetchone(
-            "SELECT COUNT(DISTINCT batch_id) AS n FROM actions WHERE status = 'pending'"
-        )
-        return int(row["n"]) if row else 0
-
-    async def _refresh_pending_metrics(self) -> None:
-        self.metrics.set_pending(
-            await self.pending_approvals_count(), await self.pending_approval_batches_count()
-        )
-
-    async def _load_job_metrics(self) -> None:
-        """The job series from the stored runs (after a start: the latest run of each job)."""
-        slugs = {j["slug"] for j in await self.jobs.store.list()}
-        self.metrics.forget_jobs(slugs)
-        for slug, run in (await self.jobs.store.latest_runs()).items():
-            if slug in slugs:  # not the runs of retired jobs
-                self.metrics.set_job_run(run, count=False)
-
-    def _start_metrics_consumer(self) -> None:
-        """Keep the metrics current from the events (subscribed before anything can publish):
-        LLM calls, finished job runs, approvals. A scrape then only reads them."""
-        sub = self.events.subscribe("llm.call", "job.finished", "action", "approval")
-
-        async def consume() -> None:
-            async for event in sub:
-                try:
-                    if event.type == "llm.call":
-                        self.metrics.on_llm_call(event.data)
-                    elif event.type == "job.finished":
-                        run = await self.jobs.store.get_run(int(event.data["run_id"]))
-                        if run is not None:
-                            self.metrics.set_job_run(run, count=True)
-                    else:
-                        await self._refresh_pending_metrics()
-                except Exception:
-                    log.exception("metrics: could not handle %s", event.type)
-
-        self._metrics_task = asyncio.create_task(consume(), name="metrics-consumer")
 
     async def _stop_services(self) -> None:
         if self.telegram is not None:

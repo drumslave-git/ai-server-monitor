@@ -124,7 +124,6 @@ def test_telegram_send_without_chats_is_not_ok(client: TestClient) -> None:
 def test_unknown_kind_is_404(client: TestClient) -> None:
     assert client.post("/api/settings/test/nope", json={}).status_code == 404
     assert client.post("/api/settings/test/docker", json={}).status_code == 404
-    assert client.post("/api/settings/test/prometheus", json={}).status_code == 404
 
 
 def test_secrets_are_scrubbed_from_text() -> None:

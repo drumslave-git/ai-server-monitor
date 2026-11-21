@@ -572,7 +572,7 @@ function JobForm({ job, kind, all, notice, onReset }: { job: Job | null; kind: K
               <Input id="job-name" value={name} onChange={(e) => onName(e.target.value)} required maxLength={80} />
             </Field>
             {creating ? (
-              <Field label="slug" flex="1 1 180px" help="Its id in links, logs and metrics. Cannot be changed later.">
+              <Field label="slug" flex="1 1 180px" help="Its id in links and logs. Cannot be changed later.">
                 <Input
                   id="job-slug"
                   value={slug}
@@ -586,7 +586,7 @@ function JobForm({ job, kind, all, notice, onReset }: { job: Job | null; kind: K
                 />
               </Field>
             ) : (
-              <Field label="slug" group flex="1 1 180px" help="Its id in links, logs and metrics.">
+              <Field label="slug" group flex="1 1 180px" help="Its id in links and logs.">
                 <FieldValue>{job.slug}</FieldValue>
               </Field>
             )}

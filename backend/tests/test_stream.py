@@ -115,6 +115,6 @@ def test_llm_calls_arrive_end_to_end_over_a_real_connection(bootstrap: Bootstrap
         assert status["llm_configured"] is True and status["main_model"] == "fake"
 
         deadline = time.time() + 5  # the disconnect is noticed by the server
-        while app.state.ctx.events.subscriber_count > 1 and time.time() < deadline:
+        while app.state.ctx.events.subscriber_count > 0 and time.time() < deadline:
             time.sleep(0.05)
-        assert app.state.ctx.events.subscriber_count == 1  # only the metrics consumer is left
+        assert app.state.ctx.events.subscriber_count == 0

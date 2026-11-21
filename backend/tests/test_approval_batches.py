@@ -273,7 +273,7 @@ async def test_expiry_marks_everything_still_pending_in_the_batch(
     assert view["counts"] == {"executed": 2, "expired": 4} and view["pending"] == 0
     assert all(i["decided_by"] == "timeout" for i in view["items"] if i["status"] == "expired")
     assert names(events).count("approval.expired") == 1  # one event for the batch
-    assert names(events).count("action.result") == 4  # and one per item for the audit/metrics
+    assert names(events).count("action.result") == 4  # and one per item for the audit
     assert next(e for n, e in events if n == "approval.expired")["decision"] == "expired"
     assert await service.pending_batches() == []
     with pytest.raises(Conflict):

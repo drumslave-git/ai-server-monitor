@@ -1,8 +1,7 @@
-"""Bridge from the action layer's notifiers to the event bus and the metrics.
+"""Bridge from the action layer's notifiers to the event bus.
 
 `ActionService` calls `notifier(event, record)` and this publishes the event on the bus (so
-it reaches GET /api/stream). Item events carry one audit row and are counted in
-`asm_actions_total`:
+it reaches GET /api/stream). Item events carry one audit row:
 
     action.suggested   an action was only suggested (policy "suggest")
     action.result      an item finished: executed | failed | dry_run | rejected | deferred | expired
@@ -25,7 +24,6 @@ from typing import Any
 
 from ..actions import BATCH_EVENTS
 from ..events import EventBus
-from .metrics import MetricsHub
 
 _KEEP = (
     "id",
@@ -72,19 +70,11 @@ def compact_batch(batch: dict[str, Any]) -> dict[str, Any]:
 
 
 class ActionEventBridge:
-    def __init__(self, bus: EventBus, metrics: MetricsHub):
+    def __init__(self, bus: EventBus):
         self.bus = bus
-        self.metrics = metrics
 
     def __call__(self, event: str, record: dict[str, Any]) -> None:
         if event in BATCH_EVENTS:
-            if event in ("approval.pending", "approval.updated"):  # `added` new pending items
-                self.metrics.on_action(
-                    str(record["action"]), "pending", int(record.get("added") or 0)
-                )
             self.bus.publish(event, compact_batch(record))
             return
-        data = compact_action(record)
-        status = str(record.get("status") or "")
-        self.metrics.on_action(str(data["action"]), status)
-        self.bus.publish(event, data)
+        self.bus.publish(event, compact_action(record))

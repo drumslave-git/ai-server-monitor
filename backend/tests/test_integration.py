@@ -1,4 +1,4 @@
-"""Cross-lane wiring: migrations, action layer -> event bus/metrics."""
+"""Cross-lane wiring: migrations, action layer -> event bus."""
 
 from __future__ import annotations
 
@@ -47,6 +47,7 @@ def test_migrations_are_contiguous_and_complete() -> None:
         (20, "0020_mcp_domains.sql"),
         (21, "0021_job_runs_mcp.sql"),
         (22, "0022_job_queues.sql"),
+        (23, "0023_remove_metrics.sql"),
     ]
     names = {e.name for e in resources.files("ai_server_monitor.migrations").iterdir()}
     assert not any("placeholder" in n for n in names)
@@ -56,7 +57,7 @@ async def test_fresh_database_migrates_to_latest(tmp_path: Path) -> None:
     db = Database(tmp_path / "fresh.db")
     await db.connect()
     try:
-        assert await db.schema_version() == 22
+        assert await db.schema_version() == 23
         tables = {
             r["name"]
             for r in await db.fetchall("SELECT name FROM sqlite_master WHERE type='table'")
@@ -83,7 +84,7 @@ async def test_database_at_the_old_main_schema_upgrades(tmp_path: Path) -> None:
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 22
+        assert await db.schema_version() == 23
         assert await db.kv_get("keep") == 1  # data survives
         await db.execute(
             "INSERT INTO actions (ts, updated, action, policy, status, source) "
@@ -96,19 +97,7 @@ async def test_database_at_the_old_main_schema_upgrades(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- end to end
 
 
-def metrics_with(client: Any, line: str, timeout: float = 5.0) -> str:
-    """The scrape once it contains `line` (the metrics follow the events asynchronously)."""
-    deadline = time.monotonic() + timeout
-    while True:
-        text = client.get("/metrics").text
-        if line in text or time.monotonic() > deadline:
-            return text
-        time.sleep(0.05)
-
-
-def test_approval_request_reaches_the_stream_and_the_metrics(
-    bootstrap: Bootstrap, fake_action: FakeAction
-) -> None:
+def test_approval_request_reaches_the_stream(bootstrap: Bootstrap, fake_action: FakeAction) -> None:
     app = create_app(bootstrap, seed_settings=settings_with("1h"))
     holder: dict[str, Any] = {}
 
@@ -147,12 +136,9 @@ def test_approval_request_reaches_the_stream_and_the_metrics(
         assert pending["data"]["pending"] == 1 and pending["data"]["id"] == result["batch_id"]
         assert "items" not in pending["data"] and "args" not in pending["data"]  # compact
 
-        scrape = metrics_with(client, "asm_pending_approvals 1.0\n")
-        assert "asm_pending_approval_batches 1.0\n" in scrape
-        assert 'asm_actions_total{action="fake_write",result="pending"} 1.0' in scrape
         assert client.get("/api/status").json()["pending_approvals"] == 1
 
-        # Approve over HTTP: decided + result events, and the gauge drops back.
+        # Approve over HTTP: decided + result events.
         with client.stream("GET", "/api/stream", params={"types": "approval,action"}) as resp:
             threading.Thread(
                 target=lambda: (
@@ -168,8 +154,5 @@ def test_approval_request_reaches_the_stream_and_the_metrics(
         assert events[0][1]["status"] == "executed"
         assert events[1][1]["decision"] == "approve" and events[1][1]["decided_by"] == "ui"
         assert events[1][1]["counts"] == {"executed": 1}
-        after = metrics_with(client, "asm_pending_approvals 0.0\n")
-        assert 'asm_actions_total{action="fake_write",result="executed"} 1.0' in after
-        assert "asm_pending_approval_batches 0.0\n" in after
         assert fake_action.calls == ["alpha"]
         assert client.get("/api/status").json()["pending_approvals"] == 0

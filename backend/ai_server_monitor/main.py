@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hmac
 import os
 import time
 from collections.abc import AsyncIterator
@@ -11,7 +10,7 @@ from typing import Annotated, Any, Literal
 
 import httpx
 from fastapi import Body, FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
@@ -38,7 +37,6 @@ from .llm.check import check_model
 from .llm.modelinfo import read_model_info
 from .mcp_client.api import router as mcp_router
 from .mcp_client.api import sort_tested
-from .outputs.metrics import CONTENT_TYPE
 from .outputs.sse import SSE_HEADERS, event_stream, parse_types
 from .settings_store import SettingsStore, merge_secrets
 from .tracing.api import router as logs_router
@@ -164,24 +162,6 @@ def create_app(
         ctx = get_ctx(request)
         await ctx.resume_automation("ui")
         return await ctx.automation_status()
-
-    @app.get("/metrics", include_in_schema=False)
-    async def metrics(request: Request) -> Response:
-        """Prometheus scrape endpoint (Settings → Outputs → metrics)."""
-        ctx = get_ctx(request)
-        cfg = ctx.settings.outputs.metrics
-        if not cfg.enabled:
-            raise HTTPException(status_code=404, detail="metrics are disabled")
-        token = cfg.bearer_token.get_secret_value()
-        if token and not hmac.compare_digest(
-            request.headers.get("authorization", ""), f"Bearer {token}"
-        ):
-            raise HTTPException(
-                status_code=401,
-                detail="bearer token required",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        return Response(ctx.metrics.render(), headers={"content-type": CONTENT_TYPE})
 
     @app.get("/api/status")
     async def status(request: Request) -> api_models.StatusResponse:
