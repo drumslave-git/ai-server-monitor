@@ -1,5 +1,6 @@
 // Compositions of kit parts that the log views share.
 import type { ReactNode } from "react";
+import { OwnerRef } from "../../components/EntityRefs";
 import { PageHeader, Status, Tabs } from "../../kit";
 
 /** Which calls a list shows when it was opened from a chat or a job run. */
@@ -13,7 +14,7 @@ export function LogsHead({ tab, link, tools }: { tab: "llm" | "app"; link?: Call
       note={
         link ? (
           <>
-            Calls belonging to {link.kind} {link.id} · <a href="#/logs/llm">show all</a>
+            Calls belonging to <OwnerRef kind={link.kind} id={link.id} /> · <a href="#/logs/llm">show all</a>
           </>
         ) : undefined
       }

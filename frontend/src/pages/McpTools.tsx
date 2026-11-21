@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { api } from "../api";
 import type { components } from "../api-types";
 import { ago } from "../fmt";
+import { ServerRef } from "../components/EntityRefs";
 import { errorText } from "../jobs";
 import {
   Actions,
@@ -492,7 +493,7 @@ function ToolRow({
           </Text>
           <Inline nowrap gap={2}>
             <Tag tone={tool.kind === "write" ? "warn" : undefined}>{tool.kind}</Tag>
-            <Tag>{tool.server}</Tag>
+            <ServerRef name={tool.server} />
             {state && !state.enabled && <Status tone="off" hollow>server off</Status>}
             {state?.error && <Status tone="crit">unreachable</Status>}
           </Inline>

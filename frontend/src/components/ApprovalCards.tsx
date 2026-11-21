@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { api, ApiError, type ActionRecord, type ApprovalBatch } from "../api";
-import { Actions, Approval, Button, Code, Column, ErrorText, Inline, Lamp, Meta, Scroll, Stack, Status, Text, type Tone } from "../kit";
+import { Actions, Approval, Button, Code, Column, EntityLink, ErrorText, Inline, Lamp, Meta, Scroll, Stack, Status, Text, type Tone } from "../kit";
 import { useStream } from "../live";
 import { usePoll } from "../ui";
+import { approvalHref } from "./EntityRefs";
 import { HostCommand } from "./HostCommand";
 
 /** Items of a long approval shown before "show n more". */
@@ -186,7 +187,7 @@ function ApprovalCard({ batch, onChange }: { batch: ApprovalBatch; onChange: () 
             {many
               ? [waiting ? `${waiting} waiting for your approval` : "", settled].filter(Boolean).join(" · ")
               : (STATUS_TEXT[batch.items[0]?.status ?? ""] ?? settled)}{" "}
-            · <a href={`#/approvals/${batch.id}`}>open in Approvals</a>
+            · <EntityLink kind="approval" href={approvalHref(batch.id)}>open in Approvals</EntityLink>
           </Status>
         </>
       }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAutomation } from "../automation";
 import { api, type StatusResponse } from "../api";
+import { RunRef } from "../components/EntityRefs";
 import { ExplainButton } from "../components/Explain";
 import { Findings } from "../components/Findings";
 import { ago, clock, until } from "../fmt";
@@ -122,7 +123,7 @@ export function DashboardPage() {
       {withFindings.length > 0 && (
         <Panel title="Findings" meta={`${findings} from ${withFindings.length === 1 ? withFindings[0].name : `${withFindings.length} summaries`}`}>
           {withFindings.map((job) => (
-            <Findings key={job.slug} findings={job.last_run?.findings ?? []} runId={job.last_run?.id} source={withFindings.length > 1 ? job.name : undefined} />
+            <Findings key={job.slug} findings={job.last_run?.findings ?? []} runId={job.last_run?.id} source={withFindings.length > 1 && job.last_run ? <RunRef slug={job.slug} id={job.last_run.id}>{job.name}</RunRef> : undefined} />
           ))}
         </Panel>
       )}

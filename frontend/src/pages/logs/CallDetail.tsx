@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../../api";
+import { OwnerRef } from "../../components/EntityRefs";
 import { bytes } from "../../fmt";
 import { Actions, Bar, Button, Code, Column, Empty, ErrorText, Fold, IconButton, IconLink, KeyValue, Labeled, Legend, Meta, Notice, PageHeader, Pad, Panel, Row, Split, Status, Text } from "../../kit";
-import { approxTokens, linkHref, linkLabel, messageText, ms, prettyJson, purposeLabel, stamp, tokens } from "./format";
+import { approxTokens, messageText, ms, prettyJson, purposeLabel, stamp, tokens } from "./format";
 import { CallStatus } from "./parts";
 import { TimelinePanel } from "./Timeline";
 import type { ChatMessage, LlmCall, ResponseToolCall, ToolSpec } from "./types";
@@ -55,8 +56,6 @@ function Loaded({ call }: { call: LlmCall }) {
     }
   };
 
-  const href = linkHref(call);
-  const label = linkLabel(call);
   const facts: [ReactNode, ReactNode][] = [
     ["when", stamp(call.ts)],
     ["model", call.model ?? "—"],
@@ -72,7 +71,7 @@ function Loaded({ call }: { call: LlmCall }) {
     ["request", `${bytes(call.request_bytes)}, ${call.messages_count ?? 0} messages${call.tools_count ? `, ${call.tools_count} tools` : ""}`],
   ];
   if (call.attempt > 1) facts.push(["attempt", `${call.attempt} (earlier ones failed)`]);
-  if (label) facts.push(["belongs to", href ? <a href={href}>{label}</a> : label]);
+  if (call.link_kind) facts.push(["belongs to", <OwnerRef kind={call.link_kind} id={call.link_id} step={call.link_step} />]);
 
   return (
     <>

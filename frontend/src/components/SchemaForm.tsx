@@ -65,6 +65,8 @@ export type FormContext = {
   /** How an object's fields (by its path) are put into named rows. The fields of the object that no
    *  group names follow in a plain grid. */
   groups?: Record<string, FieldGroup[]>;
+  /** The entry of a list of objects a link points at, by its name: its card opens and scrolls into view. */
+  focusEntry?: string;
 };
 
 /** A named row of an object's fields: fields by key, flowing; wide: those that take a whole row; optional lines under them. */
@@ -491,6 +493,7 @@ function ListOfObjects({ title, spec, item, value, onChange, path, ctx, inset }:
                 status={typeof fields.enabled === "boolean" && <Status tone={fields.enabled ? "ok" : "off"}>{fields.enabled ? "on" : "off"}</Status>}
                 meta={typeof fields.url === "string" && fields.url}
                 reveal={added === keys.current[i] || failed}
+                focus={ctx.focusEntry !== undefined && fields.name === ctx.focusEntry}
                 aside={
                   <>
                     {buttons}

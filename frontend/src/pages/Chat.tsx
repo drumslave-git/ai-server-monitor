@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Schemas } from "../api";
 import { ApprovalCards } from "../components/ApprovalCards";
+import { ToolName } from "../components/EntityRefs";
 import { HostCommand } from "../components/HostCommand";
 import { RunnableMarkdown } from "../components/RunnableMarkdown";
 import { ago } from "../fmt";
 import { takeExplain, type ExplainRequest } from "../components/Explain";
-import { Code, Column, Command, Composer, Empty, ErrorText, Fold, IconButton, Inline, LinkButton, List, ListItem, Message, Meta, PageHeader, Pad, Pane, Panes, Status, Text, type Tone } from "../kit";
+import { Code, Column, Command, Composer, Empty, EntityLink, ErrorText, Fold, IconButton, Inline, LinkButton, List, ListItem, Message, Meta, PageHeader, Pad, Pane, Panes, Status, Text, type Tone } from "../kit";
 import { useStream } from "../live";
 import { useNow, usePoll } from "../ui";
 
@@ -564,7 +565,9 @@ function AssistantMessage({
         <Fold inline title={`used ${turn.tools.length === 1 ? "a tool" : `${turn.tools.length} tools`}: ${names.join(", ")}`}>
           {turn.tools.map((t) => (
             <Column key={t.id + t.name} gap={1}>
-              <Status tone={t.ok === undefined ? "off" : t.ok ? "ok" : "crit"}>{displayName(t.name)}</Status>
+              <Status tone={t.ok === undefined ? "off" : t.ok ? "ok" : "crit"}>
+                <ToolName name={t.name} />
+              </Status>
               {typeof t.args === "object" && t.args !== null && Object.keys(t.args).length > 0 && <Meta>{JSON.stringify(t.args)}</Meta>}
               {t.preview && (
                 <Code wrap maxHeight={120}>
@@ -598,7 +601,7 @@ function AssistantMessage({
       )}
       {!turn.live && turn.trace && turn.session && (
         <Meta>
-          <a href={`#/logs/llm/for/chat/${turn.session}/${turn.trace}`}>trace</a>
+          <EntityLink kind="call" href={`#/logs/llm/for/chat/${turn.session}/${turn.trace}`}>trace</EntityLink>
           {turn.domains && <> · {domainsText(turn.domains)}</>}
           {turn.unmarked && (
             <>

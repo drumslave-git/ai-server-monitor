@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api";
+import { OwnerRef } from "../../components/EntityRefs";
 import { Actions, Button, Empty, ErrorText, Field, Input, Legend, Meta, Meter, Notice, Pane, Panel, Panes, Row, Select, Stack, Status, Table, Td, Text, TitleLink, Toolbar } from "../../kit";
 import { useStream } from "../../live";
-import { linkLabel, ms, purposeLabel, stamp, tokens } from "./format";
+import { ms, purposeLabel, stamp, tokens } from "./format";
 import { CallStatus, LogsHead, type CallsLink } from "./parts";
 import type { LlmCallList, LlmCallSummary, TraceStats } from "./types";
 
@@ -177,7 +178,6 @@ export function LlmCallsList({ link }: { link: CallsLink | null }) {
 }
 
 function CallRow({ call: c, maxTokens, maxMs }: { call: LlmCallSummary; maxTokens: number; maxMs: number }) {
-  const label = linkLabel(c);
   const preview = c.status !== "ok" && c.error ? c.error : c.response_preview || c.request_preview || "";
   return (
     <tr>
@@ -200,7 +200,11 @@ function CallRow({ call: c, maxTokens, maxMs }: { call: LlmCallSummary; maxToken
           <TitleLink truncate href={`#/logs/llm/${c.id}`}>
             {preview || `call #${c.id}`}
           </TitleLink>
-          {label && <Meta>{label}</Meta>}
+          {c.link_kind && (
+            <Meta>
+              <OwnerRef kind={c.link_kind} id={c.link_id} step={c.link_step} />
+            </Meta>
+          )}
         </Stack>
       </Td>
       <Td>

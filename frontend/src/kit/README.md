@@ -79,7 +79,13 @@ The design kit with live previews of every component: https://claude.ai/artifact
 - Markup made outside React (Markdown in `Prose`) uses `commandHtml`, `iconButtonHtml` and
   `setIconButton` to write the same command block and icon buttons; `Prose` fills in their icons and hints.
 - Words: `Text` (`kind="data"` or `"label"`, `dim`, `tone`, `wrap`, `nowrap`, `keep`, `block`), `Meta`,
-  `Heading`, `TitleLink`, `ErrorText`.
+  `Heading`, `TitleLink`, `ErrorText`, `EntityLink`.
+
+`EntityLink` is how one thing names another: an approval's source chat, a run's job, a call's chat, a tool's
+server. It is a link with the icon of what it names (`kind`: chat, job, summary, run, approval, call, server,
+model, worker) and opens that thing where it already lives (`href`). Every place that names another entity uses
+it, so such links look and act the same; a name that is not a thing of its own (the owner, a timeout) stays
+plain text. A link is one line: a name wider than its room is cut and gets the tooltip of cut text (the name of a job or summary has any length and wraps instead, its icon staying at the first line); `mono` is for ids.
 
 A chosen thing looks the same everywhere: the raised ground in a one-pixel lime frame (a selected
 `ListItem`, a `Row current`, a `Tr selected`).
@@ -121,7 +127,7 @@ A text cut by its width (`text-overflow: ellipsis`) shows its whole text in a to
 on it for half a second or the keyboard focus lands on it (Escape, scrolling and clicking close it).
 `TrimTips`, mounted once by `Shell`, does this for the whole page: it asks the browser whether the element
 under the pointer is really cut, so a part only has to use the ellipsis (`ListItem` titles, `TitleLink
-truncate`, the title of a `Fold`, the meta of a `Card`) and a text added later is covered the moment it is
+truncate`, `EntityLink`, the title of a `Fold`, the meta of a `Card`) and a text added later is covered the moment it is
 cut. A touch screen has no pointer to rest, so it gets no tooltip. A field is covered too: an empty `Input`'s
 placeholder and a `Select`'s chosen option are measured with the field's own font (the browser clips them without
 an ellipsis the page can ask about; a select's arrow is allowed 24px). `Clamp` has its own "show more".

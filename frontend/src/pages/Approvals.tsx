@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type ActionRecord, type ApprovalBatch, type StatusResponse } from "../api";
 import { callArguments } from "../components/ApprovalCards";
+import { ApprovalRef, ItemTarget, SourceRef } from "../components/EntityRefs";
 import { HostCommand } from "../components/HostCommand";
 import { ago, clock, until } from "../fmt";
 import { useAutomation } from "../automation";
@@ -126,7 +127,7 @@ function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) 
             ) : (
               <Stack>
                 <Text kind="label" wrap dim={item.status !== "pending"}>
-                  {item.target}
+                  <ItemTarget item={item} />
                 </Text>
                 {callArguments(item) && (
                   <Text kind="data" wrap dim={item.status !== "pending"}>
@@ -147,7 +148,7 @@ function BatchCard({ batch, now, focused, busy, onDecide, onAudit }: CardProps) 
   return (
     <Row current={focused} column label={batch.title} ref={ref}>
         <Meta>
-          #{batch.id} · from {batch.source} · requested {ago(batch.ts, now)}
+          #{batch.id} · from <SourceRef source={batch.source} /> · requested {ago(batch.ts, now)}
           {waiting.length > 0 && <> · expires {until(batch.expires_at, now)}</>}
         </Meta>
         <Heading>{batch.title}</Heading>
@@ -403,25 +404,22 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
                     <Td>
                       <Stack>
                         <Meta>{a.action}</Meta>
-                        <Text kind="data">{a.target}</Text>
+                        <Text kind="data">
+                          <ItemTarget item={a} />
+                        </Text>
                       </Stack>
                     </Td>
                     <Td>
                       <ActionStatus status={a.status} />
                     </Td>
                     <Td nowrap>
-                      <Text kind="data">
-                        {a.source}
-                        {a.decided_by ? ` · ${a.decided_by}` : ""}
-                        {a.batch_id && !batch ? (
-                          <>
-                            {" "}
-                            <Button variant="link" onClick={() => { setBatch(a.batch_id); setLimit(100); }} title="Only this approval">
-                              #{a.batch_id}
-                            </Button>
-                          </>
-                        ) : null}
-                      </Text>
+                      <Stack>
+                        <Text kind="data">
+                          <SourceRef source={a.source} />
+                          {a.decided_by ? ` · ${a.decided_by}` : ""}
+                        </Text>
+                        {a.batch_id && <ApprovalRef batch={a.batch_id} />}
+                      </Stack>
                     </Td>
                     <Td wrap>{describe(a)}</Td>
                   </tr>

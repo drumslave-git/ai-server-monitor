@@ -1331,6 +1331,41 @@ export function TitleLink({ mono, truncate, ...rest }: { mono?: boolean; truncat
   return <a {...rest} className={cx("fd-title-link", mono && "fd-mono", truncate && "fd-truncate")} />;
 }
 
+/** What an EntityLink points at, and so which icon it carries (the page's own icon where there is one). */
+export type EntityKind = "chat" | "job" | "summary" | "run" | "approval" | "call" | "server" | "model" | "worker";
+
+const ENTITY_ICON: Record<EntityKind, IconName> = {
+  chat: "chat",
+  job: "jobs",
+  summary: "jobs",
+  run: "run",
+  approval: "approvals",
+  call: "logs",
+  server: "mcp",
+  model: "model",
+  worker: "worker",
+};
+
+/** Where one thing names another (an approval's source chat, a run's job, a call's chat): the name as a link
+ *  that opens that thing, with the icon of its kind. `kind` picks the icon; `href` is where the thing already
+ *  lives. The same look everywhere, in a line of text or a table cell: one line, a name wider than its room is
+ *  cut with an ellipsis and gets the tooltip of cut text; `mono` for machine names and ids. The name of a job or
+ *  summary has any length, so it wraps instead (its icon stays at the first line). */
+export function EntityLink({
+  kind,
+  mono,
+  children,
+  ...rest
+}: { kind: EntityKind; mono?: boolean; children: ReactNode } & Omit<NoLook<AnchorHTMLAttributes<HTMLAnchorElement>>, "children">) {
+  const name = kind === "job" || kind === "summary";
+  return (
+    <a {...rest} className={cx("fd-entity-link", mono && "fd-mono", name && "fd-name")}>
+      <Icon name={ENTITY_ICON[kind]} />
+      <span className={cx("fd-entity-text", !name && "fd-truncate")}>{children}</span>
+    </a>
+  );
+}
+
 /** Children under each other with the panel gap, or the gap given. */
 export function Column({ gap, align, id, onSubmit, children, ...where }: { gap?: Gap; align?: "start" | "end"; children: ReactNode } & AsForm & Place) {
   const className = cx("fd-col", gapClass(gap), alignClass(align));
@@ -2090,6 +2125,7 @@ export function Card({
   aside,
   defaultOpen,
   reveal,
+  focus,
   below,
   children,
 }: {
@@ -2099,15 +2135,21 @@ export function Card({
   aside?: ReactNode;
   defaultOpen?: boolean;
   reveal?: boolean;
+  /** The card a link points at: it opens and scrolls into view when it appears. */
+  focus?: boolean;
   below?: ReactNode;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(Boolean(defaultOpen || reveal));
+  const [open, setOpen] = useState(Boolean(defaultOpen || reveal || focus));
   const bodyId = useId();
   const body = useRef<HTMLDivElement>(null);
+  const card = useRef<HTMLElement>(null);
   useEffect(() => {
     if (reveal) setOpen(true);
   }, [reveal]);
+  useEffect(() => {
+    if (focus) card.current?.scrollIntoView({ block: "start" });
+  }, [focus]);
   // hidden="until-found": closed, yet the browser's find in page still reaches the fields and opens the card
   useLayoutEffect(() => {
     const el = body.current;
@@ -2123,7 +2165,7 @@ export function Card({
     return () => el.removeEventListener("beforematch", found);
   }, []);
   return (
-    <section className={cx("fd-card", open && "fd-card-open")}>
+    <section ref={card} className={cx("fd-card", open && "fd-card-open")}>
       <div className="fd-card-head">
         <h3 className="fd-card-title">
           <button type="button" className="fd-card-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen(!open)}>

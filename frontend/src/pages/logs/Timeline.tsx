@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api";
+import { callHref } from "../../components/EntityRefs";
 import { bytes } from "../../fmt";
-import { Axis, Bar, Button, Code, Column, ErrorText, Labeled, Legend, Meta, Panel, Row, Split, Status, Text } from "../../kit";
+import { Axis, Bar, Button, Code, Column, EntityLink, ErrorText, Labeled, Legend, Meta, Panel, Row, Split, Status, Text } from "../../kit";
 import { ms, num, prettyJson } from "./format";
 import { CallStatus } from "./parts";
 import type { Timeline, TimelineEntry, ToolCallDetail } from "./types";
@@ -63,7 +64,7 @@ function TimelineRow({ entry: e, t0, span, selected }: { entry: TimelineEntry; t
             <strong>this call</strong>
           ) : (
             <Text kind="data">
-              <a href={`#/logs/llm/${e.id}`}>call #{e.id}</a>
+              <EntityLink kind="call" href={callHref(e.id)}>call #{e.id}</EntityLink>
             </Text>
           )}
           <Text dim>

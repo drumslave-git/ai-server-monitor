@@ -1,5 +1,6 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useAutomation } from "../automation";
+import { JobRef, ModelRef, ServerRef, runHref } from "../components/EntityRefs";
 import { ExplainButton } from "../components/Explain";
 import { Findings } from "../components/Findings";
 import { api } from "../api";
@@ -11,7 +12,6 @@ import {
   firstLine,
   jobGroups,
   logsHref,
-  MODEL_WORD,
   NOTIFY_CHOICES,
   NOTIFY_WORD,
   originWord,
@@ -35,6 +35,7 @@ import {
   Column,
   Confirm,
   Empty,
+  EntityLink,
   ErrorText,
   Field,
   FieldValue,
@@ -169,8 +170,12 @@ function JobList() {
                       </Td>
                       <Td>
                         <Stack>
-                          <Text kind="data">{whereWord(s, names)}</Text>
-                          <Meta>{MODEL_WORD[s.model]} model</Meta>
+                          <Text kind="data">
+                            <Where job={s} names={names} />
+                          </Text>
+                          <Meta>
+                            <ModelRef model={s.model} />
+                          </Meta>
                         </Stack>
                       </Td>
                       <Td>
@@ -178,7 +183,9 @@ function JobList() {
                           <Text kind="data">
                             {s.members.length} job{s.members.length === 1 ? "" : "s"}
                           </Text>
-                          <Meta>{memberPreview(s.members, bySlug)}</Meta>
+                          <Meta>
+                            <MemberPreview members={s.members} bySlug={bySlug} />
+                          </Meta>
                         </Stack>
                       </Td>
                       <Td>
@@ -229,8 +236,12 @@ function JobList() {
                           </Td>
                           <Td>
                             <Stack>
-                              <Text kind="data">{whereWord(job, names)}</Text>
-                              <Meta>{MODEL_WORD[job.model]} model</Meta>
+                              <Text kind="data">
+                                <Where job={job} names={names} />
+                              </Text>
+                              <Meta>
+                                <ModelRef model={job.model} />
+                              </Meta>
                             </Stack>
                           </Td>
                           <Td>
@@ -266,12 +277,39 @@ function JobList() {
   );
 }
 
-/** The first members of a summary by name: "Containers, Disks and 7 more". */
-function memberPreview(members: string[], bySlug: Record<string, Job>): string {
-  if (members.length === 0) return "none yet";
-  const shown = members.slice(0, 2).map((m) => bySlug[m]?.name ?? m);
+/** The first members of a summary by name, each a link: "Containers, Disks and 7 more". */
+function MemberPreview({ members, bySlug }: { members: string[]; bySlug: Record<string, Job> }) {
+  if (members.length === 0) return <>none yet</>;
+  const shown = members.slice(0, 2);
   const rest = members.length - shown.length;
-  return rest > 0 ? `${shown.join(", ")} and ${rest} more` : shown.join(", ");
+  return (
+    <>
+      {shown.map((m, i) => (
+        <Fragment key={m}>
+          <JobRef slug={m} name={bySlug[m]?.name} />
+          {i < shown.length - 1 && ", "}
+        </Fragment>
+      ))}
+      {rest > 0 && ` and ${rest} more`}
+    </>
+  );
+}
+
+/** What whereWord says, with the summaries a job is in as links. */
+function Where({ job, names }: { job: Pick<Job, "kind" | "summaries" | "interval_s" | "cron">; names: Record<string, string> }) {
+  if (job.kind === "topic" && job.summaries.length)
+    return (
+      <>
+        in{" "}
+        {job.summaries.map((slug, i) => (
+          <Fragment key={slug}>
+            <JobRef summary slug={slug} name={names[slug]} />
+            {i < job.summaries.length - 1 && ", "}
+          </Fragment>
+        ))}
+      </>
+    );
+  return <>{whereWord(job, names)}</>;
 }
 
 function LastResult({ job, running, now }: { job: Job; running: boolean; now: number }) {
@@ -321,7 +359,11 @@ function NextRun({ job, paused, now, via = [] }: { job: Job; paused: boolean; no
       <Text kind="data" title={clock(at)}>
         {until(at, now)}
       </Text>
-      {!job.next_run && soonest && <Meta>with {soonest.name}</Meta>}
+      {!job.next_run && soonest && (
+        <Meta>
+          with <JobRef summary slug={soonest.slug} name={soonest.name} />
+        </Meta>
+      )}
     </Stack>
   );
 }
@@ -957,7 +999,7 @@ function JobDetail({ slug, runId }: { slug: string; runId: number | null }) {
         back={{ label: "jobs", href: "#/jobs" }}
         meta={
           <>
-            {j.enabled ? whereWord(j, names) : "off"} · {MODEL_WORD[j.model]} model ·{" "}
+            {j.enabled ? <Where job={j} names={names} /> : "off"} · <ModelRef model={j.model} /> ·{" "}
             {j.kind === "topic" && j.summaries.length ? "its summary reports" : `notify ${NOTIFY_WORD[j.notify]}`} · {originWord(j)}
             {j.enabled && j.next_run && (
               <>
@@ -1129,7 +1171,9 @@ function RunView({
     facts.push([
       "part of",
       parent ? (
-        <a href={`#/jobs/${parent.job_slug}/runs/${parent.id}`}>a queue run of {names[parent.job_slug] ?? parent.job_slug}</a>
+        <EntityLink kind="run" href={runHref(parent.job_slug, parent.id)}>
+          a queue run of {names[parent.job_slug] ?? parent.job_slug}
+        </EntityLink>
       ) : (
         "a queue run"
       ),
@@ -1157,7 +1201,7 @@ function RunView({
         {run.mcp.domains.length ? run.mcp.domains.join(", ") : "—"}
         {Object.entries(run.mcp.unreachable ?? {}).map(([server, why]) => (
           <Text key={server} dim>
-            {" "}· server {server} unreachable: {why}
+            {" "}· server <ServerRef name={server} /> unreachable: {why}
           </Text>
         ))}
         {(run.mcp.unsorted ?? []).length > 0 && <Text dim> · not sorted, not given: {(run.mcp.unsorted ?? []).join(", ")}</Text>}

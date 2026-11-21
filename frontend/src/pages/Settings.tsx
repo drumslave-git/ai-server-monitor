@@ -111,6 +111,12 @@ export function SettingsPage() {
   const [doc, setDoc] = useState<SettingsDoc | null>(null);
   const [values, setValues] = useState<JsonObject | null>(null);
   const [section, setSection] = useState<string>(() => location.hash.split("/")[2] || "llm");
+  // #/settings/mcp/<server>: a link to one entry of the section; its card opens (the address then drops to the section)
+  const [focusEntry, setFocusEntry] = useState<string | undefined>(() => {
+    const name = location.hash.split("/")[3];
+    return name ? decodeURIComponent(name) : undefined;
+  });
+  const linkedSection = useRef(section);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -130,6 +136,7 @@ export function SettingsPage() {
 
   useEffect(() => {
     history.replaceState(null, "", `#/settings/${section}`);
+    if (section !== linkedSection.current) setFocusEntry(undefined);
     window.scrollTo({ top: 0 });
   }, [section]);
 
@@ -174,6 +181,7 @@ export function SettingsPage() {
     errors,
     suggestions: { "llm.model": models, "worker.model": models },
     groups: GROUPS,
+    focusEntry,
   };
 
   const update = (key: string, v: Json) => {

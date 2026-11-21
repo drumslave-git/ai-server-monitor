@@ -48,21 +48,6 @@ export function prettyJson(text: string): string {
   }
 }
 
-export function linkLabel(call: Pick<LlmCallSummary, "link_kind" | "link_id" | "link_step">): string | null {
-  if (!call.link_kind) return null;
-  // kinds of removed features (report, bench, ...) in old rows: the same neutral label as their purposes
-  if (call.link_kind !== "chat" && call.link_kind !== "job") return "Earlier feature";
-  const id = call.link_id ?? "";
-  const short = call.link_kind === "chat" && id.length > 8 ? id.slice(0, 8) : id;
-  return `${call.link_kind} ${short}${call.link_step ? ` · step ${call.link_step}` : ""}`;
-}
-
-export function linkHref(call: Pick<LlmCallSummary, "link_kind" | "link_id">): string | null {
-  if (call.link_kind === "chat") return "#/chat";
-  if (call.link_kind === "job" && call.link_id) return `#/jobs/${encodeURIComponent(call.link_id)}`;
-  return null;
-}
-
 export const PURPOSE_LABEL: Record<string, string> = {
   chat: "Chat",
   chat_title: "Chat title",
