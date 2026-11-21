@@ -4,6 +4,7 @@
 // CSS ellipsis, and nothing is listed here, so a text added later is covered the moment it is cut.
 // A touch screen gets no tooltip: there is no pointer to rest on it, and a long press is already the
 // browser's text selection.
+// A form field is covered too: an empty input's placeholder and a select's chosen option (see fieldText).
 import { useEffect, useRef } from "react";
 
 /** How long the pointer rests on a cut text before its tooltip shows. */
@@ -11,26 +12,37 @@ const REST_MS = 500;
 /** The space kept between the tooltip and the window's edge, and between it and its text. */
 const GAP = 8;
 
-/** An empty field whose placeholder is cut: the browser draws it with an ellipsis, but it is no text of the page to measure. */
-function placeholderCut(el: Element): boolean {
-  if (!(el instanceof HTMLInputElement) || el.value || !el.placeholder) return false;
+/** The space a select's own arrow takes at its end (the browser draws it inside the box, after the padding). */
+const SELECT_ARROW = 24;
+
+/** The text a form field shows that is no text of the page to measure: the placeholder of an empty input, the
+ *  chosen option of a select. The browser draws a placeholder with an ellipsis and clips an option, so these are
+ *  measured as the browser sets them: the canvas with the field's own font against the room inside it. */
+function fieldText(el: Element): { text: string; arrow: number } | null {
+  if (el instanceof HTMLInputElement) return !el.value && el.placeholder ? { text: el.placeholder, arrow: 0 } : null;
+  if (el instanceof HTMLSelectElement) return el.selectedOptions[0] ? { text: el.selectedOptions[0].text, arrow: SELECT_ARROW } : null;
+  return null;
+}
+
+function fieldCut(el: Element): boolean {
+  const field = fieldText(el);
+  const ctx = field && document.createElement("canvas").getContext("2d");
+  if (!field || !ctx) return false;
   const style = getComputedStyle(el);
-  const ctx = document.createElement("canvas").getContext("2d");
-  if (!ctx) return false;
   ctx.font = style.font;
-  const room = el.clientWidth - parseFloat(style.paddingInlineStart) - parseFloat(style.paddingInlineEnd);
-  return ctx.measureText(el.placeholder).width > room;
+  const room = el.clientWidth - parseFloat(style.paddingInlineStart) - parseFloat(style.paddingInlineEnd) - field.arrow;
+  return ctx.measureText(field.text).width > room;
 }
 
 /** Is this element's text cut at its end? */
 function isCut(el: Element): boolean {
-  if (placeholderCut(el)) return true;
+  if (fieldCut(el)) return true;
   return getComputedStyle(el).textOverflow === "ellipsis" && el.scrollWidth > el.clientWidth;
 }
 
-/** The whole text of a cut element: the placeholder of an empty field, else its text. */
+/** The whole text of a cut element: the placeholder of an empty field, the chosen option of a select, else its text. */
 function wholeText(el: HTMLElement): string {
-  return el instanceof HTMLInputElement && !el.value ? el.placeholder : (el.textContent ?? "");
+  return fieldText(el)?.text ?? el.textContent ?? "";
 }
 
 /** The cut text under the pointer: the nearest element above the target (itself included) that is cut. */

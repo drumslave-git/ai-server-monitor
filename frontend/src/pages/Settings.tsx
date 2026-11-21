@@ -254,6 +254,7 @@ export function SettingsPage() {
 
         <Pane
           bare
+          narrow
           label={doc.sections[section]}
           id={formId}
           resetOn={section}

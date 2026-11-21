@@ -208,7 +208,7 @@
 /* Form of named groups: each group is a title, then its fields flowing in rows (as many as fit, each grown to share the row, none wider
    than a field needs), so a group with fewer fields leaves no hole; the form keeps a readable width however wide the window is.
    The pane, not the window, decides when the fields stack. */
-.fd-form-groups { container-type: inline-size; display: flex; flex-direction: column; max-width: 60rem; }
+.fd-form-groups { container-type: inline-size; display: flex; flex-direction: column; max-width: var(--form-max); }
 .fd-form-group { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4) 0; border-top: 1px solid var(--line); }
 .fd-form-group:first-child { padding-top: 0; border-top: 0; }
 .fd-form-group:last-child { padding-bottom: 0; }
@@ -609,6 +609,8 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
 /* one pane alone (a width that shows only the list) takes the whole width */
 .fd-pane-side:only-child { flex: 1 1 auto; }
 .fd-pane-bare { background: none; border: 0; }
+/* narrow: what stands in it (the head, the panels, the forms) keeps one reading width, so no box or line runs across a wide window beyond its fields */
+.fd-pane-narrow > .fd-pane-scroll > * { max-width: var(--form-max); }
 /* (positioned: a visually hidden element inside (.fd-sr is absolute) belongs to the scroller, not to the page, whose height it would grow) */
 .fd-pane-scroll { position: relative; min-width: 0; display: flex; flex-direction: column; }
 .fd-pane-bare > .fd-pane-scroll { gap: var(--space-4); }
@@ -767,8 +769,11 @@ dialog.fd-dialog-wide { width: min(560px, calc(100vw - 32px)); }
   .fd-toolbar-side { flex: 1 0 100%; }
 }
 
+/* a head's fold button while its tools are open: filled like a chosen segment */
+.fd-head-fold .fd-btn-icon[aria-expanded="true"] { background: var(--ok); border-color: var(--ok); color: var(--on-fill); }
+
 /* ListPicker: the list wide; on a phone one select that names the current item (the list would stand above the first field) */
-.fd-picker-select { display: none; }
+.fd-picker-select { display: none; padding: var(--space-3); }
 @media (max-width: 760px) {
   .fd-picker-select { display: block; }
   .fd-picker-list { display: none; }

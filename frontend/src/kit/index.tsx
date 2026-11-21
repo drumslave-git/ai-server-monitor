@@ -260,12 +260,14 @@ export function Panes({ children }: { children: ReactNode }) {
 
 /** One of the Panes. side: the narrow one at the left (a list of conversations, sections, domains);
  *  "wide" for a list whose rows carry more (the runs of a job).
- *  bare: no box of its own, for panels under each other. foot: stays at its foot (a composer, a save bar).
+ *  bare: no box of its own, for panels under each other. narrow: what stands in it keeps the form's reading width
+ *  (a wide window does not stretch a panel's border past its fields). foot: stays at its foot (a composer, a save bar).
  *  resetOn: when it changes, the pane scrolls back to the top. endOn: when it changes, it scrolls to its end
  *  (a conversation that grows); on a phone, where the page scrolls instead, the page does. With onSubmit it is a form. */
 export function Pane({
   side,
   bare,
+  narrow,
   label,
   title,
   meta,
@@ -279,6 +281,7 @@ export function Pane({
 }: {
   side?: boolean | "wide";
   bare?: boolean;
+  narrow?: boolean;
   /** Its name for assistive tech, when it has no title. */
   label?: string;
   title?: ReactNode;
@@ -299,7 +302,7 @@ export function Pane({
     if (getComputedStyle(el).overflowY === "auto") el.scrollTo(0, el.scrollHeight);
     else document.scrollingElement?.scrollTo(0, document.scrollingElement.scrollHeight);
   }, [endOn]);
-  const className = cx("fd-pane", side && "fd-pane-side", side === "wide" && "fd-pane-side-wide", bare && "fd-pane-bare", endOn !== undefined && "fd-pane-thread");
+  const className = cx("fd-pane", side && "fd-pane-side", side === "wide" && "fd-pane-side-wide", bare && "fd-pane-bare", narrow && "fd-pane-narrow", endOn !== undefined && "fd-pane-thread");
   const body = (
     <>
       {(title || aside) && (

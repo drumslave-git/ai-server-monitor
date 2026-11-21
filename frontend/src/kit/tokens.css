@@ -39,6 +39,8 @@
   /* the narrow pane beside the main one (a list of conversations, of sections, of domains) */
   --pane-side: 300px;
   --pane-side-wide: 440px;
+  /* the reading width of a form, and of a pane marked narrow */
+  --form-max: 60rem;
   /* the phone's bar of pages at the foot of the screen (without the safe area under it) */
   --bottom-bar: 64px;
   /* how far the content scrolls while a sticky page header turns compact */

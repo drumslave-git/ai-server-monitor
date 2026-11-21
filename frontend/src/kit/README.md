@@ -32,7 +32,8 @@ The design kit with live previews of every component: https://claude.ai/artifact
   to the top when the value changes (the route). A page starts with `PageHeader`, then `Panel`s or `Panes`.
 - The shell fills the window and the page scrolls inside `Main`, never the window. A page with a list
   beside its content uses `Panes` > `Pane side` (the list, `--pane-side` wide; `side="wide"`, `--pane-side-wide`, for rows that carry more) + `Pane`: each scrolls on
-  its own. `Pane` takes `label`, `bare` (no panel frame), `foot` (stays at the pane's foot: a composer, a
+  its own. `Pane` takes `label`, `bare` (no panel frame), `narrow` (what stands in it keeps `--form-max`, the form's reading width, so no border runs
+  past the fields in a wide window), `foot` (stays at the pane's foot: a composer, a
   save bar), `resetOn` (back to the top when it changes), `endOn` (to the end when it changes: a thread)
   and `onSubmit` (the pane is a `<form>`). On a phone the panes stack and the window scrolls; a `foot`
   sticks above the bottom bar.
@@ -121,5 +122,6 @@ on it for half a second or the keyboard focus lands on it (Escape, scrolling and
 `TrimTips`, mounted once by `Shell`, does this for the whole page: it asks the browser whether the element
 under the pointer is really cut, so a part only has to use the ellipsis (`ListItem` titles, `TitleLink
 truncate`, the title of a `Fold`, the meta of a `Card`) and a text added later is covered the moment it is
-cut. A touch screen has no pointer to rest, so it gets no tooltip. The text of an `Input` or `Select` is
-not covered, and `Clamp` has its own "show more".
+cut. A touch screen has no pointer to rest, so it gets no tooltip. A field is covered too: an empty `Input`'s
+placeholder and a `Select`'s chosen option are measured with the field's own font (the browser clips them without
+an ellipsis the page can ask about; a select's arrow is allowed 24px). `Clamp` has its own "show more".
