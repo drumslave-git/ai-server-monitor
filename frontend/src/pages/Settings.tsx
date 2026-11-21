@@ -199,6 +199,8 @@ export function SettingsPage() {
     suggestions: { "llm.model": models, "worker.model": models },
     groups: GROUPS,
     focusEntry,
+    // a server that signs in with OAuth has no bearer token (its headers stay: a server may want both)
+    hide: (path, holder) => holder.auth === "oauth" && /^mcp\.servers\.\d+\.token$/.test(path),
   };
 
   const update = (key: string, v: Json) => {

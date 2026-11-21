@@ -76,16 +76,18 @@ test.describe("Settings, MCP sign-in line", () => {
     await expect(card.getByRole("button", { name: "connect", exact: true })).toBeVisible();
   });
 
-  test("an error: the whole text under the buttons, inside the card, with connect again beside disconnect", async ({ page, network }) => {
+  test("a refused login: one state, sign-in expired, the whole reason under connect again, inside the card", async ({ page, network }) => {
     network.use(oauthSettings(), states(true, ERROR));
     const card = await openCard(page);
     const line = card.getByText(ERROR);
     await expect(line).toBeVisible();
     const again = card.getByRole("button", { name: "connect again" });
-    const disconnect = card.getByRole("button", { name: "disconnect" });
     await expect(again).toBeVisible();
+    await expect(card.getByText("sign-in expired")).toBeVisible();
+    await expect(card.getByText("connected", { exact: true })).toHaveCount(0);
+    await expect(card.getByRole("button", { name: "disconnect" })).toHaveCount(0);
     await expectInside(page, card, again);
-    await expectInside(page, card, disconnect);
+    await expectInside(page, card, card.getByText("sign-in expired"));
     await expectInside(page, card, line);
     const [lineBox, againBox] = await Promise.all([line.boundingBox(), again.boundingBox()]);
     expect(lineBox!.y, "the error is under the buttons").toBeGreaterThanOrEqual(againBox!.y + againBox!.height - 1);

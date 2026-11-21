@@ -63,6 +63,8 @@ export type FormContext = {
   placeholders?: Record<string, string>;
   /** Paths of rows that do not apply and are left out. */
   hidden?: string[];
+  /** A row that does not apply, decided from the values of the object that holds it (e.g. the token of a server that signs in with OAuth). */
+  hide?: (path: string, holder: JsonObject) => boolean;
   /** How an object's fields (by its path) are put into named rows. The fields of the object that no
    *  group names follow in a plain grid. */
   groups?: Record<string, FieldGroup[]>;
@@ -182,7 +184,7 @@ export function ObjectFields({ schema, value, onChange, path, ctx, inset }: Omit
   };
   for (const [key, prop] of Object.entries(s.properties ?? {})) {
     const fieldPath = path ? `${path}.${key}` : key;
-    if (ctx.hidden?.includes(fieldPath)) continue;
+    if (ctx.hidden?.includes(fieldPath) || ctx.hide?.(fieldPath, obj)) continue;
     const note = ctx.notes?.[fieldPath];
     const field = <Field key={key} name={key} schema={prop} value={obj[key] ?? null} onChange={(v) => onChange({ ...obj, [key]: v })} path={fieldPath} ctx={ctx} inset={inset} />;
     if (isBlock(kindOf(prop, ctx.defs))) {

@@ -51,15 +51,17 @@ export function McpSignIn({ name }: { name: string }) {
     await load();
   };
 
-  const connected = state?.connected === true;
+  // a saved login the server no longer accepts is one state: expired (not "connected" with an error beside it)
+  const expired = state?.connected === true && state.error != null;
+  const connected = state?.connected === true && !expired;
   const error = failed ?? state?.error ?? null;
   return (
     <>
       <Row>
-        <Status tone={connected ? "ok" : "off"}>{connected ? "connected" : "not connected"}</Status>
-        {(!connected || error) && (
+        <Status tone={expired ? "crit" : connected ? "ok" : "off"}>{expired ? "sign-in expired" : connected ? "connected" : "not connected"}</Status>
+        {!connected && (
           <Button disabled={busy !== null} onClick={() => void connect()}>
-            {busy === "connect" ? "connecting…" : connected ? "connect again" : "connect"}
+            {busy === "connect" ? "connecting…" : expired ? "connect again" : "connect"}
           </Button>
         )}
         {connected && (

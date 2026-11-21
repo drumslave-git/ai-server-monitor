@@ -46,6 +46,9 @@ async function open(hash = "#/settings/mcp/second-server") {
 }
 
 const where = vi.fn();
+/** The bearer-token input of the open card, the one the link focused (a server that signs in with OAuth has none). */
+const card = () => document.querySelector<HTMLElement>(".fd-card-focus")!;
+const tokenField = () => within(card()).queryByLabelText(/^token/, { selector: "input" });
 
 beforeEach(() => {
   vi.stubGlobal("scrollTo", vi.fn());
@@ -82,12 +85,14 @@ describe("the sign-in line of an OAuth server", () => {
     expect(screen.getByRole("button", { name: "connect" })).toBeInTheDocument();
   });
 
-  it("shows the last error next to the button, and offers Connect again to a connected server", async () => {
+  it("shows a refused login as one state, sign-in expired, with the reason and Connect again (no connected, no disconnect)", async () => {
     mockOauth([{ name: "second-server", connected: true, error: "The login at second-server has expired or was withdrawn: open Settings → MCP and press Connect again." }]);
     await open();
-    expect(await screen.findByText(/has expired or was withdrawn/)).toBeInTheDocument();
+    expect(await screen.findByText("sign-in expired")).toBeInTheDocument();
+    expect(screen.getByText(/has expired or was withdrawn/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "connect again" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "disconnect" })).toBeInTheDocument();
+    expect(screen.queryByText("connected")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "disconnect" })).not.toBeInTheDocument();
   });
 
   it("shows why Connect failed, in the server's words, and does not leave the page", async () => {
@@ -141,5 +146,31 @@ describe("the sign-in line of an OAuth server", () => {
     expect(await screen.findByText("not connected")).toBeInTheDocument();
     await user.click(within(screen.getByRole("group", { name: /auth/i })).getByRole("radio", { name: "token" }));
     expect(screen.queryByText("not connected")).not.toBeInTheDocument();
+  });
+
+  it("hides the token field of a server that signs in with OAuth, and keeps its headers", async () => {
+    mockOauth([{ name: "second-server", connected: false, error: null }], (servers) => {
+      servers[1].headers = [{ name: "X-Tenant", value: "acme" }];
+    });
+    await open();
+    expect(await screen.findByText("not connected")).toBeInTheDocument();
+    expect(tokenField()).not.toBeInTheDocument();
+    expect(within(card()).getByDisplayValue("X-Tenant")).toBeInTheDocument();
+  });
+
+  it("shows the token field of a server that uses a token, and follows the Auth choice both ways", async () => {
+    mockOauth([{ name: "second-server", connected: false, error: null }], (servers) => {
+      servers[1].auth = "token";
+      servers[1].headers = [{ name: "X-Tenant", value: "acme" }];
+    });
+    const user = await open();
+    const auth = () => within(screen.getByRole("group", { name: /auth/i }));
+    expect(tokenField()).toBeInTheDocument();
+    await user.click(auth().getByRole("radio", { name: "oauth" }));
+    expect(tokenField()).not.toBeInTheDocument();
+    expect(within(card()).getByDisplayValue("X-Tenant")).toBeInTheDocument();
+    await user.click(auth().getByRole("radio", { name: "token" }));
+    expect(tokenField()).toBeInTheDocument();
+    expect(within(card()).getByDisplayValue("X-Tenant")).toBeInTheDocument();
   });
 });
