@@ -212,13 +212,13 @@ function CallRow({ call: c, maxTokens, maxMs }: { call: LlmCallSummary; maxToken
       </Td>
       <Td nowrap>
         <Stack gap={1}>
-          <Meter value={c.prompt_tokens ?? 0} max={maxTokens} count={TOKEN_CELLS} tone="text" />
+          <Meter value={c.prompt_tokens ?? 0} max={maxTokens} count={TOKEN_CELLS} tone="text" fluid />
           <Meta>{tokens(c)}</Meta>
         </Stack>
       </Td>
       <Td>
         <Stack gap={1}>
-          <Meter value={c.total_ms ?? 0} inner={c.ttft_ms ?? undefined} innerTone="info" max={maxMs} count={TIME_CELLS} tone="ok" />
+          <Meter value={c.total_ms ?? 0} inner={c.ttft_ms ?? undefined} innerTone="info" max={maxMs} count={TIME_CELLS} tone="ok" fluid />
           <Meta>
             first {ms(c.ttft_ms)} · total {ms(c.total_ms)}
           </Meta>

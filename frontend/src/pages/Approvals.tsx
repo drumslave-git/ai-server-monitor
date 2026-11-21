@@ -394,14 +394,14 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
           {log.data && log.data.items.length === 0 ? (
             <Empty>No actions recorded{status || action || batch ? " for this filter" : ""}.</Empty>
           ) : (
-            <Table stack stickyHead head={["time", "action", "status", "source", "detail"]}>
+            <Table stack stickyHead head={["time", { label: "action", minWidth: "240px" }, "status", "source", { label: "detail", minWidth: "110px" }]}>
               <tbody>
                 {(log.data?.items ?? []).map((a) => (
                   <tr key={a.id}>
                     <Td nowrap>
                       <Text kind="data">{clock(a.ts)}</Text>
                     </Td>
-                    <Td>
+                    <Td fill>
                       <Stack>
                         <Meta>{a.action}</Meta>
                         <Text kind="data">
@@ -412,7 +412,7 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
                     <Td>
                       <ActionStatus status={a.status} />
                     </Td>
-                    <Td nowrap>
+                    <Td>
                       <Stack>
                         <Text kind="data">
                           <SourceRef source={a.source} />
