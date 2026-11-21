@@ -133,6 +133,21 @@ describe("usePoll", () => {
     expect(load.mock.calls.length - before).toBe(3);
   });
 
+  it("loads again, with the new load, when a value named in deps changes, and not when it stays", async () => {
+    const load = vi.fn((q: string) => Promise.resolve(q));
+    const { result, rerender } = renderHook(({ q }) => usePoll(() => load(q), 60_000, [q]), { initialProps: { q: "a" } });
+    await flush();
+    expect(load).toHaveBeenLastCalledWith("a");
+    rerender({ q: "a" });
+    await flush();
+    expect(load).toHaveBeenCalledTimes(1);
+    rerender({ q: "b" });
+    await flush();
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(load).toHaveBeenLastCalledWith("b");
+    expect(result.current.data).toBe("b");
+  });
+
   it("stops loading when it is closed", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const load = vi.fn().mockResolvedValue(1);

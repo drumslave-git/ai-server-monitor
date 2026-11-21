@@ -229,6 +229,14 @@ describe("leaving and coming back to the page", () => {
     expect(source.closed).toBe(true);
   });
 
+  it("puts the lamp out when the page is left (a component that shows the connection is told)", () => {
+    render(<Connection />);
+    act(() => FakeEventSource.current().open());
+    expect(screen.getByText("stream: connected")).toBeInTheDocument();
+    act(() => void window.dispatchEvent(new Event("pagehide")));
+    expect(screen.getByText("stream: disconnected")).toBeInTheDocument();
+  });
+
   it("does not open it again when the page is shown fresh (not from the cache)", () => {
     render(<Connection />);
     const count = FakeEventSource.instances.length;

@@ -22,8 +22,10 @@ const PAGES: { key: string & IconName; title: string; label: string }[] = [
   { key: "settings", title: "Settings", label: "settings" },
 ];
 
+/** The segments of the address, decoded once: the links encode each one (`#/jobs/test%3Adisk`, see EntityRefs), so a
+ *  page gets the plain name ("test:disk") and encodes it itself where it puts it into a request. */
 function parseHash(): string[] {
-  return location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  return location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
 }
 
 /** "v0.8.5 · c2448e1", once the server has said so. */

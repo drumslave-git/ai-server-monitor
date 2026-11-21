@@ -35,15 +35,6 @@ function recordList(answer: (q: URLSearchParams) => Response = () => HttpRespons
 /** A row of the table by the text of its link to the call. */
 const rowOf = (link: string) => within(screen.getByRole("link", { name: link }).closest("tr")!);
 
-/**
- * The search box's debounce also fires once after the first render and resets the page to the first one, so a
- * test that pages waits this out first.
- */
-const settle = () =>
-  act(async () => {
-    await new Promise((r) => setTimeout(r, 400));
-  });
-
 /** `n` calls numbered from `first` downwards. */
 const manyCalls = (n: number, first: number): CallSummary[] => Array.from({ length: n }, (_, i) => makeCall({ id: first - i, response_preview: `answer ${first - i}` }));
 
@@ -166,7 +157,6 @@ describe("LLM calls list: counting", () => {
     });
     renderList();
     await screen.findByText("1–50 of 120");
-    await settle();
     expect(screen.getByRole("button", { name: "newer" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "older" }));
@@ -182,6 +172,32 @@ describe("LLM calls list: counting", () => {
     await user.click(screen.getByRole("button", { name: "newer" }));
     await screen.findByText("51–100 of 120");
     expect(seen.at(-1)?.get("offset")).toBe("50");
+  });
+
+  it("keeps the page it was paged to when the search box, unchanged, runs out its wait after the start", async () => {
+    const user = userEvent.setup();
+    const seen = recordList((q) => HttpResponse.json(callList(manyCalls(50, 120 - Number(q.get("offset"))), { total: 120, offset: Number(q.get("offset")) })));
+    renderList();
+    await screen.findByText("1–50 of 120");
+    await user.click(screen.getByRole("button", { name: "older" })); // at once, before the 350 ms of the search have passed
+    await screen.findByText("51–100 of 120");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 450));
+    });
+    expect(screen.getByText("51–100 of 120")).toBeInTheDocument();
+    expect(seen.map((q) => q.get("offset"))).toEqual(["0", "50"]);
+  });
+
+  it("goes back to the first page when the search text changes", async () => {
+    const user = userEvent.setup();
+    const seen = recordList((q) => HttpResponse.json(callList(manyCalls(50, 120 - Number(q.get("offset"))), { total: 120, offset: Number(q.get("offset")) })));
+    renderList();
+    await screen.findByText("1–50 of 120");
+    await user.click(screen.getByRole("button", { name: "older" }));
+    await screen.findByText("51–100 of 120");
+    await user.type(screen.getByRole("searchbox", { name: "Search in messages" }), "refused");
+    await waitFor(() => expect(seen.at(-1)?.get("q")).toBe("refused"));
+    expect(seen.at(-1)?.get("offset")).toBe("0");
   });
 
   it("has nothing older when everything fits on one page", async () => {
@@ -217,7 +233,6 @@ describe("LLM calls list: filters", () => {
     const seen = recordList((q) => HttpResponse.json(callList(manyCalls(50, 120 - Number(q.get("offset"))), { total: 120, offset: Number(q.get("offset")) })));
     renderList();
     await screen.findByText("1–50 of 120");
-    await settle();
     await user.click(screen.getByRole("button", { name: "older" }));
     await screen.findByText("51–100 of 120");
 
@@ -450,7 +465,6 @@ describe("LLM calls list: staying current", () => {
     const seen = recordList((q) => HttpResponse.json(callList(manyCalls(50, 120 - Number(q.get("offset"))), { total: 120, offset: Number(q.get("offset")) })));
     renderList();
     await screen.findByText("1–50 of 120");
-    await settle();
     await user.click(screen.getByRole("button", { name: "older" }));
     await screen.findByText("51–100 of 120");
     const before = seen.length;

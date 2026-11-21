@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { McpToolPicker, mcpTools } from "./McpTools";
 import { api, type ConnectionTestResult, type Json, type JsonObject, type JsonSchema } from "../api";
 import { Button, Card, Cards, Column, ErrorText, Field as KitField, FormGrid, FormGroup, FormGroups, FormWide, IconButton, Input, Joined, Live, Meta, Pad, Panel, SectionHead, Segmented, Select, Status, Switch, TestLine, Text, Textarea } from "../kit";
@@ -103,7 +103,7 @@ type Kind =
   | { kind: "objects"; s: JsonSchema; item: JsonSchema }
   | { kind: "auto-number"; s: JsonSchema; numeric: JsonSchema }
   | { kind: "list"; s: JsonSchema; numeric: boolean }
-  | { kind: "choice"; s: JsonSchema; options: string[] };
+  | { kind: "choice"; s: JsonSchema; options: Json[] };
 
 function isNestedObject(s: JsonSchema): boolean {
   return s.type === "object" && !!s.properties;
@@ -141,7 +141,7 @@ function kindOf(schema: JsonSchema, defs: Record<string, JsonSchema>): Kind {
     return extra && typeof extra === "object" && extra.type === "string" ? { kind: "pairs", s } : { kind: "json", s };
   }
 
-  if (s.enum) return { kind: "choice", s, options: s.enum.map(String) };
+  if (s.enum) return { kind: "choice", s, options: s.enum };
   if (s.type === "boolean") return { kind: "switch", s };
   if (isNumber(s)) return { kind: "number", s };
   if (s.format === "password") return { kind: "secret", s };
@@ -189,7 +189,7 @@ export function ObjectFields({ schema, value, onChange, path, ctx, inset }: Omit
       if (note) blocks.push(<Meta key={`${key}-note`} block>{note}</Meta>);
       blocks.push(field);
     } else if (grouped.has(key)) {
-      named[key] = field;
+      named[key] = note ? <Fragment key={key}><Meta block span="all">{note}</Meta>{field}</Fragment> : field;
     } else {
       if (note) cells.push(<Meta key={`${key}-note`} block span="all">{note}</Meta>);
       cells.push(field);
@@ -251,25 +251,29 @@ export function Field({ name, schema, value, onChange, path, ctx, inset }: Field
         </Cell>
       );
 
-    case "choice":
-      if (k.options.length <= SEGMENTED_MAX) {
+    case "choice": {
+      // the controls speak in text; what goes to the form is the value of the schema (a number stays a number)
+      const texts = k.options.map(String);
+      const pick = (text: string) => k.options[texts.indexOf(text)];
+      if (texts.length <= SEGMENTED_MAX) {
         return (
           <Cell {...cell} group>
-            {() => <Segmented label={title} options={k.options.map((o) => ({ value: o, label: o }))} value={String(value ?? "")} onChange={onChange} />}
+            {() => <Segmented label={title} options={texts.map((o) => ({ value: o, label: o }))} value={String(value ?? "")} onChange={(v) => onChange(pick(v))} />}
           </Cell>
         );
       }
       return (
         <Cell {...cell}>
           {(id, invalid) => (
-            <Select id={id} invalid={invalid} value={String(value ?? "")} onChange={(e) => onChange(e.target.value)}>
-              {k.options.map((o) => (
+            <Select id={id} invalid={invalid} value={String(value ?? "")} onChange={(e) => onChange(pick(e.target.value))}>
+              {texts.map((o) => (
                 <option key={o} value={o}>{o}</option>
               ))}
             </Select>
           )}
         </Cell>
       );
+    }
 
     case "number":
       return (
@@ -634,13 +638,25 @@ function ListInput({ id, invalid, value, numeric, onChange }: { id: string; inva
 }
 
 function KeyValueInput({ value, onChange }: { value: Record<string, string>; onChange: (v: Json) => void }) {
-  const rows = Object.entries(value);
-  const set = (next: [string, string][]) => onChange(Object.fromEntries(next));
+  // The rows are kept here, because two rows may carry the same name for a moment (a record cannot hold both): they
+  // are shown as invalid and the form keeps the last value without a clash. A value that came from elsewhere replaces them.
+  const stored = JSON.stringify(Object.entries(value));
+  const [rows, setRows] = useState<[string, string][]>(() => Object.entries(value));
+  const [seen, setSeen] = useState(stored);
+  if (stored !== seen) {
+    setSeen(stored);
+    if (stored !== JSON.stringify(rows)) setRows(Object.entries(value));
+  }
+  const clash = (name: string) => rows.filter((r) => r[0] === name).length > 1;
+  const set = (next: [string, string][]) => {
+    setRows(next);
+    if (new Set(next.map((r) => r[0])).size === next.length) onChange(Object.fromEntries(next));
+  };
   return (
     <Column gap={2} align="start">
       {rows.map(([k, v], i) => (
         <Joined key={i} width="100%">
-          <Input value={k} placeholder="name" onChange={(e) => set(rows.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} />
+          <Input value={k} invalid={clash(k)} placeholder="name" onChange={(e) => set(rows.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} />
           <Input value={v} placeholder="value" onChange={(e) => set(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
           <Button onClick={() => set(rows.filter((_, j) => j !== i))}>remove</Button>
         </Joined>

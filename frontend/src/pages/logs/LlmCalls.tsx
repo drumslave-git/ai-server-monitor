@@ -32,11 +32,13 @@ export function LlmCallsList({ link }: { link: CallsLink | null }) {
 
   useEffect(() => {
     const t = setTimeout(() => {
+      // a search that stays the same (also the empty one at the start) leaves the page where it is
+      if (text.trim() === q) return;
       setQ(text.trim());
       setOffset(0);
     }, 350);
     return () => clearTimeout(t);
-  }, [text]);
+  }, [text, q]);
 
   useEffect(() => {
     let alive = true;

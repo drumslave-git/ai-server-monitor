@@ -63,6 +63,7 @@ if (typeof window !== "undefined") {
     source?.close();
     source = null;
     connected = false;
+    notifyState(); // the lamp goes out with the connection
   });
   window.addEventListener("pageshow", (e) => {
     if (e.persisted) {

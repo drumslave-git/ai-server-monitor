@@ -88,7 +88,7 @@ describe("HostCommand", () => {
 
     it("folds a long output of a single line", () => {
       render(<HostCommand item={action({ status: "executed", result: { exit_code: 0, output: "x".repeat(1300) } })} />);
-      expect(screen.getByText("output (1 lines)")).toBeInTheDocument();
+      expect(screen.getByText("output (1 line)")).toBeInTheDocument();
     });
   });
 

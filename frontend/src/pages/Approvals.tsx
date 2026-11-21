@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError, type ActionRecord, type ApprovalBatch, type StatusResponse } from "../api";
+import { api, type ActionRecord, type ApprovalBatch, type StatusResponse } from "../api";
 import { callArguments } from "../components/ApprovalCards";
 import { ApprovalRef, ItemTarget, SourceRef } from "../components/EntityRefs";
 import { HostCommand } from "../components/HostCommand";
@@ -255,7 +255,7 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
   if (status) query.set("status", status);
   if (action) query.set("action", action);
   if (batch) query.set("batch", String(batch));
-  const log = usePoll(() => api.get<Listing>(`/api/actions?${query}`), 30_000);
+  const log = usePoll(() => api.get<Listing>(`/api/actions?${query}`), 30_000, [query.toString()]);
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   // a link to another approval while the page is open: load that one now
@@ -279,7 +279,7 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
     try {
       await api.post(`/api/approvals/${b.id}`, { decision, ...(items ? { items } : {}), ...(rest ? { rest } : {}) });
     } catch (e) {
-      setError(e instanceof ApiError ? String(e.detail) : (e as Error).message);
+      setError((e as Error).message); // an ApiError's message already reads its detail (a validation list as "field: message")
     } finally {
       setBusy(null);
       refresh();
@@ -342,9 +342,9 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
             />
           </Pad>
           <Column gap={0} flex="1 1 560px">
-            {error && (
+            {(error ?? pending.error) && (
               <Row>
-                <ErrorText>{error}</ErrorText>
+                <ErrorText>{error ?? pending.error}</ErrorText>
               </Row>
             )}
             {pending.data && batches.length === 0 ? (

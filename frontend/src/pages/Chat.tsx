@@ -201,7 +201,8 @@ export function ChatPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
   const sessionId = useRef<string | null>(null);
-  /** The session whose last turn failed: its error is not stored, so the live thread stays. */
+  /** The session ("" for a new conversation that has none yet) whose last turn failed or was stopped: its error and
+   *  its stop mark are not stored, so the live thread stays. */
   const keepThread = useRef<string | null>(null);
 
   const load = useCallback(async (id: string) => {
@@ -215,7 +216,7 @@ export function ChatPage() {
 
   useEffect(() => {
     if (busy) return; // the live stream owns the thread meanwhile
-    if (routeId && routeId === keepThread.current) return;
+    if (keepThread.current !== null && keepThread.current === (routeId ?? "")) return;
     keepThread.current = null;
     sessionId.current = routeId;
     if (routeId) void load(routeId);
@@ -343,7 +344,7 @@ export function ChatPage() {
             });
             finished = true;
             failed = true; // nothing of the answer is stored: keep the live thread with the error
-            keepThread.current = sessionId.current;
+            keepThread.current = sessionId.current ?? "";
           } else if (type === "done") {
             finished = true;
             patchLast((t) => {
@@ -360,8 +361,10 @@ export function ChatPage() {
         }
       }
     } catch (e) {
-      if ((e as Error).name === "AbortError") patchLast((t) => void (t.stopped = true));
+      if (controller.signal.aborted) patchLast((t) => void (t.stopped = true));
       else patchLast((t) => void (t.error = (e as Error).message));
+      failed = true;
+      keepThread.current = sessionId.current ?? ""; // neither the stop mark nor the error is stored
     } finally {
       // (The stream can outlive the answer by the title event: by then a new question may be
       // running, which owns `abort` and the busy flag.)

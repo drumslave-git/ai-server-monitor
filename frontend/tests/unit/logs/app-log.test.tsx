@@ -375,6 +375,17 @@ describe("app log: older records", () => {
     expect(seen.at(-1)?.get("before")).toBe("301");
   });
 
+  it("shows the error of a failed page of older records, the way a failed first page is shown, and keeps the rows and the button", async () => {
+    const user = userEvent.setup();
+    recordLog((q) => (q.has("before") ? HttpResponse.json({ detail: "the log is not readable" }, { status: 500 }) : HttpResponse.json(appLog(manyRecords(200, 300)))));
+    render(<AppLogView />);
+    await loaded();
+    await user.click(screen.getByRole("button", { name: "older records" }));
+    expect(await screen.findByText("the log is not readable")).toBeInTheDocument();
+    expect(screen.getByText("200 on this page, counted by level")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "older records" })).toBeInTheDocument();
+  });
+
   it("asks for nothing when the last record has no number to page from", async () => {
     const user = userEvent.setup();
     const noNumber = Array.from({ length: 200 }, (_, i) => makeRecord({ seq: null, id: null, ts: BASE + 200 - i, message: `row ${i}` }));
@@ -407,6 +418,40 @@ describe("app log: the live tail", () => {
       await new Promise((r) => setTimeout(r, 30));
     });
     expect(tails()).toHaveLength(0);
+  });
+
+  it("opens no tail with the old starting point while the page of a changed filter is on its way, and then starts from the new one", async () => {
+    const user = userEvent.setup();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let requests = 0;
+    server.use(
+      http.get("/api/logs/app", async ({ request }) => {
+        requests += 1;
+        if (new URL(request.url).searchParams.get("level") !== "ERROR") return HttpResponse.json(appLog(defaultRecords()));
+        await gate;
+        return HttpResponse.json(appLog([makeRecord({ seq: 9, message: "only error", level: "ERROR", levelno: 40 })]));
+      }),
+    );
+    render(<AppLogView />);
+    await loaded();
+    await waitForTail();
+    expect(tailQuery().get("after")).toBe("4");
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Minimum level" }), "ERROR");
+    await waitFor(() => expect(requests).toBe(2));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    // the first tail is closed and no other one was opened (it would have started after record 4 with the new filter)
+    expect(tails()).toHaveLength(1);
+    expect(openTails()).toHaveLength(0);
+
+    release();
+    await waitForTail(2);
+    expect(openTails()).toHaveLength(1);
+    expect(openQuery().get("level")).toBe("ERROR");
+    expect(openQuery().get("after")).toBe("9");
   });
 
   it("starts from the beginning when the log is empty", async () => {

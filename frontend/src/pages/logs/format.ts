@@ -4,9 +4,13 @@ export function ms(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
   if (value < 1) return "<1 ms";
   if (value < 1000) return `${Math.round(value)} ms`;
-  if (value < 60_000) return `${(value / 1000).toFixed(value < 10_000 ? 2 : 1)} s`;
-  const minutes = Math.floor(value / 60_000);
-  return `${minutes}m ${Math.round((value % 60_000) / 1000)}s`;
+  if (value < 60_000) {
+    const seconds = (value / 1000).toFixed(value < 10_000 ? 2 : 1);
+    // 59 960 ms rounds to "60.0": that is a minute, and the minutes branch below says it
+    if (Number(seconds) < 60) return `${seconds} s`;
+  }
+  const total = Math.round(value / 1000); // whole seconds first, so the seconds shown never reach 60
+  return `${Math.floor(total / 60)}m ${total % 60}s`;
 }
 
 export function num(value: number | null | undefined): string {

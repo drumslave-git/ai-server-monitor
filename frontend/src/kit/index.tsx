@@ -1219,8 +1219,9 @@ export function Segmented<T extends string>({
         else if (e.key === "ArrowLeft" || e.key === "ArrowUp") move(-1);
         else return;
         e.preventDefault();
-        // the chosen option carries the focus
-        requestAnimationFrame(() => e.currentTarget.querySelector<HTMLElement>('[aria-checked="true"]')?.focus());
+        // the chosen option carries the focus (the event's currentTarget is gone by the time the frame runs)
+        const group = e.currentTarget;
+        requestAnimationFrame(() => group.querySelector<HTMLElement>('[aria-checked="true"]')?.focus());
       }}
     >
       {options.map((o) => (

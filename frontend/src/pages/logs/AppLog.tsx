@@ -26,7 +26,7 @@ export function AppLogView() {
   const [rows, setRows] = useState<AppLogRecord[]>([]);
   const [more, setMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const [newest, setNewest] = useState<number | null>(null);
   const [skipped, setSkipped] = useState(0);
   const [connected, setConnected] = useState(false);
@@ -52,10 +52,14 @@ export function AppLogView() {
     [source, level, logger, q],
   );
 
+  // The records on the page belong to one query; they count as loaded only while the filters still make that query,
+  // so in the very render that changes a filter the tail below does not start from the old `newest`.
+  const key = query().toString();
+  const loaded = loadedFor === key;
+
   // First page whenever a filter changes.
   useEffect(() => {
     const mine = ++generation.current;
-    setLoaded(false);
     setSkipped(0);
     api.get<AppLogList>(`/api/logs/app?${query()}`).then(
       (d) => {
@@ -64,7 +68,7 @@ export function AppLogView() {
         setNewest(d.newest);
         setMore(d.items.length === 200);
         setError(null);
-        setLoaded(true);
+        setLoadedFor(key);
       },
       (e: Error) => {
         if (mine === generation.current) setError(e.message);
@@ -104,9 +108,14 @@ export function AppLogView() {
     const last = rows[rows.length - 1];
     const before = source === "memory" ? last?.seq : last?.id;
     if (before === null || before === undefined) return;
-    const d = await api.get<AppLogList>(`/api/logs/app?${query({ before: String(before) })}`);
-    setRows((old) => [...old, ...d.items]);
-    setMore(d.items.length === 200);
+    try {
+      const d = await api.get<AppLogList>(`/api/logs/app?${query({ before: String(before) })}`);
+      setRows((old) => [...old, ...d.items]);
+      setMore(d.items.length === 200);
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message); // shown the way a failed first page is
+    }
   };
 
   return (

@@ -29,9 +29,9 @@ describe("an address with an encoded slug", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Disk usage" })).toBeInTheDocument();
   });
 
-  // FINDING: the links of EntityLink / JobRef / runHref carry "test%3Adisk", but App.parseHash does not decode the
-  // segments, and JobDetail encodes the slug again: the request goes to /api/jobs/test%253Adisk, which is not found.
-  it.fails("a slug written the way the entity links write it (test%3Adisk) opens the detail", async () => {
+  // The links of EntityLink / JobRef / runHref carry "test%3Adisk": App.parseHash decodes the segments once, and the
+  // page encodes the slug once where it makes the request (/api/jobs/test%3Adisk, not test%253Adisk).
+  it("a slug written the way the entity links write it (test%3Adisk) opens the detail", async () => {
     const asked: string[] = [];
     server.use(
       http.get("/api/jobs", () => HttpResponse.json(jobsList())),
@@ -47,5 +47,29 @@ describe("an address with an encoded slug", () => {
     render(<App />);
     await waitFor(() => expect(asked.length).toBeGreaterThan(0));
     expect(await screen.findByRole("heading", { level: 1, name: "Disk usage" }, { timeout: 1000 })).toBeInTheDocument();
+    expect(asked.every((p) => p === "/api/jobs/test%3Adisk")).toBe(true);
+  });
+
+  it("the link of a job in the list (JobRef) opens its detail with one encoding in the request", async () => {
+    const asked: string[] = [];
+    server.use(
+      http.get("/api/jobs/:slug", ({ request }) => {
+        asked.push(new URL(request.url).pathname);
+        const slug = decodeURIComponent(new URL(request.url).pathname.slice("/api/jobs/".length));
+        const job = jobsList().items.find((j) => j.slug === slug);
+        return job ? HttpResponse.json(job) : HttpResponse.json({ detail: "Job not found" }, { status: 404 });
+      }),
+    );
+    location.hash = "#/jobs";
+    render(<App />);
+    const link = (await screen.findAllByRole("link", { name: /Disk usage/ })).find((a) => a.getAttribute("href")?.includes("%3A"));
+    expect(link, "a link to test:disk written with %3A").toBeDefined();
+    expect(link).toHaveAttribute("href", "#/jobs/test%3Adisk");
+    act(() => {
+      location.hash = link!.getAttribute("href")!;
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "Disk usage" })).toBeInTheDocument();
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((p) => p === "/api/jobs/test%3Adisk")).toBe(true);
   });
 });

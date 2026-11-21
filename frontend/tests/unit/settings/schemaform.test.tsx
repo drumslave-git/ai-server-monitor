@@ -318,9 +318,8 @@ describe("boolean or auto", () => {
     }
   });
 
-  it.fails("moves the focus to the chosen option after an arrow key (the frame callback reads a cleared currentTarget)", async () => {
-    // FINDING: Segmented's onKeyDown reads e.currentTarget inside requestAnimationFrame; React has cleared it by then,
-    // so the callback throws "Cannot read properties of null (reading 'querySelector')" and the focus stays put.
+  it("moves the focus to the chosen option after an arrow key (the frame callback reads a cleared currentTarget)", async () => {
+    // (the frame runs after the event: the handler must not read e.currentTarget in it, React has cleared it by then)
     const frames: (() => void)[] = [];
     vi.stubGlobal("requestAnimationFrame", (f: () => void) => frames.push(f));
     try {
@@ -359,11 +358,17 @@ describe("choice", () => {
     expect(select).toHaveValue("f");
   });
 
-  it.fails("gives a number for a choice of numbers (the schema says integer, the form sends text)", async () => {
-    // LATENT: no setting of the backend has an integer enum today; kindOf turns every choice into a string.
+  it("gives a number for a choice of numbers (the schema says integer, the form sends text)", async () => {
+    // (no setting of the backend has an integer enum today; the buttons and the select speak text, the form gets the value)
     const { rig, user } = setup({ level: { type: "integer", enum: [1, 2, 3] } }, { level: 1 });
     await user.click(screen.getByRole("radio", { name: "2" }));
     expect(rig.value).toEqual({ level: 2 });
+  });
+
+  it("gives a number from the select too, when the choice is long", async () => {
+    const { rig, user } = setup({ level: { type: "integer", enum: [1, 2, 3, 4, 5, 6] } }, { level: 1 });
+    await user.selectOptions(byLabel("level"), "5");
+    expect(rig.value).toEqual({ level: 5 });
   });
 });
 
@@ -529,6 +534,34 @@ describe("names with a text each", () => {
     expect(rig.value).toEqual({ query: { limit: "100" } });
     await user.type(group.getByPlaceholderText("name"), "s");
     expect(rig.value).toEqual({ query: { limits: "100" } });
+  });
+
+  it("shows two rows with the same name as invalid, keeps both, and sends nothing with a clash", async () => {
+    const { rig, user } = setup({ query: schema }, { query: { limit: "10", sort: "asc" } });
+    const group = within(screen.getByRole("group", { name: "query" }));
+    const names = () => group.getAllByPlaceholderText("name") as HTMLInputElement[];
+    // rename "sort" to "limit": one letter at a time, the last one makes the clash
+    await user.clear(names()[1]);
+    await user.type(names()[1], "limit");
+    expect(names().map((i) => i.value)).toEqual(["limit", "limit"]);
+    expect(group.getAllByPlaceholderText("value").map((i) => (i as HTMLInputElement).value)).toEqual(["10", "asc"]);
+    expect(names().map((i) => i.getAttribute("aria-invalid"))).toEqual(["true", "true"]);
+    expect(rig.value).toEqual({ query: { limit: "10", limi: "asc" } }); // the last value without a clash
+    // another name ends it: both rows go in, nothing was dropped
+    await user.type(names()[1], "s");
+    expect(names().map((i) => i.getAttribute("aria-invalid"))).not.toContain("true");
+    expect(names().map((i) => i.value)).toEqual(["limit", "limits"]);
+    expect(rig.value).toEqual({ query: { limit: "10", limits: "asc" } });
+  });
+
+  it("removing one of two rows with the same name ends the clash", async () => {
+    const { rig, user } = setup({ query: schema }, { query: { a: "1", b: "2" } });
+    const group = within(screen.getByRole("group", { name: "query" }));
+    await user.clear(group.getAllByPlaceholderText("name")[1]);
+    await user.type(group.getAllByPlaceholderText("name")[1], "a");
+    await user.click(group.getAllByRole("button", { name: "remove" })[0]);
+    expect(rig.value).toEqual({ query: { a: "2" } });
+    expect(group.getAllByPlaceholderText("name")).toHaveLength(1);
   });
 });
 
@@ -811,10 +844,12 @@ describe("rows of a group", () => {
     expect(screen.getByText("About the proxy.")).toBeInTheDocument();
   });
 
-  it.fails("shows the note of a field that stands in a named section too", () => {
-    // LATENT: ObjectFields keeps the note only for fields outside a section; Settings sets no note of a field today.
+  it("shows the note of a field that stands in a named section too", () => {
+    // (Settings sets no note of a field today)
     setup(properties, values, { notes: { alpha: "Alpha is special." }, groups: { "": [{ title: "Pair", fields: ["alpha", "bravo"] }] } });
-    expect(screen.getByText("Alpha is special.")).toBeInTheDocument();
+    const note = screen.getByText("Alpha is special.");
+    expect(within(screen.getByRole("region", { name: "Pair" })).getByText("Alpha is special.")).toBe(note);
+    expect(note.compareDocumentPosition(byLabel("alpha")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("applies the sections of a nested object by its path", () => {

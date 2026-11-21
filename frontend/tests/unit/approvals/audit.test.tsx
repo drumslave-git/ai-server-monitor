@@ -144,13 +144,10 @@ describe("ApprovalsPage: audit log", () => {
   });
 });
 
-// FINDING (it.fails below): the audit log asks for its rows again only when `usePoll` is reloaded (an event, the
-// 30 s timer with the query of the last reload). Changing a filter, "show more" or "show in the audit log" changes the
-// query but `usePoll`'s effect depends on [tick, intervalMs] only, so no request goes out and the table keeps the
-// old rows. These tests state the expected behaviour (a request with the new query); they pass with a usePoll that
-// loads again when the query changes. Turn `it.fails` into `it` when that is fixed.
+// Changing a filter, "show more" or "show in the audit log" changes the query; the audit log's usePoll names the
+// query in its deps, so a request with the new query goes out and the table shows the rows it brings.
 describe("ApprovalsPage: audit log filters", () => {
-  it.fails("filters by status: asks for it and shows the rows the server sends", async () => {
+  it("filters by status: asks for it and shows the rows the server sends", async () => {
     const user = userEvent.setup();
     const seen = recordLog();
     renderPage();
@@ -180,7 +177,7 @@ describe("ApprovalsPage: audit log filters", () => {
     expect(within(select).getByRole("option", { name: "dry run" })).toHaveValue("dry_run");
   });
 
-  it.fails("offers the actions found in the log, each once and in order, and filters by one", async () => {
+  it("offers the actions found in the log, each once and in order, and filters by one", async () => {
     const user = userEvent.setup();
     const seen = recordLog();
     renderPage();
@@ -194,7 +191,7 @@ describe("ApprovalsPage: audit log filters", () => {
     expect(logRows()[0]).toHaveTextContent("telegram");
   });
 
-  it.fails("combines the two filters, and 'all' removes one again", async () => {
+  it("combines the two filters, and 'all' removes one again", async () => {
     const user = userEvent.setup();
     const seen = recordLog();
     renderPage();
@@ -211,7 +208,7 @@ describe("ApprovalsPage: audit log filters", () => {
     expect(seen.at(-1)?.get("action")).toBe("mcp_call");
   });
 
-  it.fails("says the log is empty for this filter, and the filter can be changed back", async () => {
+  it("says the log is empty for this filter, and the filter can be changed back", async () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByRole("table");
@@ -230,7 +227,7 @@ describe("ApprovalsPage: older actions", () => {
     return HttpResponse.json({ items: many.slice(0, limit), total: many.length });
   });
 
-  it.fails("offers the older actions when the log holds more than it shows, 25 more each time", async () => {
+  it("offers the older actions when the log holds more than it shows, 25 more each time", async () => {
     const user = userEvent.setup();
     server.use(paged);
     const seen = recordLog();
@@ -252,7 +249,7 @@ describe("ApprovalsPage: older actions", () => {
     expect(screen.queryByRole("button", { name: /show more/ })).not.toBeInTheDocument();
   });
 
-  it.fails("starts again at 25 when a filter changes", async () => {
+  it("starts again at 25 when a filter changes", async () => {
     const user = userEvent.setup();
     server.use(paged);
     const seen = recordLog();
@@ -268,7 +265,7 @@ describe("ApprovalsPage: older actions", () => {
 });
 
 describe("ApprovalsPage: show in the audit log", () => {
-  it.fails("narrows the log to the approval, shows up to 100 of its actions, and clears again", async () => {
+  it("narrows the log to the approval, shows up to 100 of its actions, and clears again", async () => {
     const user = userEvent.setup();
     const seen = recordLog();
     renderPage();
@@ -289,7 +286,7 @@ describe("ApprovalsPage: show in the audit log", () => {
     expect(screen.queryByRole("button", { name: /· clear$/ })).not.toBeInTheDocument();
   });
 
-  it.fails("says the log is empty for this approval", async () => {
+  it("says the log is empty for this approval", async () => {
     const user = userEvent.setup();
     server.use(
       http.get("/api/actions", ({ request }) => {

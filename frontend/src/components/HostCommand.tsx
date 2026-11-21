@@ -15,7 +15,8 @@ export function HostCommand({ item }: { item: Pick<ActionRecord, "args" | "reaso
   const result = item.result ?? {};
   const ran = item.status === "executed" || (item.status === "failed" && typeof result.exit_code === "number");
   const output = typeof result.output === "string" ? result.output : "";
-  const long = output.split("\n").length > LONG_LINES || output.length > LONG_CHARS;
+  const lineCount = output.split("\n").length;
+  const long = lineCount > LONG_LINES ||output.length > LONG_CHARS;
   const shown = <Code maxHeight={OUTPUT_HEIGHT}>{output}</Code>;
   return (
     <Column gap={2}>
@@ -31,7 +32,7 @@ export function HostCommand({ item }: { item: Pick<ActionRecord, "args" | "reaso
           </Inline>
           {output &&
             (long ? (
-              <Fold inline title={`output (${output.split("\n").length} lines)`}>
+              <Fold inline title={`output (${lineCount === 1 ? "1 line" : `${lineCount} lines`})`}>
                 {shown}
               </Fold>
             ) : (

@@ -424,10 +424,8 @@ describe("Segmented", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  // FINDING: the handler reads e.currentTarget inside requestAnimationFrame, but React (like the DOM) sets
-  // currentTarget back to null once the event has been dispatched, so the callback throws a TypeError and the
-  // focus never moves to the newly chosen option. Reproduce: focus a Segmented option, press ArrowRight.
-  it.fails("the chosen option keeps the focus after an arrow key", async () => {
+  // (the handler must not read e.currentTarget inside requestAnimationFrame: it is null once the event is dispatched)
+  it("the chosen option keeps the focus after an arrow key", async () => {
     const user = userEvent.setup();
     function Parent() {
       const [v, setV] = useState<"one" | "two" | "three">("one");

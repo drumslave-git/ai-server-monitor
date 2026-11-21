@@ -31,9 +31,11 @@ describe("ms", () => {
     expect(ms(125_000)).toBe("2m 5s");
   });
 
-  // 119 600 ms rounds its seconds to 60 inside the minute: the text reads "1m 60s" where "2m 0s" is meant.
-  it.fails("never shows 60 seconds inside a minute", () => {
+  it("never shows 60 seconds: a value that rounds up to a minute reads as the minute", () => {
     expect(ms(119_600)).toBe("2m 0s");
+    expect(ms(59_960)).toBe("1m 0s");
+    expect(ms(59_949)).toBe("59.9 s");
+    expect(ms(179_499)).toBe("2m 59s");
   });
 });
 

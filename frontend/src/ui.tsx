@@ -16,8 +16,9 @@ export function useNow(intervalMs = 15_000): number {
   return now;
 }
 
-/** Fetch `load()` now and every `intervalMs`; `reload` triggers it on demand. */
-export function usePoll<T>(load: () => Promise<T>, intervalMs: number) {
+/** Fetch `load()` now and every `intervalMs`; `reload` triggers it on demand. `load` is the one of the render in which
+ *  the fetch starts: when it reads something that changes (a filter), name that in `deps` to fetch again with it. */
+export function usePoll<T>(load: () => Promise<T>, intervalMs: number, deps: readonly unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -40,7 +41,7 @@ export function usePoll<T>(load: () => Promise<T>, intervalMs: number) {
       clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tick, intervalMs]);
+  }, [tick, intervalMs, ...deps]);
   return { data, error, reload: () => setTick((t) => t + 1) };
 }
 

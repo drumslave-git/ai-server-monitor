@@ -239,10 +239,8 @@ describe("the streamed answer", () => {
     expect(screen.queryByRole("button", { name: "stop" })).not.toBeInTheDocument();
   });
 
-  // FINDING: ChatPage's effect on [routeId, busy] reloads the stored conversation as soon as busy
-  // turns false, so the "stopped" mark of the live thread is replaced within a moment (only an
-  // error event sets keepThread to protect the live thread).
-  it.fails("after stop the thread still says the answer was stopped", async () => {
+  // The stop mark is not stored: the page keeps the live thread (keepThread) instead of reloading the stored one.
+  it("after stop the thread still says the answer was stopped", async () => {
     const user = userEvent.setup();
     const stream = liveStream();
     chatPosts(() => stream.response());
@@ -294,10 +292,9 @@ describe("failed answers", () => {
     expect(loaded).toBe(0);
   });
 
-  // FINDING: when the request fails before a session exists (new conversation: HTTP error or no
-  // connection), busy turns false and the effect on [routeId, busy] runs setTurns([]) (routeId is
-  // null), wiping the question and the error message. The user sees an empty page and an empty box.
-  it.fails("an error answer of the server (JSON detail) is shown under the question", async () => {
+  // A request that fails before a session exists (new conversation: HTTP error or no connection) keeps the question
+  // and shows the error under it.
+  it("an error answer of the server (JSON detail) is shown under the question", async () => {
     const user = userEvent.setup();
     chatPosts(() => HttpResponse.json({ detail: "No model is configured." }, { status: 503 }));
     renderChat("#/chat/new");
@@ -307,7 +304,7 @@ describe("failed answers", () => {
     expect(screen.getByText("hello")).toBeInTheDocument();
   });
 
-  it.fails("an error answer without detail shows its status", async () => {
+  it("an error answer without detail shows its status", async () => {
     const user = userEvent.setup();
     chatPosts(() => new HttpResponse("oops", { status: 500 }));
     renderChat("#/chat/new");
@@ -316,7 +313,7 @@ describe("failed answers", () => {
     expect(await screen.findByText("HTTP 500")).toBeInTheDocument();
   });
 
-  it.fails("a connection that fails shows the failure", async () => {
+  it("a connection that fails shows the failure", async () => {
     const user = userEvent.setup();
     chatPosts(() => HttpResponse.error());
     renderChat("#/chat/new");
@@ -333,7 +330,7 @@ describe("failed answers", () => {
     expect(await screen.findByRole("button", { name: "send" })).toBeInTheDocument();
   });
 
-  it.fails("an error answer in an open conversation shows under the new question (the stored thread is reloaded over it)", async () => {
+  it("an error answer in an open conversation shows under the new question (the stored thread is reloaded over it)", async () => {
     const user = userEvent.setup();
     chatPosts(() => HttpResponse.json({ detail: "No model is configured." }, { status: 503 }));
     renderChat("#/chat/s-disk");

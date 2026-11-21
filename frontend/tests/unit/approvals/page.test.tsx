@@ -154,6 +154,12 @@ describe("ApprovalsPage: waiting approvals", () => {
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
     expect(screen.getByText("—")).toBeInTheDocument();
   });
+
+  it("shows the message of the failed answer, where the waiting approvals would be", async () => {
+    server.use(http.get("/api/approvals", () => HttpResponse.json({ detail: "database is locked" }, { status: 500 })));
+    renderPage();
+    expect(await screen.findByText("database is locked")).toBeInTheDocument();
+  });
 });
 
 describe("ApprovalsPage: deciding", () => {
@@ -261,6 +267,16 @@ describe("ApprovalsPage: deciding", () => {
     await screen.findByRole("article", { name: singleBatch.title });
     await user.click(card(singleBatch.title).getByRole("button", { name: "approve all" }));
     expect(await screen.findByText("The server could not run the tool.")).toBeInTheDocument();
+  });
+
+  it("reads a validation error (a list of entries) as 'field: message', not as [object Object]", async () => {
+    const user = userEvent.setup();
+    recordDecisions(() => HttpResponse.json({ detail: [{ loc: ["body", "items", 0], msg: "Input should be a valid integer", type: "int_parsing" }] }, { status: 422 }));
+    renderPage();
+    await screen.findByRole("article", { name: singleBatch.title });
+    await user.click(card(singleBatch.title).getByRole("button", { name: "approve all" }));
+    expect(await screen.findByText("items.0: Input should be a valid integer")).toBeInTheDocument();
+    expect(screen.queryByText(/object Object/)).not.toBeInTheDocument();
   });
 
   it("clears the message of an earlier failure when the next decision goes through", async () => {
