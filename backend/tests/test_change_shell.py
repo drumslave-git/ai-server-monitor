@@ -161,6 +161,44 @@ def test_a_rejected_or_expired_command_is_reported_back(
         assert note["meta"]["outcome"] == {str(row["id"]): row["status"]}
 
 
+def test_an_expired_request_tells_the_resumed_run_not_to_ask_again(
+    bootstrap: Bootstrap, models: ScriptedModels, root_shell: list[str]
+) -> None:
+    app = make_app(bootstrap)
+    with TestClient(app) as client:
+        done = ask_for_restart(client, models)[-1]
+        [batch] = client.get("/api/approvals").json()["items"]
+        models.script = ["The request expired; I stop here."]
+        ctx = app.state.ctx
+
+        async def expire() -> None:
+            await ctx.db.execute("UPDATE actions SET expires_at = 1 WHERE batch_id = ?",
+                                 (batch["id"],))  # fmt: skip
+            await ctx.actions.sweep_expired()
+
+        client.portal.call(expire)  # type: ignore[union-attr]
+        wait_for_answer(client, done["session_id"], "The request expired; I stop here.")
+        told = models.requests[-1]["text"]
+        assert "it expired" in told
+        assert "The owner did not answer. Do not ask again" in told
+        assert "telling the owner in the chat" in told
+        assert root_shell == []
+
+
+def test_only_an_all_expired_wait_says_not_to_ask_again() -> None:
+    from ai_server_monitor.chat.engine import NOT_ANSWERED, settled_outcome
+
+    expired = {"action": "invented_tool", "status": "expired"}
+    rejected = {"action": "invented_tool", "status": "rejected"}
+    plain = "Nobody approved this request in time (it expired); nothing was done."
+    assert settled_outcome(expired) == (False, plain)
+    ran, text = settled_outcome(expired, unanswered=True)
+    assert not ran and text == plain + NOT_ANSWERED
+    # a rejection is an answer; it never carries the note
+    refusal = "The owner rejected this request; nothing was done."
+    assert settled_outcome(rejected, unanswered=True) == (False, refusal)
+
+
 def test_auto_policy_runs_at_once_in_the_same_answer(
     bootstrap: Bootstrap, models: ScriptedModels, root_shell: list[str]
 ) -> None:

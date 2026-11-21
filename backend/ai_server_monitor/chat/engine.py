@@ -680,12 +680,12 @@ class ChatEngine:
     async def _resume(self, run: dict[str, Any], items: list[dict[str, Any]]) -> None:
         session_id, source = run["session_id"], run["source"]
         suspended = Suspended.from_json(json.loads(run["state"]))
-        settled: dict[str, tuple[bool, str]] = {}
-        records = []
-        for item in items:
-            record = await self.app.actions.get(int(item["action_id"]))
-            records.append(record)
-            settled[item["call_id"]] = settled_outcome(record)
+        records = [await self.app.actions.get(int(item["action_id"])) for item in items]
+        unanswered = all(record.get("status") == "expired" for record in records)
+        settled = {
+            item["call_id"]: settled_outcome(record, unanswered=unanswered)
+            for item, record in zip(items, records, strict=True)
+        }
         await self._settle_note(session_id, records)
         results, resolved = resume_results(suspended, settled)
         final, failed = "", None
@@ -881,12 +881,21 @@ def change_shell_offered(app: AppContext) -> bool:
     )
 
 
-def settled_outcome(record: dict[str, Any]) -> tuple[bool, str]:
-    """(ran, text for the model) of a decided action a stopped run waited for."""
+NOT_ANSWERED = (
+    " The owner did not answer. Do not ask again for this or for any of the remaining items;"
+    " end your turn by telling the owner in the chat that the request expired unanswered."
+)
+
+
+def settled_outcome(record: dict[str, Any], *, unanswered: bool = False) -> tuple[bool, str]:
+    """(ran, text for the model) of a decided action a stopped run waited for. `unanswered`:
+    every action the run waited for expired, so the text also tells the model not to ask again."""
     status = record.get("status")
+    note = NOT_ANSWERED if unanswered and status == "expired" else ""
     if record.get("action") == "host_command":
         text = command_outcome(record)
-        return status == "executed", text if isinstance(text, str) else json.dumps(text)
+        text = text if isinstance(text, str) else json.dumps(text)
+        return status == "executed", text + note
     if status == "executed":
         return True, json.dumps(record.get("result") or {}, ensure_ascii=False, default=str)
     texts = {
@@ -895,7 +904,7 @@ def settled_outcome(record: dict[str, Any]) -> tuple[bool, str]:
         "dry_run": "Dry run: nothing was done.",
     }
     detail = (record.get("result") or {}).get("error") or ""
-    return False, texts.get(str(status), f"Not done ({status}). {detail}".strip())
+    return False, texts.get(str(status), f"Not done ({status}). {detail}".strip()) + note
 
 
 def _chunks(text: str) -> list[str]:
