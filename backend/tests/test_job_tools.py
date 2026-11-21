@@ -199,7 +199,10 @@ def test_the_chat_creates_changes_and_deletes_a_summary(
         # jobs_list names kinds, members and notify plainly
         store = client.app.state.ctx.jobs.store  # type: ignore[union-attr]
         member = _job_line(client.portal.call(store.get, "docker:status"), None)  # type: ignore[union-attr]
-        assert member["kind"] == "job" and member["summaries"] == ["summary:health"]
+        assert member["kind"] == "job" and member["summaries"] == [
+            "summary:daily",
+            "summary:health",
+        ]
         assert member["notify"] == "nothing itself (its summary reports)"
         health = _job_line(client.portal.call(store.get, "summary:health"), None)  # type: ignore[union-attr]
         assert health["kind"] == "summary" and "docker:status" in health["members"]

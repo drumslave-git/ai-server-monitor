@@ -274,10 +274,18 @@ def command_outcome(record: dict[str, Any]) -> dict[str, Any] | str:
 # --------------------------------------------------------------------------- built for the app
 
 
-def app_shell(app: AppContext) -> HostShell:
-    """The host shell as the app is configured (Settings → General → Docker URL)."""
-    docker = app.settings.general.docker_url.strip() or os.environ.get("DOCKER_HOST")
-    return HostShell(app.host_env.root, docker_host=docker or None)
+def app_shell(app: AppContext, *, docker_hub_login: bool = False) -> HostShell:
+    """The host shell as the app is configured (Settings → General → Docker URL).
+    `docker_hub_login`: the Docker Hub user and token of Settings → General go into the
+    shell's environment (`DOCKER_HUB_USER`, `DOCKER_HUB_TOKEN`) when both are set; only job
+    runs ask for it (the image check), the chat's shell never gets them."""
+    general = app.settings.general
+    docker = general.docker_url.strip() or os.environ.get("DOCKER_HOST")
+    env: dict[str, str] = {}
+    user, token = general.docker_hub_user.strip(), general.docker_hub_token.get_secret_value()
+    if docker_hub_login and user and token:
+        env = {"DOCKER_HUB_USER": user, "DOCKER_HUB_TOKEN": token}
+    return HostShell(app.host_env.root, docker_host=docker or None, extra_env=env)
 
 
 def app_bash(

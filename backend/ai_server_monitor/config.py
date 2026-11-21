@@ -162,6 +162,15 @@ class GeneralSettings(_Model):
     """Docker API the shell's `docker` commands use, e.g. tcp://docker-proxy:2375 or
     unix:///var/run/docker.sock. Empty = $DOCKER_HOST (set by the compose file), else the local
     socket."""
+    docker_hub_user: str = ""
+    """Docker Hub user name for the image check (the `docker:updates` job). With the access
+    token below, its lookups of Docker Hub images are logged in, which raises Docker Hub's
+    rate limit for anonymous requests (the cause of "Not checked, registry rate limit"). Empty
+    = anonymous. Other registries are never sent this login."""
+    docker_hub_token: Secret = SecretStr("")
+    """Docker Hub access token of that user (Docker Hub → Account settings → Personal access
+    tokens; read-only is enough). Kept secret: never shown again, never sent to the model.
+    Both fields must be set for the login to be used."""
     timezone: str = ""
     """Time zone of cron schedules, e.g. Europe/Berlin. Empty = the host's own time zone (its
     /etc/timezone or /etc/localtime), UTC when that cannot be read."""

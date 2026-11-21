@@ -397,7 +397,7 @@ class JobRunner:
         scrub = Scrubber(settings)
         # Every command of the run (also the delegated ones) is kept: findings must quote it.
         sources: list[str] = []
-        shell = RecordingShell(app_shell(app), sources)
+        shell = RecordingShell(app_shell(app, docker_hub_login=True), sources)
         # Not in the chat audit trail: every command is in this run's trace (turn below).
         tools: list[AgentTool] = [app_bash(app, None, shell)]  # type: ignore[arg-type]
         topic_check: TopicCheck | None = None

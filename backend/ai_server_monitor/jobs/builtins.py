@@ -48,31 +48,43 @@ HOUR = 3600
 DOCKER_UPDATES = (
     'h=${DOCKER_HOST:-unix:///var/run/docker.sock}; s=; b=$h; case "$h" in '
     "tcp://*) b=http://${h#tcp://};; unix://*) s=${h#unix://}; b=http://localhost;; esac; "
+    'm=anonymous; ha=; if [ -n "$DOCKER_HUB_USER" ] && [ -n "$DOCKER_HUB_TOKEN" ]; then '
+    'ha=$(printf \'{"username":"%s","password":"%s"}\' "$DOCKER_HUB_USER" '
+    "\"$DOCKER_HUB_TOKEN\" | base64 -w0 | tr '+/' '-_'); m=\"logged in as $DOCKER_HUB_USER\"; fi; "
     "for i in $(docker ps --format '{{.Image}}' | sort -u); do "
     'l=$(docker image inspect --format \'{{join .RepoDigests " "}}\' "$i" 2>&1) '
     '|| { echo "unknown  $i: $(echo "$l" | head -1)"; continue; }; '
     '[ -n "$l" ] || { echo "local    $i"; continue; }; '
-    'r=$(curl -sS ${s:+--unix-socket "$s"} "$b/distribution/$i/json" 2>&1); '
+    'a=; case "$i" in */*) case "${i%%/*}" in docker.io|index.docker.io|registry-1.docker.io) '
+    "a=$ha;; *.*|*:*|localhost) ;; *) a=$ha;; esac;; *) a=$ha;; esac; "
+    'r=$(curl -sS ${s:+--unix-socket "$s"} ${a:+-H "X-Registry-Auth: $a"} '
+    '"$b/distribution/$i/json" 2>&1); '
     'd=$(echo "$r" | sed -n \'s/.*"Descriptor":{[^}]*"digest":"\\(sha256:[0-9a-f]*\\)".*/\\1/p\'); '
     'case "$d" in sha256:*) case "$l" in *"$d"*) echo "current  $i";; '
     '*) echo "newer    $i | local: $l | registry: $d";; esac;; '
     '*) case "$r" in *toomanyrequests*) k="limited ";; *) k="unknown ";; esac; '
     'echo "$k $i: $(echo "$r" | head -1)";; esac; done'
-    ' | awk \'{n[$1]++; g[$1] = g[$1] $0 "\\n"} '
+    ' | awk -v m="$m" \'{n[$1]++; g[$1] = g[$1] $0 "\\n"} '
     'END {printf "%s%s%s%s%s", g["newer"], g["limited"], g["unknown"], g["local"], g["current"]; '
     'printf "counts: %d newer, %d limited, %d unknown, %d local, %d current\\n", '
-    'n["newer"], n["limited"], n["unknown"], n["local"], n["current"]}\''
+    'n["newer"], n["limited"], n["unknown"], n["local"], n["current"]; '
+    'printf "docker hub: %s\\n", m}\''
 )
 """One line per image of a running container, by class: "newer" (the registry has another digest
 for its tag; the line carries both digests), "limited" (the registry answered `toomanyrequests`,
 its rate limit, so the image was not checked), "unknown" (any other failure, with the first line
 of the answer), "local" (`docker image inspect` shows no registry digest: built or loaded on
 this host, nothing to ask a registry; no request is made for it) and "current". The classes come
-in that order, and last one line with the five counts (so the model copies them instead of
-counting a long list). The registry's digest comes from the Docker daemon (Engine API
-`GET /distribution/<image>/json`, `Descriptor.digest`), asked with curl at the same $DOCKER_HOST
-the `docker` commands use: `tcp://` as http, `unix://` through the socket, unset as Docker's own
-default socket. Nothing is written on the host."""
+in that order, then one line with the five counts (so the model copies them instead of
+counting a long list) and last "docker hub: anonymous" or "docker hub: logged in as <user>". The
+registry's digest comes from the Docker daemon (Engine API `GET /distribution/<image>/json`,
+`Descriptor.digest`), asked with curl at the same $DOCKER_HOST the `docker` commands use: `tcp://`
+as http, `unix://` through the socket, unset as Docker's own default socket. Nothing is written on
+the host. The optional Docker Hub login (Settings → General) arrives as $DOCKER_HUB_USER and
+$DOCKER_HUB_TOKEN, only in the job's shell; when both are set, the question for a Docker Hub image
+(no registry host in its name, or docker.io) carries it as the header `X-Registry-Auth` (base64url
+of {"username", "password"}, the way the Docker CLI hands credentials to the daemon). No other
+registry gets it, and no docker config file is written."""
 
 DOCKER_STATUS = (
     DOCKER_PS + " | awk -F'\\t' '"
@@ -184,7 +196,9 @@ volumes and build cache; much reclaimable space is one info finding.""",
         f"""\
 Newer images for the running containers.
 Run this ONE command; it prints one line per image, grouped by the word each line starts with,
-and as its last line the counts ("counts: 5 newer, 3 limited, 4 unknown, 2 local, 32 current"):
+and as its last two lines the counts ("counts: 5 newer, 3 limited, 4 unknown, 2 local, 32 current")
+and whether Docker Hub was asked with a login ("docker hub: anonymous" or "docker hub: logged in
+as <user>"):
 `{DOCKER_UPDATES}`
 - "current": the registry has the same image.
 - "newer": the registry has a different image for that tag (an update); the line shows this
@@ -201,14 +215,18 @@ its image, and the line is copied as its evidence. The fields are `severity`, `t
 and `evidence` (the text goes into `detail`; there is no `description`):
 - newer: info; title "Newer image: <image>"; detail "this host has <digest after local:>, the
   registry has <digest after registry:>".
-- limited: warn; title "Not checked, registry rate limit: <image>"; detail the answer's text.
-- unknown: warn; title "Not checked, registry error: <image>"; detail the answer's text.
+- limited: warn; title "Not checked, registry rate limit: <image>"; detail the answer's text and,
+  when the last line says "docker hub: anonymous", that a Docker Hub login in Settings → General
+  raises the limit.
+- unknown: warn; title "Not checked, registry error: <image>"; detail the answer's text (an
+  answer about a wrong user name or token: say the Docker Hub login in Settings → General is
+  refused).
 - local: info; title "Local image, cannot be checked: <image>"; detail "no registry digest
   (built or loaded on this host)".
 The "current" lines need no finding.
 ok: no "limited" and no "unknown" line. warn: at least one "limited" or "unknown" line (images
 that were not checked). This check has no crit.
-In the summary, name the counts of the last line as printed (do not count the lines yourself)
+In the summary, name the counts of the counts line as printed (do not count the lines yourself)
 and, when some images were not checked, why.""",
     ),
     _topic(
@@ -415,7 +433,12 @@ after another just now, in this order.
 - findings: only what needs the owner's attention, merged across checks, most severe first,
   each with the evidence line copied from the check result or your command."""
 
-DAILY = ("docker:updates", "updates:packages", "updates:reboot")
+DAILY_ONLY = ("docker:updates", "updates:packages", "updates:reboot")
+"""The checks only the Daily runs (they change slowly): Health, hourly, has all the others."""
+
+DAILY = (*DAILY_ONLY, "docker:status", "docker:resources")
+"""The Daily's members, in the order they run: its own three, then two that Health runs
+hourly too (a topic may be in several summaries; it has no schedule of its own)."""
 
 SUMMARIES: tuple[JobDef, ...] = (
     JobDef(
@@ -426,7 +449,7 @@ SUMMARIES: tuple[JobDef, ...] = (
         prompt=SUMMARY_PROMPT,
         interval_s=HOUR,
         max_steps=6,
-        members=tuple(t.slug for t in TOPICS if t.slug not in DAILY),
+        members=tuple(t.slug for t in TOPICS if t.slug not in DAILY_ONLY),
         notify="changed",  # as send_summary's default in 0.9.1
     ),
     JobDef(

@@ -153,8 +153,8 @@ Built-in summaries (main model, notify `changed`):
 
 | Summary | Schedule | Jobs |
 |---|---|---|
-| `summary:health` *Health* | every hour | the eleven jobs below that are not in Daily, in this order |
-| `summary:daily` *Daily* | daily at 06:00 | `docker:updates`, `updates:packages`, `updates:reboot` |
+| `summary:health` *Health* | every hour | the eleven jobs below that are not only for Daily, in this order |
+| `summary:daily` *Daily* | daily at 06:00 | `docker:updates`, `updates:packages`, `updates:reboot`, `docker:status`, `docker:resources` (the last two are in Health too) |
 
 Built-in jobs (worker model, no schedule of their own, notify `warn_crit`):
 
@@ -375,6 +375,8 @@ values a fresh install starts with.
 | `general.language` | string | `en` | Language of chat answers and Telegram messages. |
 | `general.root_font_size` | number | `16` | Text size of the web UI in pixels: the root font size every text of the page is sized from (the big headings too). Applies on every device that opens the UI. |
 | `general.docker_url` | string | empty | Docker API the shell's `docker` commands use, e.g. tcp://docker-proxy:2375 or unix:///var/run/docker.sock. Empty = $DOCKER_HOST (set by the compose file), else the local socket. |
+| `general.docker_hub_user` | string | empty | Docker Hub user name for the image check (the `docker:updates` job). With the access token below, its lookups of Docker Hub images are logged in, which raises Docker Hub's rate limit for anonymous requests (the cause of "Not checked, registry rate limit"). Empty = anonymous. Other registries are never sent this login. |
+| `general.docker_hub_token` | secret | empty | Docker Hub access token of that user (Docker Hub → Account settings → Personal access tokens; read-only is enough). Kept secret: never shown again, never sent to the model. Both fields must be set for the login to be used. |
 | `general.timezone` | string | empty | Time zone of cron schedules, e.g. Europe/Berlin. Empty = the host's own time zone (its /etc/timezone or /etc/localtime), UTC when that cannot be read. |
 | `general.instructions` | string | empty | Your standing instructions for the model, in your own words: how this server is run, what matters to you, how answers should look. Added after the built-in instructions of the chat, its worker, topic jobs and summaries. Empty = nothing is added. |
 
@@ -803,10 +805,20 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
   on the host (no registry digest) is `local`, "cannot be checked" and an info finding, and no
   registry is asked for it. A registry answer `toomanyrequests` (Docker Hub's anonymous rate
   limit) is `limited`, any other failure `unknown`; both are warn findings, "Not checked, ...:
-  <image>", with the registry's text, and make the job's status warn. Nothing is logged in to,
-  retried or cached: what could help is a registry login, spacing the checks out, or a registry
-  mirror, and that is the owner's call. Each finding carries its image in the title and the
-  command's line as evidence (before, nine findings of a live run had an empty detail).
+  <image>", with the registry's text, and make the job's status warn. Nothing is retried or
+  cached. The command ends with a line `docker hub: anonymous` or `docker hub: logged in as
+  <user>`, so a rate-limit finding names its cause. Each finding carries its image in the title
+  and the command's line as evidence (before, nine findings of a live run had an empty detail).
+- **Optional Docker Hub login for the image check.** **Settings → general → Docker Hub user** and
+  **Docker Hub token** (an access token; kept as a secret, never shown again, never sent to the
+  model). When both are set, the image check asks Docker Hub for its images (not other registries)
+  with that login, which lifts the anonymous rate limit; empty, it stays anonymous as before. The
+  login is sent to the Docker daemon with each lookup (`X-Registry-Auth`), nothing is written to
+  `~/.docker`, and only the scheduled and manual job runs have it, not the chat.
+- **The default of Daily is five jobs:** `docker:updates`, `updates:packages`, `updates:reboot`,
+  `docker:status`, `docker:resources`, in this order (the last two are in Health too and have no
+  schedule of their own). An unedited Daily takes this on upgrade, an edited one keeps its list
+  until **reset to default**.
 - **A finding with a field the schema does not have is sent back to the model** (Extra inputs
   are not permitted: `description`), instead of dropping the field without a word.
 - **The summary lists what was not checked, and its headline states only what the findings

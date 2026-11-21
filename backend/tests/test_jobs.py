@@ -11,7 +11,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from ai_server_monitor.config import Bootstrap, Settings
-from ai_server_monitor.jobs.builtins import BUILTINS, BY_SLUG, DAILY, TOPICS
+from ai_server_monitor.jobs.builtins import BUILTINS, BY_SLUG, DAILY, DAILY_ONLY, TOPICS
 from ai_server_monitor.jobs.builtins import SUMMARY_PROMPT as SUMMARY_PROMPT_BUILTIN
 from ai_server_monitor.jobs.runner import TopicLine
 from ai_server_monitor.main import create_app
@@ -63,13 +63,17 @@ def test_builtins_are_seeded_with_their_schedules(bootstrap: Bootstrap) -> None:
     assert (health["interval_s"], health["cron"]) == (3600, None)
     assert (daily["interval_s"], daily["cron"]) == (None, "0 6 * * *")
     assert daily["members"] == list(DAILY)
-    assert health["members"] == [t.slug for t in TOPICS if t.slug not in DAILY]
+    assert health["members"] == [t.slug for t in TOPICS if t.slug not in DAILY_ONLY]
     assert health["kind"] == daily["kind"] == "summary" and health["model"] == "main"
     for topic in TOPICS:
         job = by_slug[topic.slug]
         assert (job["interval_s"], job["cron"], job["model"]) == (None, None, "worker")
         assert job["summaries"] == (
-            ["summary:daily"] if topic.slug in DAILY else ["summary:health"]
+            ["summary:daily"]
+            if topic.slug in DAILY_ONLY
+            else ["summary:daily", "summary:health"]
+            if topic.slug in DAILY
+            else ["summary:health"]
         )
         assert job["next_run"] is None  # its summary runs it
     assert {j["slug"]: j["notify"] for j in items if j["notify"] != "warn_crit"} == {
@@ -78,6 +82,45 @@ def test_builtins_are_seeded_with_their_schedules(bootstrap: Bootstrap) -> None:
     }
     assert all(j["builtin"] and not j["edited"] and j["enabled"] for j in items)
     assert all(j["created_by"] == "builtin" and j["last_run"] is None for j in items)
+
+
+FIVE = ["docker:updates", "updates:packages", "updates:reboot", "docker:status", "docker:resources"]
+
+
+def test_the_daily_default_has_five_members_and_its_two_shared_ones_have_no_schedule(
+    bootstrap: Bootstrap,
+) -> None:
+    assert list(DAILY) == FIVE
+    with TestClient(make_app(bootstrap)) as client:
+        daily = client.get("/api/jobs/summary:daily").json()
+        assert daily["members"] == FIVE and daily["edited"] is False
+        for slug in ("docker:status", "docker:resources"):
+            job = client.get(f"/api/jobs/{slug}").json()
+            assert (job["interval_s"], job["cron"], job["next_run"]) == (None, None, None)
+            assert job["summaries"] == ["summary:daily", "summary:health"]
+        # Health keeps them too, so both summaries run them
+
+        # An edited Daily keeps the user's list; Reset gives the five again.
+        edited = client.put("/api/jobs/summary:daily", json={"members": FIVE[:3]}).json()
+        assert edited["edited"] is True and edited["members"] == FIVE[:3]
+        reset = client.post("/api/jobs/summary:daily/reset").json()
+        assert reset["members"] == FIVE and reset["edited"] is False
+
+
+def test_an_unedited_stored_daily_with_the_old_three_members_follows_the_new_default(
+    bootstrap: Bootstrap,
+) -> None:
+    app = make_app(bootstrap)
+    with TestClient(app) as client:
+        client.put("/api/jobs/summary:daily", json={"members": FIVE[:3]})
+        store = app.state.ctx.jobs.store
+
+        async def as_before_the_release() -> None:
+            await store.db.execute("UPDATE jobs SET edited = 0 WHERE slug = 'summary:daily'")
+            await store.seed_builtins()
+
+        client.portal.call(as_before_the_release)  # type: ignore[union-attr]
+        assert client.get("/api/jobs/summary:daily").json()["members"] == FIVE
 
 
 def test_a_topic_run_uses_only_bash_and_stores_the_structured_result(
