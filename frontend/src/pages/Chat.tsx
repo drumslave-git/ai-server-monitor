@@ -9,7 +9,7 @@ import { ago } from "../fmt";
 import { takeExplain, type ExplainRequest } from "../components/Explain";
 import { Code, Column, Command, Composer, Empty, EntityLink, ErrorText, Fold, IconButton, Inline, LinkButton, List, ListItem, Message, Meta, PageHeader, Pad, Pane, Panes, Status, Text, type Tone } from "../kit";
 import { useStream } from "../live";
-import { useNow, usePoll } from "../ui";
+import { useMatchMedia, useNow, usePoll } from "../ui";
 
 type SessionList = Schemas["ChatSessionList"];
 type SessionDoc = Schemas["ChatSession"];
@@ -187,17 +187,6 @@ const chatRoute = () => location.hash.replace(/^#\/?/, "").split("/").filter(Boo
 /** Below this width the page shows the conversations or the thread, not both. */
 const ONE_PANE = "(max-width: 820px)";
 
-function useOnePane(): boolean {
-  const [onePane, setOnePane] = useState(() => window.matchMedia(ONE_PANE).matches);
-  useEffect(() => {
-    const query = window.matchMedia(ONE_PANE);
-    const onChange = () => setOnePane(query.matches);
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  }, []);
-  return onePane;
-}
-
 export function ChatPage() {
   // The page follows the hash itself: starting a conversation rewrites it (replaceState)
   // without a hashchange event, so App's route would be stale.
@@ -208,7 +197,7 @@ export function ChatPage() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   const now = useNow(30_000);
-  const onePane = useOnePane();
+  const onePane = useMatchMedia(ONE_PANE);
   const sessions = usePoll(() => api.get<SessionList>("/api/chat/sessions?limit=50"), 60_000);
   const routeId = params[0] && params[0] !== "new" ? params[0] : null;
   const showThread = params[0] !== undefined;
