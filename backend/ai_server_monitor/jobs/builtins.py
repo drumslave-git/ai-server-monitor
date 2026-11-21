@@ -45,47 +45,6 @@ class JobDef:
 
 HOUR = 3600
 
-DOCKER_UPDATES = (
-    'h=${DOCKER_HOST:-unix:///var/run/docker.sock}; s=; b=$h; case "$h" in '
-    "tcp://*) b=http://${h#tcp://};; unix://*) s=${h#unix://}; b=http://localhost;; esac; "
-    'm=anonymous; ha=; if [ -n "$DOCKER_HUB_USER" ] && [ -n "$DOCKER_HUB_TOKEN" ]; then '
-    'ha=$(printf \'{"username":"%s","password":"%s"}\' "$DOCKER_HUB_USER" '
-    "\"$DOCKER_HUB_TOKEN\" | base64 -w0 | tr '+/' '-_'); m=\"logged in as $DOCKER_HUB_USER\"; fi; "
-    "for i in $(docker ps --format '{{.Image}}' | sort -u); do "
-    'l=$(docker image inspect --format \'{{join .RepoDigests " "}}\' "$i" 2>&1) '
-    '|| { echo "unknown  $i: $(echo "$l" | head -1)"; continue; }; '
-    '[ -n "$l" ] || { echo "local    $i"; continue; }; '
-    'a=; case "$i" in */*) case "${i%%/*}" in docker.io|index.docker.io|registry-1.docker.io) '
-    "a=$ha;; *.*|*:*|localhost) ;; *) a=$ha;; esac;; *) a=$ha;; esac; "
-    'r=$(curl -sS ${s:+--unix-socket "$s"} ${a:+-H "X-Registry-Auth: $a"} '
-    '"$b/distribution/$i/json" 2>&1); '
-    'd=$(echo "$r" | sed -n \'s/.*"Descriptor":{[^}]*"digest":"\\(sha256:[0-9a-f]*\\)".*/\\1/p\'); '
-    'case "$d" in sha256:*) case "$l" in *"$d"*) echo "current  $i";; '
-    '*) echo "newer    $i | local: $l | registry: $d";; esac;; '
-    '*) case "$r" in *toomanyrequests*) k="limited ";; *) k="unknown ";; esac; '
-    'echo "$k $i: $(echo "$r" | head -1)";; esac; done'
-    ' | awk -v m="$m" \'{n[$1]++; g[$1] = g[$1] $0 "\\n"} '
-    'END {printf "%s%s%s%s%s", g["newer"], g["limited"], g["unknown"], g["local"], g["current"]; '
-    'printf "counts: %d newer, %d limited, %d unknown, %d local, %d current\\n", '
-    'n["newer"], n["limited"], n["unknown"], n["local"], n["current"]; '
-    'printf "docker hub: %s\\n", m}\''
-)
-"""One line per image of a running container, by class: "newer" (the registry has another digest
-for its tag; the line carries both digests), "limited" (the registry answered `toomanyrequests`,
-its rate limit, so the image was not checked), "unknown" (any other failure, with the first line
-of the answer), "local" (`docker image inspect` shows no registry digest: built or loaded on
-this host, nothing to ask a registry; no request is made for it) and "current". The classes come
-in that order, then one line with the five counts (so the model copies them instead of
-counting a long list) and last "docker hub: anonymous" or "docker hub: logged in as <user>". The
-registry's digest comes from the Docker daemon (Engine API `GET /distribution/<image>/json`,
-`Descriptor.digest`), asked with curl at the same $DOCKER_HOST the `docker` commands use: `tcp://`
-as http, `unix://` through the socket, unset as Docker's own default socket. Nothing is written on
-the host. The optional Docker Hub login (Settings → General) arrives as $DOCKER_HUB_USER and
-$DOCKER_HUB_TOKEN, only in the job's shell; when both are set, the question for a Docker Hub image
-(no registry host in its name, or docker.io) carries it as the header `X-Registry-Auth` (base64url
-of {"username", "password"}, the way the Docker CLI hands credentials to the daemon). No other
-registry gets it, and no docker config file is written."""
-
 DOCKER_STATUS = (
     DOCKER_PS + " | awk -F'\\t' '"
     '{if ($2 ~ /\\(unhealthy\\)/) g = "unhealthy"; '
@@ -193,13 +152,13 @@ volumes and build cache; much reclaimable space is one info finding.""",
         "docker:updates",
         "Docker: image updates",
         "docker",
-        f"""\
+        """\
 Newer images for the running containers.
-Run this ONE command; it prints one line per image, grouped by the word each line starts with,
+Call the tool `docker_image_check` ONCE (it takes no arguments; do not use bash for this). It
+prints one line per image of a running container, grouped by the word each line starts with,
 and as its last two lines the counts ("counts: 5 newer, 3 limited, 4 unknown, 2 local, 32 current")
 and whether Docker Hub was asked with a login ("docker hub: anonymous" or "docker hub: logged in
-as <user>"):
-`{DOCKER_UPDATES}`
+as <user>").
 - "current": the registry has the same image.
 - "newer": the registry has a different image for that tag (an update); the line shows this
   host's digest after "local:" and the registry's after "registry:".

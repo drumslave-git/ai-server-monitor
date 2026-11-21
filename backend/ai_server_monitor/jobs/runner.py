@@ -23,12 +23,13 @@ from pydantic_ai import ModelRetry
 from ..agent.prompts import host_line
 from ..agent.runtime import NOT_FINISHED, AgentConfig, AgentTool, run_agent
 from ..agent.safety import Scrubber
-from ..agent.tools import app_bash, app_delegate, app_shell, request_mcp_write
+from ..agent.tools import app_bash, app_delegate, app_shell, docker_url, request_mcp_write
 from ..chat.explain import host_zone
 from ..config import Settings
 from ..llm.text import strip_reasoning
 from ..mcp_client import turn as mcp_turn
 from .evidence import EvidenceCheck, RecordingShell
+from .images import daemon_client, image_check_tool
 from .prompts import summary_input, summary_instructions, topic_instructions
 from .store import INTERRUPTED, JobStore
 
@@ -397,9 +398,26 @@ class JobRunner:
         scrub = Scrubber(settings)
         # Every command of the run (also the delegated ones) is kept: findings must quote it.
         sources: list[str] = []
-        shell = RecordingShell(app_shell(app, docker_hub_login=True), sources)
+        shell = RecordingShell(app_shell(app), sources)
         # Not in the chat audit trail: every command is in this run's trace (turn below).
         tools: list[AgentTool] = [app_bash(app, None, shell)]  # type: ignore[arg-type]
+        if slug == "docker:updates":
+            # The image check runs here, not in the shell: the optional Docker Hub login goes
+            # from this process to the Docker daemon, never into the shell's environment or the
+            # arguments of a process (see jobs/images.py).
+            general = settings.general
+            user, token = (
+                general.docker_hub_user.strip(),
+                general.docker_hub_token.get_secret_value(),
+            )
+            tools.append(
+                image_check_tool(
+                    lambda: daemon_client(docker_url(app), app.host_env.root, shell.isolated),
+                    (user, token) if user and token else None,
+                    scrub.text,
+                    sources,
+                )
+            )
         topic_check: TopicCheck | None = None
         if job["kind"] == "summary":
             tools.append(app_delegate(app, None, scrub, host, shell))  # type: ignore[arg-type]

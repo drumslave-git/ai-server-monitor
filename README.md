@@ -800,21 +800,28 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
 - **The 16 px text fits where it did at 14 px.** The LLM calls table keeps inside its pane (two long
   column names and the timing text may wrap) and the phone's bottom bar keeps its label size.
 - **The image check (`docker:updates`) sorts every image into one of five classes and reports each
-  one by name.** The command prints `newer`, `limited`, `unknown`, `local` and `current` lines and
+  one by name.** The check prints `newer`, `limited`, `unknown`, `local` and `current` lines and
   ends with `counts: 5 newer, 3 limited, 4 unknown, 2 local, 32 current`. An image built or loaded
   on the host (no registry digest) is `local`, "cannot be checked" and an info finding, and no
   registry is asked for it. A registry answer `toomanyrequests` (Docker Hub's anonymous rate
   limit) is `limited`, any other failure `unknown`; both are warn findings, "Not checked, ...:
   <image>", with the registry's text, and make the job's status warn. Nothing is retried or
-  cached. The command ends with a line `docker hub: anonymous` or `docker hub: logged in as
+  cached. The result ends with a line `docker hub: anonymous` or `docker hub: logged in as
   <user>`, so a rate-limit finding names its cause. Each finding carries its image in the title
-  and the command's line as evidence (before, nine findings of a live run had an empty detail).
+  and the check's line as evidence (before, nine findings of a live run had an empty detail).
 - **Optional Docker Hub login for the image check.** **Settings → general → Docker Hub user** and
   **Docker Hub token** (an access token; kept as a secret, never shown again, never sent to the
   model). When both are set, the image check asks Docker Hub for its images (not other registries)
-  with that login, which lifts the anonymous rate limit; empty, it stays anonymous as before. The
-  login is sent to the Docker daemon with each lookup (`X-Registry-Auth`), nothing is written to
-  `~/.docker`, and only the scheduled and manual job runs have it, not the chat.
+  with that login, which lifts the anonymous rate limit; empty, it stays anonymous as before.
+  The check is a tool of the `docker:updates` job (`docker_image_check`), run by the backend, not
+  by the model's shell: the backend sends the login to the Docker daemon itself with each lookup
+  (`X-Registry-Auth`), so the token is in no environment variable and no process argument, nothing
+  is written to `~/.docker`, and neither the chat nor any other job has the tool. The check no
+  longer needs `curl` on the host. An unedited `docker:updates` job takes the new prompt by itself
+  on upgrade; if you edited it, press **reset to default** on its edit page.
+- **The debug log no longer prints settings values.** At log level `debug` the SQLite library
+  (`aiosqlite`) logged every SQL statement with its values, the write of Settings included, which
+  holds every secret in clear (API keys, tokens, passwords). Its logger is now kept at warning.
 - **The default of Daily is five jobs:** `docker:updates`, `updates:packages`, `updates:reboot`,
   `docker:status`, `docker:resources`, in this order (the last two are in Health too and have no
   schedule of their own). An unedited Daily takes this on upgrade, an edited one keeps its list

@@ -135,18 +135,10 @@ class ShellResult:
 
 
 class HostShell:
-    def __init__(
-        self,
-        root: Path,
-        *,
-        docker_host: str | None = None,
-        uid: int = SANDBOX_UID,
-        extra_env: dict[str, str] | None = None,
-    ):
+    def __init__(self, root: Path, *, docker_host: str | None = None, uid: int = SANDBOX_UID):
         self.root = root
         self.docker_host = docker_host
         self.uid = uid
-        self.extra_env = extra_env or {}
 
     @property
     def available(self) -> bool:
@@ -184,7 +176,6 @@ class HostShell:
         docker = resolve_docker_host(self.docker_host) if self.isolated else self.docker_host
         if docker:
             env["DOCKER_HOST"] = docker
-        env.update(self.extra_env)
         return env
 
     def argv(self, command: str, timeout_s: float) -> list[str]:

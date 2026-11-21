@@ -17,6 +17,9 @@ from typing import Any
 import aiosqlite
 
 log = logging.getLogger(__name__)
+# At the "debug" log level aiosqlite logs every SQL statement with its parameter values, and the
+# settings write carries every secret in Settings (API keys, tokens, passwords) in clear.
+logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 
 _MIGRATION_NAME = re.compile(r"^(\d{4})_[\w-]+\.sql$")
 
