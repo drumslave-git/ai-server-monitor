@@ -1101,6 +1101,28 @@ export function Checkbox({
   );
 }
 
+/** One of several choices as a round mark and its label; the radios of a group share `name`. */
+export function Radio({
+  checked,
+  onChange,
+  label,
+  name,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  label: ReactNode;
+  name: string;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="fd-check fd-radio">
+      <input type="radio" name={name} checked={checked} disabled={disabled} onChange={onChange} />
+      <span>{label}</span>
+    </label>
+  );
+}
+
 /** Only the room of a checkbox: a line with nothing to tick among lines that have one. */
 export function CheckboxBlank() {
   return <span className="fd-check-blank" aria-hidden />;

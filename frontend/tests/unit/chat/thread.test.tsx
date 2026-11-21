@@ -19,8 +19,8 @@ let id = 100;
 const msg = (m: Omit<Message, "id" | "ts">): Message => ({ id: id++, ts: 1, ...m });
 
 /** A stored conversation "s-x" with these messages. */
-function store(messages: Message[]) {
-  server.use(http.get("/api/chat/sessions/s-x", () => HttpResponse.json({ id: "s-x", title: "Example x", channel: "web", created: 1, updated: 1, messages } satisfies Doc)));
+function store(messages: Message[], cards: Doc["cards"] = []) {
+  server.use(http.get("/api/chat/sessions/s-x", () => HttpResponse.json({ id: "s-x", title: "Example x", channel: "web", created: 1, updated: 1, cards, messages } satisfies Doc)));
 }
 
 describe("a stored conversation", () => {

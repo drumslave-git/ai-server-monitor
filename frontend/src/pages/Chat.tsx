@@ -3,6 +3,7 @@ import { api, type Schemas } from "../api";
 import { ApprovalCards } from "../components/ApprovalCards";
 import { ToolName } from "../components/EntityRefs";
 import { HostCommand } from "../components/HostCommand";
+import { PromptCard, type ChatCard } from "../components/PromptCard";
 import { RunnableMarkdown } from "../components/RunnableMarkdown";
 import { ago } from "../fmt";
 import { takeExplain, type ExplainRequest } from "../components/Explain";
@@ -50,6 +51,8 @@ type Turn =
       stopped?: boolean;
       /** The answer broke off and is being asked for again (event `retry`), until its first new token. */
       retry?: { attempt: number; of: number };
+      /** Questions the model asked the owner (`ask_owner`), open or answered. */
+      cards?: ChatCard[];
       /** The run stopped for these approvals (action ids); `text` is the waiting note. */
       waiting?: number[];
       /** Set once the note was rewritten to what was decided: action id → final status. */
@@ -111,6 +114,8 @@ function approvalOf(text: string | undefined): ToolUse["approval"] {
 
 /** Rebuild the thread from stored messages: tool traffic folds into the answer it led to. */
 function toTurns(doc: SessionDoc): Turn[] {
+  const cards = doc.cards ?? [];
+  const asked = new Set(cards.map((c) => c.call_id));
   const turns: Turn[] = [];
   let current: Extract<Turn, { role: "assistant" }> | null = null;
   const open = () => (current ??= { role: "assistant", text: "", tools: [] });
@@ -152,6 +157,8 @@ function toTurns(doc: SessionDoc): Turn[] {
         turns.push(turn);
         current = null;
       }
+    } else if (m.role === "tool" && asked.has(m.tool_call_id ?? "")) {
+      // (the answers the model read: the card shows them)
     } else if (m.role === "tool") {
       const turn = open();
       const use = turn.tools.find((t) => t.id === m.tool_call_id) ?? { id: m.tool_call_id ?? "", name: m.name ?? "tool" };
@@ -162,6 +169,16 @@ function toTurns(doc: SessionDoc): Turn[] {
     }
   }
   if (current) turns.push(current);
+  // A card stands with the answer that asked it, in place of the tool call.
+  for (const turn of turns) {
+    if (turn.role !== "assistant") continue;
+    const mine = cards.filter((c) => turn.tools.some((t) => t.id === c.call_id));
+    if (!mine.length) continue;
+    turn.cards = mine;
+    turn.tools = turn.tools.filter((t) => !mine.some((c) => c.call_id === t.id));
+    // (the waiting note of a card alone says nothing the card does not)
+    if (turn.text === "Waiting for your answer." || turn.text === "Answered.") turn.text = "";
+  }
   return turns;
 }
 
@@ -225,7 +242,7 @@ export function ChatPage() {
 
   // A run that waited for an approval continues on the server: its answer arrives as
   // chat.message, the rewritten waiting note as chat.message.updated (prefix match).
-  useStream(["chat.message"], (event) => {
+  useStream(["chat.message", "chat.card"], (event) => {
     if (busy || !sessionId.current || event.data.session_id !== sessionId.current) return;
     void load(sessionId.current);
     sessions.reload();
@@ -311,6 +328,11 @@ export function ChatPage() {
             patchLast((t) => {
               t.text = "";
               t.tools.push({ id: data.id, name: data.name, args: data.args, kind: data.kind });
+            });
+          } else if (type === "card") {
+            patchLast((t) => {
+              t.cards = [...(t.cards ?? []), data.card];
+              t.tools = t.tools.filter((x) => x.id !== data.card.call_id);
             });
           } else if (type === "tool_progress") {
             patchLast((t) => {
@@ -468,7 +490,7 @@ export function ChatPage() {
                   ) : t.role === "run" ? (
                     <RunCard key={i} run={t.run} />
                   ) : (
-                    <AssistantMessage key={i} turn={t} onRun={busy ? undefined : runCommand} />
+                    <AssistantMessage key={i} turn={t} onRun={busy ? undefined : runCommand} onCardAnswered={() => sessionId.current && void load(sessionId.current)} />
                   ),
                 )}
               </Pad>
@@ -541,9 +563,11 @@ function RunCard({ run }: { run: CommandRun }) {
 function AssistantMessage({
   turn,
   onRun,
+  onCardAnswered,
 }: {
   turn: Extract<Turn, { role: "assistant" }>;
   onRun?: (command: string) => Promise<void>;
+  onCardAnswered?: () => void;
 }) {
   const names = Array.from(new Set(turn.tools.map((t) => displayName(t.name))));
   // approvals this answer waits for, and older write tools whose result named a pending approval
@@ -581,6 +605,7 @@ function AssistantMessage({
           ))}
         </Fold>
       )}
+      {turn.cards?.map((card) => <PromptCard key={card.id} card={card} onAnswered={onCardAnswered} />)}
       {approvals.length > 0 && <ApprovalCards key={approvals.join(",")} items={approvals} />}
       {turn.waiting && turn.text ? (
         <Status tone={outcomeTone(turn.outcome)} plain>

@@ -14,7 +14,8 @@ from ..context import AppContext
 from ..outputs.sse import SSE_HEADERS
 from . import audit
 from . import explain as explaining
-from .engine import MAX_MESSAGE
+from .cards import Answer
+from .engine import MAX_MESSAGE, CardClosed
 
 router = APIRouter()
 
@@ -47,6 +48,29 @@ class ChatMessage(BaseModel):
     meta: dict[str, Any] | None = None
 
 
+class ChatCard(BaseModel):
+    """A card of questions the model asked the owner (see `POST /api/chat/cards/{id}/answer`)."""
+
+    id: int
+    session_id: str
+    call_id: str
+    status: str
+    """open | answered"""
+    questions: list[dict[str, Any]]
+    """Each {text, kind (single | multi | text), options}."""
+    answers: list[Answer] | None = None
+    created: float
+    answered: float | None = None
+    answered_via: str | None = None
+    """web | telegram"""
+
+
+class CardAnswer(BaseModel):
+    answers: list[Answer]
+    """One per question: the options chosen (single: at most one) and/or the free text (a text
+    question's answer, or the own answer of a choice question)."""
+
+
 class ChatSessionSummary(BaseModel):
     id: str
     created: float
@@ -71,6 +95,8 @@ class ChatSession(BaseModel):
     channel: str
     title: str | None = None
     messages: list[ChatMessage]
+    cards: list[ChatCard] = []
+    """The question cards of the conversation, open or answered."""
 
 
 class AuditEntry(BaseModel):
@@ -102,7 +128,8 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     elapsed_s} (every few seconds while a tool is still running), `tool_result` {id, name, ok,
     truncated, size, preview}, `token` {text} (the answer, in pieces), `retry` {attempt, of}
     (the answer broke off and is asked for again: drop its text shown since the last
-    `tool_call`/`tool_result`; attempt 2 of `of` = 1 + `max_retries`), then `done`
+    `tool_call`/`tool_result`; attempt 2 of `of` = 1 + `max_retries`), `card` {card} (the model
+    asked the owner questions: the open card, see `POST /api/chat/cards/{id}/answer`), then `done`
     {session_id, message_id, steps, usage, stopped} — or `error` {message}.
     For the first answer of a new conversation one more event may follow `done`:
     `title` {session_id, title}, the LLM-written session title (the stream closes right after;
@@ -173,7 +200,32 @@ async def get_session(session_id: str, request: Request) -> ChatSession:
     session = await _ctx(request).chat.store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail=f"no session {session_id}")
-    return ChatSession.model_validate(session)
+    cards = await _ctx(request).chat.cards.of_session(session_id)
+    return ChatSession.model_validate({**session, "cards": cards})
+
+
+@router.post(
+    "/api/chat/cards/{card_id}/answer",
+    responses={
+        404: {"description": "No such card"},
+        409: {"description": "The card was answered already (here or in Telegram)"},
+        422: {"description": "The answers do not fit the questions"},
+    },
+)
+async def answer_card(card_id: int, body: CardAnswer, request: Request) -> ChatCard:
+    """Answer a card the model asked. The run waiting for it goes on (the answer appears in the
+    conversation: `chat.message` event); the card closes in Telegram too."""
+    try:
+        card = await _ctx(request).chat.answer_card(
+            card_id, [a.model_dump() for a in body.answers], "web"
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"no card {card_id}") from exc
+    except CardClosed as exc:
+        raise HTTPException(status_code=409, detail="The card was answered already.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ChatCard.model_validate(card)
 
 
 class RunRequest(BaseModel):

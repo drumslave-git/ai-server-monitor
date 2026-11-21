@@ -55,6 +55,7 @@ from ..mcp_client import turn as mcp_turn
 from ..tracing import trace_scope
 from ..tracing.parse import empty_answer_message
 from .audit import record_call
+from .cards import Answer, Card, Cards, Question, ask_tool, check_answers, format_answers
 from .explain import Explain, host_zone
 from .marks import (
     MARKS_SYSTEM,
@@ -83,6 +84,8 @@ MCP_NOTE = (
 )
 Event = dict[str, Any]
 _MODEL_ERRORS = (AgentRunError, APIError, httpx.HTTPError)
+WAITING_FOR_CARD = "Waiting for your answer."
+CARD_ANSWERED = "Answered."
 FINAL_STATUSES = ("executed", "failed", "dry_run", "rejected", "expired")
 """Statuses of a decided action (queued or deferred ones still wait)."""
 
@@ -91,6 +94,7 @@ class ChatEngine:
     def __init__(self, app: AppContext):
         self.app = app
         self.store = ChatStore(app.db)
+        self.cards = Cards(app.db)
         self._locks: dict[str, asyncio.Lock] = {}
         self._background: set[asyncio.Task[Any]] = set()
 
@@ -450,7 +454,7 @@ class ChatEngine:
             return fixed.get(name) or mcp.kind(name) or "read"
 
         run_key = run_key or f"turn:{ctx.turn}"
-        tools = chat_tools(app, session_id, who, run_key, shell, scrub, host)
+        tools = [*chat_tools(app, session_id, who, run_key, shell, scrub, host), ask_tool()]
         notes = [MCP_NOTE] if mcp.servers else []
         notes.append(mcp_turn.LOOKUP_NOTE)
         if turn.deferred:
@@ -561,15 +565,21 @@ class ChatEngine:
                 end = event
         output = end.get("output")
         waiting: list[int] = []
+        opened: list[dict[str, Any]] = []
         unmarked: dict[str, Any] | None = None
         domains = turn.log(end.get("loaded", [])) if turn is not None and turn.used else None
         if isinstance(output, Suspended):
             if domains is not None:  # the resumed run gets the same domains
                 output.domains = sorted({*domains["offered"], *domains["loaded"]})
-            await self._suspend(session_id, source, output)
+            opened = await self._suspend(session_id, source, output)
             waiting = [i for p in output.pending.values() for i in p.action_ids]
             # (calls of one tool wait under the same approval with the same words: said once)
-            final = "\n".join(dict.fromkeys(p.message for p in output.pending.values()))
+            notes = list(dict.fromkeys(p.message for p in output.pending.values()))
+            if opened:
+                notes.append(WAITING_FOR_CARD)
+            final = "\n".join(notes)
+            for card in opened:
+                yield {"type": "card", "card": card}
         else:
             final = strip_reasoning(str(output or "")) or "(no answer)"
             final, unmarked = await self._mark_commands(final, session_id, trace_turn)
@@ -588,6 +598,7 @@ class ChatEngine:
             "stopped": end.get("stopped"),
             "trace_turn": trace_turn,
             **({"waiting_for": waiting} if waiting else {}),
+            **({"cards": [c["id"] for c in opened]} if opened else {}),
             **({"mcp_domains": domains} if domains is not None else {}),
             **({"unmarked": unmarked} if unmarked is not None else {}),
             **(meta_extra or {}),
@@ -603,7 +614,11 @@ class ChatEngine:
 
     # ------------------------------------------------------------------ approvals
 
-    async def _suspend(self, session_id: str, source: str | None, run: Suspended) -> None:
+    async def _suspend(
+        self, session_id: str, source: str | None, run: Suspended
+    ) -> list[dict[str, Any]]:
+        """Stores the stopped run (and the cards it asks); returns the cards, now open."""
+        now = time.time()
         async with self.app.db.transaction() as conn:
             cur = await conn.execute(
                 "INSERT INTO chat_pending_runs (session_id, created, source, state) "
@@ -619,6 +634,28 @@ class ChatEngine:
                     for action_id in pending.action_ids
                 ],
             )
+            card_ids = []
+            for call_id, args in run.questions.items():
+                cur = await conn.execute(
+                    "INSERT INTO chat_cards (session_id, run_id, call_id, created, source, "
+                    "questions) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        session_id,
+                        run_id,
+                        call_id,
+                        now,
+                        source,
+                        json.dumps(
+                            [q.model_dump() for q in Card.model_validate(args).questions],
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
+                card_ids.append(cur.lastrowid)
+        opened = [card for i in card_ids if (card := await self.cards.get(int(i))) is not None]
+        for card in opened:
+            self.app.events.publish("chat.card", card)
+        return opened
 
     async def on_action(self, event: str, record: dict[str, Any]) -> None:
         """Action notifier: when every action a stopped chat run waits for is decided (and run,
@@ -631,7 +668,12 @@ class ChatEngine:
         )
         if row is None:
             return
-        run_id = int(row["run_id"])
+        await self._continue(int(row["run_id"]))
+
+    async def _continue(self, run_id: int) -> None:
+        """Resumes a stopped run once every action it waits for is decided and every card it
+        asks is answered."""
+        db = self.app.db
         items = await db.fetchall(
             "SELECT p.action_id, p.call_id, a.status FROM chat_pending_actions p "
             "JOIN actions a ON a.id = p.action_id WHERE p.run_id = ?",
@@ -639,13 +681,62 @@ class ChatEngine:
         )
         if any(item["status"] not in FINAL_STATUSES for item in items):
             return
+        cards = await self.cards.of_run(run_id)
+        if any(card["status"] != "answered" for card in cards):
+            return
         run = await db.fetchone("SELECT * FROM chat_pending_runs WHERE id = ?", (run_id,))
         deleted = await db.write("DELETE FROM chat_pending_runs WHERE id = ?", (run_id,))
         if run is None or deleted == 0:
             return  # resumed by a concurrent notification
-        task = asyncio.create_task(self._resume(dict(run), [dict(i) for i in items]))
+        task = asyncio.create_task(self._resume(dict(run), [dict(i) for i in items], cards))
         self._background.add(task)
         task.add_done_callback(self._background.discard)
+
+    async def answer_card(
+        self, card_id: int, raw: list[dict[str, Any]], via: str
+    ) -> dict[str, Any]:
+        """The owner answers a card (`via`: web | telegram): it closes everywhere and the run
+        goes on when nothing else holds it. KeyError: no such card; ValueError: the answers do
+        not fit; CardClosed: answered already."""
+        card = await self.cards.get(card_id)
+        if card is None:
+            raise KeyError(card_id)
+        questions = [Question.model_validate(q) for q in card["questions"]]
+        answers = check_answers(questions, raw)
+        if not await self.cards.answer(card_id, answers, via):
+            raise CardClosed(card_id)
+        card = await self.cards.get(card_id) or card
+        await self._settle_card_note(card)
+        self.app.events.publish("chat.card.answered", card)
+        run_id = await self.cards.run_of(card_id)
+        if run_id is not None:
+            await self._continue(run_id)
+        return card
+
+    async def _settle_card_note(self, card: dict[str, Any]) -> None:
+        """The stored waiting note says the cards were answered (a reloaded session does not
+        show a stale "waiting"); an open page gets `chat.message.updated`."""
+        try:
+            note = await self.store.card_note(card["session_id"], card["id"])
+            if note is None:
+                return
+            meta = note["meta"] or {}
+            ours = set(meta.get("cards", []))
+            cards = await self.cards.of_session(card["session_id"])
+            if any(c["status"] == "open" for c in cards if c["id"] in ours):
+                return
+            await self.store.update_message(int(note["id"]), CARD_ANSWERED, meta)
+            self.app.events.publish(
+                "chat.message.updated",
+                {
+                    "session_id": card["session_id"],
+                    "message_id": note["id"],
+                    "text": CARD_ANSWERED,
+                    "meta": meta,
+                },
+            )
+        except Exception:
+            log.exception("chat: could not update the waiting note in %s", card["session_id"])
 
     async def _settle_note(self, session_id: str, records: list[dict[str, Any]]) -> None:
         """The stored waiting note says what was decided (text, and `meta.outcome`: action id
@@ -677,17 +768,20 @@ class ChatEngine:
         )
         return row["run_key"] if row is not None else None
 
-    async def _resume(self, run: dict[str, Any], items: list[dict[str, Any]]) -> None:
+    async def _resume(
+        self, run: dict[str, Any], items: list[dict[str, Any]], cards: list[dict[str, Any]]
+    ) -> None:
         session_id, source = run["session_id"], run["source"]
         suspended = Suspended.from_json(json.loads(run["state"]))
         records = [await self.app.actions.get(int(item["action_id"])) for item in items]
-        unanswered = all(record.get("status") == "expired" for record in records)
+        unanswered = bool(records) and all(r.get("status") == "expired" for r in records)
         settled = {
             item["call_id"]: settled_outcome(record, unanswered=unanswered)
             for item, record in zip(items, records, strict=True)
         }
-        await self._settle_note(session_id, records)
-        results, resolved = resume_results(suspended, settled)
+        if records:
+            await self._settle_note(session_id, records)
+        results, resolved = resume_results(suspended, settled, card_answers(cards))
         final, failed = "", None
         lock = self._locks.setdefault(session_id, asyncio.Lock())
         async with lock:
@@ -720,8 +814,9 @@ class ChatEngine:
                         if event["type"] == "done":
                             final, message_id = event["text"], event["message_id"]
             except Exception as exc:
-                log.warning("chat: could not continue after the approval: %s", exc)
-                failed = f"Could not continue after the approval: {exc}"
+                what = "approval" if records else "answer"
+                log.warning("chat: could not continue after the %s: %s", what, exc)
+                failed = f"Could not continue after the {what}: {exc}"
                 message_id = await self.store.add_message(
                     session_id, "assistant", failed, meta={"continued": True, "error": True}
                 )
@@ -847,6 +942,21 @@ def outcome_line(record: dict[str, Any]) -> str:
         words += f" ({result['error']})"
     approval = f"Approval #{record['batch_id']}: " if record.get("batch_id") else ""
     return f"{approval}{record['target']}: {words}."
+
+
+class CardClosed(Exception):
+    """The card was answered already (in the other place, perhaps)."""
+
+
+def card_answers(cards: list[dict[str, Any]]) -> dict[str, str]:
+    """Call id -> the answer text the model reads, of answered cards."""
+    return {
+        c["call_id"]: format_answers(
+            [Question.model_validate(q) for q in c["questions"]],
+            [Answer.model_validate(a) for a in c["answers"]],
+        )
+        for c in cards
+    }
 
 
 def chat_tools(

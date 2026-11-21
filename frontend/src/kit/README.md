@@ -55,7 +55,7 @@ The design kit with live previews of every component: https://claude.ai/artifact
   `label` is its accessible name and its hint, `hint` a longer one, `count` a number beside the icon,
   `small` for repeated actions in rows, `variant`, `type`), `IconLink` (the same as a link: it goes
   somewhere or downloads a file), `Switch`, `Checkbox` (`some` = partly selected; `CheckboxBlank` keeps its
-  room), `Field` with `Input` / `Textarea` / `Select` / `Segmented`, `Joined` (an input with its button
+  room), `Radio` (one of several; the group shares `name`), `Field` with `Input` / `Textarea` / `Select` / `Segmented`, `Joined` (an input with its button
   attached), `FieldValue` (a value that cannot be changed here), `Chip` (a chosen thing with
   "remove"), `Tabs`, `Dialog`, `Confirm` (a yes/no question before something that cannot be undone;
   `variant` colours the yes button), `Picker` (a dialog that lists groups of things to choose one

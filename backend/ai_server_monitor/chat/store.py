@@ -111,6 +111,19 @@ class ChatStore:
                 return message
         return None
 
+    async def card_note(self, session_id: str, card_id: int) -> dict[str, Any] | None:
+        """The assistant message of the session that says it waits for this card."""
+        rows = await self.db.fetchall(
+            "SELECT * FROM chat_messages WHERE session_id = ? AND role = 'assistant' "
+            "AND meta LIKE '%\"cards\"%' ORDER BY id DESC LIMIT 20",
+            (session_id,),
+        )
+        for row in rows:
+            message = _message(row)
+            if card_id in ((message["meta"] or {}).get("cards") or []):
+                return message
+        return None
+
     async def history(self, session_id: str, limit: int) -> list[dict[str, str]]:
         """The last `limit` user/assistant texts as LLM messages (tool traffic of earlier
         turns is kept in the database for display but not replayed to the model)."""

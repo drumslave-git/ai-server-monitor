@@ -51,6 +51,7 @@ export const diskSession: SessionDoc = {
   channel: "web",
   created: now - 4000,
   updated: now - 300,
+  cards: [],
   messages: [
     message({ role: "user", content: "What is using the disk on host-a?" }),
     message({
@@ -73,6 +74,7 @@ export const telegramSession: SessionDoc = {
   channel: "telegram",
   created: now - 90000,
   updated: now - 7200,
+  cards: [],
   messages: [
     message({ role: "user", content: "Did the backup run last night?" }),
     message({ role: "assistant", content: "Yes, it finished at 03:12.", meta: { trace_turn: "t-2", unmarked: { commands: 2, error: "labelling timed out" } } }),
@@ -85,6 +87,7 @@ export const longSession: SessionDoc = {
   channel: "web",
   created: now - 200000,
   updated: now - 90000,
+  cards: [],
   messages: [message({ role: "user", content: "Why does it restart?" }), message({ role: "assistant", content: "The backup stops it." })],
 };
 
@@ -94,6 +97,7 @@ export const untitledSession: SessionDoc = {
   channel: "web",
   created: now - 300000,
   updated: now - 200000,
+  cards: [],
   messages: [message({ role: "user", content: "Hello" })],
 };
 
@@ -104,6 +108,7 @@ export const newSession: SessionDoc = {
   channel: "web",
   created: now,
   updated: now,
+  cards: [],
   messages: [
     message({ role: "user", content: "How much memory is free?" }),
     message({ role: "assistant", content: "About 12 GB of memory is free.", meta: { trace_turn: "t-new" } }),

@@ -82,6 +82,7 @@ PREVIEW = 400
 RETRIES = 3
 """Retries of a tool call or a final result before the model is given up on (Pydantic AI)."""
 NOT_FINISHED = "The model did not finish within {steps} steps (the limit is {limit})."
+WAITING_FOR_ANSWER = "Asked the owner. Waiting for the answer."
 Event = dict[str, Any]
 ToolCallFailures = (ToolRetryError, ToolFailedError, ModelRetry, ToolFailed)
 """How a toolset's tool (MCP) reports its own failure: the message is for the model."""
@@ -108,6 +109,9 @@ class AgentTool:
     handler: Callable[[dict[str, Any]], Awaitable[Any]]
     requires_approval: bool = False
     """Pydantic AI defers the call instead of running it; `on_approval` takes over."""
+    asks: bool = False
+    """The handler raises `CallDeferred(kind="question")`: the run stops for a person's answer
+    (`Suspended.questions`) and is resumed with it (`resume_results`)."""
 
 
 @dataclass
@@ -132,6 +136,8 @@ class Suspended:
     """Call id -> tool name of every deferred call."""
     domains: list[str] = field(default_factory=list)
     """The MCP domains the run was offered (the chat sets it): the resumed run gets them."""
+    questions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Call id -> arguments of the calls that wait for a person's answer (`AgentTool.asks`)."""
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -143,6 +149,7 @@ class Suspended:
             },
             "names": self.names,
             "domains": self.domains,
+            "questions": self.questions,
         }
 
     @classmethod
@@ -153,16 +160,22 @@ class Suspended:
             pending={cid: PendingApproval(**p) for cid, p in data["pending"].items()},
             names=dict(data["names"]),
             domains=list(data.get("domains", [])),
+            questions=dict(data.get("questions", {})),
         )
 
 
 def resume_results(
-    suspended: Suspended, settled: dict[str, tuple[bool, str]]
+    suspended: Suspended,
+    settled: dict[str, tuple[bool, str]],
+    answers: dict[str, str] | None = None,
 ) -> tuple[DeferredToolResults, dict[str, str]]:
     """The deferred results to resume `suspended` with: `settled` maps each pending call id to
     (ran, text): ran = the model gets `text` as the tool's result, else as the reason it was
-    not run. Returns the results and the `AgentConfig.resolved` texts."""
+    not run. `answers` maps each question call id to the answer text the model reads.
+    Returns the results and the `AgentConfig.resolved` texts."""
     results = DeferredToolResults()
+    for call_id, text in (answers or {}).items():
+        results.calls[call_id] = text
     resolved = dict(suspended.resolved)
     for call_id in suspended.resolved:
         results.approvals[call_id] = ToolApproved()
@@ -400,7 +413,7 @@ class _Run:
             tools=[self.pydantic_tool(t) for t in cfg.tools],
             toolsets=list(cfg.toolsets),
             output_type=[cfg.output_type, DeferredToolRequests]
-            if any(t.requires_approval for t in cfg.tools)
+            if any(t.requires_approval or t.asks for t in cfg.tools)
             or ((cfg.toolsets or cfg.capabilities) and cfg.approval_tool is not None)
             else cfg.output_type,
             model_settings=cfg.model_settings,
@@ -453,12 +466,17 @@ class _Run:
                         return
                     deferred = await self.approve(result.output)
                     messages = result.all_messages()
-                    if self.pending:
+                    questions = await self.ask(result.output)
+                    if self.pending or questions:
                         suspended = Suspended(
                             messages=messages,
                             resolved=self.round_resolved,
                             pending=self.pending,
-                            names={p.tool_call_id: p.tool_name for p in result.output.approvals},
+                            names={
+                                p.tool_call_id: p.tool_name
+                                for p in [*result.output.approvals, *result.output.calls]
+                            },
+                            questions=questions,
                         )
                         await self.queue.put(("end", (suspended, usage)))
                         return
@@ -476,6 +494,18 @@ class _Run:
             await self.queue.put(("error", exc))
         finally:
             await stack.aclose()
+
+    async def ask(self, requests: DeferredToolRequests) -> dict[str, dict[str, Any]]:
+        """The calls that wait for a person's answer: call id -> arguments (the run stops after
+        this round). Each is reported as a tool result saying so."""
+        questions: dict[str, dict[str, Any]] = {}
+        for part in requests.calls:
+            if requests.kind(part.tool_call_id) != "question":
+                continue
+            questions[part.tool_call_id] = _args_dict(part)
+            self.outcomes[part.tool_call_id] = _ToolOutcome(True, False, WAITING_FOR_ANSWER)
+            await self.queue.put(("approval", (part.tool_call_id, part.tool_name)))
+        return questions
 
     async def approve(self, requests: DeferredToolRequests) -> DeferredToolResults:
         """File each approval-required call. Settled at once: the model reads what happened.

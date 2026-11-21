@@ -241,6 +241,7 @@ def test_bash_answers_the_question_and_everything_is_persisted(
             "job_delete",
             "summary_member",
             "job_run",
+            "ask_owner",
         }
         assert first["messages"][0]["role"] == "system"
         assert "read-only shell" in first["messages"][0]["content"]

@@ -48,6 +48,7 @@ def test_migrations_are_contiguous_and_complete() -> None:
         (21, "0021_job_runs_mcp.sql"),
         (22, "0022_job_queues.sql"),
         (23, "0023_remove_metrics.sql"),
+        (24, "0024_chat_cards.sql"),
     ]
     names = {e.name for e in resources.files("ai_server_monitor.migrations").iterdir()}
     assert not any("placeholder" in n for n in names)
@@ -57,7 +58,7 @@ async def test_fresh_database_migrates_to_latest(tmp_path: Path) -> None:
     db = Database(tmp_path / "fresh.db")
     await db.connect()
     try:
-        assert await db.schema_version() == 23
+        assert await db.schema_version() == 24
         tables = {
             r["name"]
             for r in await db.fetchall("SELECT name FROM sqlite_master WHERE type='table'")
@@ -84,7 +85,7 @@ async def test_database_at_the_old_main_schema_upgrades(tmp_path: Path) -> None:
     db = Database(path)
     await db.connect()
     try:
-        assert await db.schema_version() == 23
+        assert await db.schema_version() == 24
         assert await db.kv_get("keep") == 1  # data survives
         await db.execute(
             "INSERT INTO actions (ts, updated, action, policy, status, source) "

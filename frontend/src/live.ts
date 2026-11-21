@@ -18,6 +18,8 @@ const EVENT_TYPES = [
   "job.finished",
   "chat.message",
   "chat.message.updated",
+  "chat.card",
+  "chat.card.answered",
 ];
 
 const listeners = new Set<Listener>();

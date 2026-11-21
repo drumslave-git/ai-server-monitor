@@ -339,6 +339,10 @@ a.fd-seg-item { display: inline-flex; align-items: center; justify-content: cent
 .fd-check input { appearance: none; flex: none; width: 18px; height: 18px; margin: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-0); background: var(--bg); cursor: pointer; }
 .fd-check input:checked { border-color: var(--ok); background: var(--ok) linear-gradient(var(--on-fill), var(--on-fill)) center / 8px 8px no-repeat; }
 .fd-check input:disabled { opacity: 0.5; cursor: not-allowed; }
+.fd-radio { align-items: flex-start; min-height: 0; }
+.fd-radio input { border-radius: 50%; margin-top: calc((var(--control) - 18px) / 2); }
+.fd-radio input:checked { background: radial-gradient(circle, var(--on-fill) 0 3px, transparent 4px), var(--ok); }
+.fd-radio > span { padding-block: calc((var(--control) - 1lh) / 2); }
 
 /* Spinner: a lamp that blinks while something runs (it dims, the square never goes) */
 .fd-spin { animation: fd-blink 1s step-end infinite; }
@@ -443,6 +447,7 @@ dialog.fd-dialog, dialog.fd-dialog * { box-sizing: border-box; }
 
 /* Checkbox with some of its items selected */
 .fd-check input:indeterminate { border-color: var(--ok); background: var(--bg) linear-gradient(var(--ok), var(--ok)) center / 8px 2px no-repeat; }
+.fd-radio input:indeterminate { border-color: var(--line-strong); background: var(--bg); } /* a group with nothing picked is not "partly" picked */
 
 
 /* ---- parts added when the pages stopped writing classes and styles themselves ---- */

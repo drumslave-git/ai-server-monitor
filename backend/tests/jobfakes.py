@@ -14,7 +14,12 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 
 from ai_server_monitor.agent.models import ModelHub
 
-Step = str | tuple[str, dict[str, Any]] | Callable[[list[ModelMessage], AgentInfo], Any]
+Step = (
+    str
+    | tuple[str, dict[str, Any]]
+    | list[tuple[str, dict[str, Any]]]
+    | Callable[[list[ModelMessage], AgentInfo], Any]
+)
 
 
 def tool(name: str, /, **args: Any) -> tuple[str, dict[str, Any]]:
@@ -75,11 +80,16 @@ class ScriptedModels:
             await asyncio.sleep(30)
         if callable(step):
             step = step(messages, info)
+        n = len(self.requests)
         if isinstance(step, str):
             yield step
+        elif isinstance(step, list):  # several tool calls in one model response
+            yield {
+                i: DeltaToolCall(name=name, json_args=json.dumps(args), tool_call_id=f"t{n}_{i}")
+                for i, (name, args) in enumerate(step)
+            }
         else:
             name, args = step
-            n = len(self.requests)
             yield {0: DeltaToolCall(name=name, json_args=json.dumps(args), tool_call_id=f"t{n}")}
 
 

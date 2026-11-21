@@ -131,6 +131,22 @@ Before that, the stored waiting note is rewritten to the outcome ("Approval #3: 
 run, exit code 0.", `meta.outcome`) and published as `chat.message.updated`. The new answer is
 stored and published as `chat.message`; Telegram sends it to the chat that asked.
 
+**Questions** (`chat/cards.py`): the chat model's tool `ask_owner` (up to 4 questions: single,
+multi, text; choice questions also take an own answer; no job has it) raises
+`CallDeferred(kind="question")`. `Run.ask` puts the arguments into `Suspended.questions` and the
+run ends like an approval wait; `ChatEngine` stores a `chat_cards` row (migration 0024) next to the
+pending run and a waiting note (`meta.cards`), and publishes `chat.card` (the SSE chat stream has a
+`card` event before `done`). `ChatEngine.answer_card(id, raw, via)` is the one way in, from
+`POST /api/chat/cards/{id}/answer` (404 unknown, 409 answered, 422 bad answers) and from Telegram:
+it validates (`check_answers`), stores the answers, writes the tool result with the call's id,
+publishes `chat.card.answered` and, when every card and every approval of the run is settled,
+resumes it (`resume_results(..., answers=)`, so the model reads the answers as the tool's result).
+Telegram sends the card as one message with signed inline buttons (`co:` option, `cw:` own answer,
+`cs:` send); a card with one single or text question is "immediate" (the tap or the reply answers
+it), others keep drafts in `telegram_card_drafts` until Send. Message ids are in
+`telegram_card_messages`, so after a restart the cards answered meanwhile are edited to their
+outcome. There is no timeout: a card stays open until answered.
+
 `host_command` (`bash_write`) runs `nsenter --target 1 --mount --uts --ipc --net --pid -- bash
 -c CMD` as root; `ChangeShell.probe()` checks at start whether that works, and
 `/api/status.change_shell` says why not. Its approval runs in the background so the approve call

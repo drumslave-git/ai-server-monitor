@@ -263,6 +263,16 @@ before the timeout).
   in Approvals). The model does not write these marks itself: one extra call of the main model
   labels every command without a valid mark before the answer is stored, and a mark line the
   model put outside a code block (shown as a heading) is turned into plain text.
+- **Questions from the chat model** — when the model needs a decision or a fact only you have
+  ("which disk?"), it asks with the `ask_owner` tool (chat only; no job has it): a card of up to
+  four questions, each a single choice, a multiple choice or a free text; the choice questions
+  also take an *own answer*. The card stands in the conversation and the run waits, for as long
+  as it takes, and continues with your answers when you send them. Answer in the web chat
+  (**send answers**, enabled once every question has an answer) or in Telegram: the options are
+  inline buttons (a multiple choice toggles them and ends with **Send**), a free text or an own
+  answer is a reply to the card's message, and a card with one single-choice or free-text
+  question is answered by the tap or the reply. Answered in either place, the card is closed in
+  both and shows what was answered and where. An open card and its waiting run survive a restart.
 - **Approvals** — what waits for your decision, and the permanent audit log of every action
   (`GET /api/approvals`, `GET /api/actions`, one action at `GET /api/actions/{id}`).
 - **Logs** — every request to a model exactly as sent and received (messages, tool definitions,
@@ -797,6 +807,10 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
 
 ### 0.11.0
 
+- **The chat model can ask you questions as a card.** See *Questions from the chat model* under
+  *Using it*: web card and Telegram buttons, the run waits for the answer and survives a restart
+  (migration `0024`). `POST /api/chat/cards/{id}/answer` takes `{"answers": [{"chosen": [...],
+  "text": "..."}]}`; `GET /api/chat/sessions/{id}` lists the cards as `cards`.
 - **Settings sections have icons instead of letters.** Each section of the list (general, model,
   worker, chat, jobs, storage, logs, approvals, outputs, MCP) shows an icon before its name.
 - **Every cut text has a tooltip with the whole text.** Where the UI cuts a text with an ellipsis

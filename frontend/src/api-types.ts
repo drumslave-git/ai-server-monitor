@@ -169,7 +169,8 @@ export interface paths {
          *     elapsed_s} (every few seconds while a tool is still running), `tool_result` {id, name, ok,
          *     truncated, size, preview}, `token` {text} (the answer, in pieces), `retry` {attempt, of}
          *     (the answer broke off and is asked for again: drop its text shown since the last
-         *     `tool_call`/`tool_result`; attempt 2 of `of` = 1 + `max_retries`), then `done`
+         *     `tool_call`/`tool_result`; attempt 2 of `of` = 1 + `max_retries`), `card` {card} (the model
+         *     asked the owner questions: the open card, see `POST /api/chat/cards/{id}/answer`), then `done`
          *     {session_id, message_id, steps, usage, stopped} — or `error` {message}.
          *     For the first answer of a new conversation one more event may follow `done`:
          *     `title` {session_id, title}, the LLM-written session title (the stream closes right after;
@@ -197,6 +198,27 @@ export interface paths {
         get: operations["chat_audit_api_chat_audit_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/cards/{card_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer Card
+         * @description Answer a card the model asked. The run waiting for it goes on (the answer appears in the
+         *     conversation: `chat.message` event); the card closes in Telegram too.
+         */
+        post: operations["answer_card_api_chat_cards__card_id__answer_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -980,6 +1002,16 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Answer */
+        Answer: {
+            /** Chosen */
+            chosen?: string[];
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+        };
         /** AppLogList */
         AppLogList: {
             /** Items */
@@ -1056,6 +1088,11 @@ export interface components {
             /** Items */
             items: components["schemas"]["AuditEntry"][];
         };
+        /** CardAnswer */
+        CardAnswer: {
+            /** Answers */
+            answers: components["schemas"]["Answer"][];
+        };
         /**
          * ChangeShellStatus
          * @description Commands that change the host (the chat's `bash_write`).
@@ -1072,6 +1109,32 @@ export interface components {
             policy: "off" | "approve" | "auto";
             /** Reason */
             reason: string | null;
+        };
+        /**
+         * ChatCard
+         * @description A card of questions the model asked the owner (see `POST /api/chat/cards/{id}/answer`).
+         */
+        ChatCard: {
+            /** Answered */
+            answered?: number | null;
+            /** Answered Via */
+            answered_via?: string | null;
+            /** Answers */
+            answers?: components["schemas"]["Answer"][] | null;
+            /** Call Id */
+            call_id: string;
+            /** Created */
+            created: number;
+            /** Id */
+            id: number;
+            /** Questions */
+            questions: {
+                [key: string]: unknown;
+            }[];
+            /** Session Id */
+            session_id: string;
+            /** Status */
+            status: string;
         };
         /** ChatMessage */
         ChatMessage: {
@@ -1105,6 +1168,11 @@ export interface components {
         };
         /** ChatSession */
         ChatSession: {
+            /**
+             * Cards
+             * @default []
+             */
+            cards: components["schemas"]["ChatCard"][];
             /** Channel */
             channel: string;
             /** Created */
@@ -3203,6 +3271,53 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    answer_card_api_chat_cards__card_id__answer_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                card_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CardAnswer"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatCard"];
+                };
+            };
+            /** @description No such card */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The card was answered already (here or in Telegram) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The answers do not fit the questions */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -21,6 +21,7 @@ import contextlib
 import hashlib
 import hmac
 import html
+import json
 import logging
 import re
 import time
@@ -56,6 +57,8 @@ from telegramify_markdown.converter import STANDARD_OPTIONS
 from ..actions import ActionError, Conflict, NotFound
 from ..actions.service import outcome_text
 from ..chat import explain as explaining
+from ..chat.cards import Answer, answer_line
+from ..chat.engine import WAITING_FOR_CARD, CardClosed
 from ..config import TelegramSettings
 from ..jobs.prompts import schedule_text
 from ..jobs.status import headline, job_status
@@ -432,6 +435,7 @@ class TelegramBot:
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._chat))
         application.add_handler(CallbackQueryHandler(self._on_explain, pattern=r"^x:"))
         application.add_handler(CallbackQueryHandler(self._on_summary_button, pattern=r"^s:"))
+        application.add_handler(CallbackQueryHandler(self._on_card_button, pattern=r"^c[ows]:"))
         application.add_handler(CallbackQueryHandler(self._on_callback))
         application.add_error_handler(self._on_error)
         return application
@@ -472,6 +476,7 @@ class TelegramBot:
             )
             self._events = asyncio.create_task(self._event_loop(), name="telegram-events")
             self._spawn(self._catch_up())
+            self._spawn(self._catch_up_cards())
             with contextlib.suppress(TelegramError):
                 await self.bot.set_my_commands(COMMANDS)
         except asyncio.CancelledError:
@@ -778,6 +783,9 @@ class TelegramBot:
         text = (update.effective_message.text or "").strip()  # type: ignore[union-attr]
         if not text:
             return
+        reply = update.effective_message.reply_to_message  # type: ignore[union-attr]
+        if reply is not None and await self._card_reply(chat_id, reply.message_id, text):
+            return  # the answer to a card, not a chat message
         engine = self.app.chat
         session_id = await self._session_for(chat_id)
         if session_id is not None:
@@ -793,19 +801,25 @@ class TelegramBot:
     async def _converse(self, chat_id: int, events: Any) -> None:
         """Send the answer of one chat turn here; its session becomes this chat's."""
         typing = asyncio.create_task(self._typing(chat_id))
-        answer, error = "", None
+        answer, error, asked = "", None, False
         try:
             async for event in events:
                 if event["type"] == "session":
                     await self.app.db.kv_set(f"telegram.session.{chat_id}", event["session_id"])
                 elif event["type"] == "done":
                     answer = event["text"]
+                    if event.get("cards"):  # the card message says it: no "waiting" line too
+                        asked = True
+                        answer = "\n".join(
+                            line for line in answer.splitlines() if line != WAITING_FOR_CARD
+                        )
                     break  # the title that may follow is stored by the engine on its own
                 elif event["type"] == "error":
                     error = event["message"]
         finally:
             typing.cancel()
-        await self.send(chat_id, answer or (error or "No answer."))
+        if answer or error or not asked:
+            await self.send(chat_id, answer or (error or "No answer."))
 
     async def _typing(self, chat_id: int) -> None:
         while True:
@@ -882,6 +896,7 @@ class TelegramBot:
             "approval.progress",
             "job.finished",
             "chat.message",
+            "chat.card",
         )
         async for event in sub:
             self._spawn(self.on_event(event.type, event.data))
@@ -899,6 +914,10 @@ class TelegramBot:
             await self._on_job_finished(data)
         elif kind == "chat.message":
             await self._on_chat_message(data)
+        elif kind == "chat.card":
+            await self._announce_card(data)
+        elif kind == "chat.card.answered":
+            await self._reflect_card(data)
 
     async def _on_chat_message(self, data: dict[str, Any]) -> None:
         """A chat that waited for an approval continued by itself: the answer goes to the
@@ -1271,3 +1290,325 @@ class TelegramBot:
                 await self._reflect(batch_id)
         except Exception:
             log.exception("telegram: could not catch up on approval messages")
+
+    # ------------------------------------------------------------------ cards
+    # A card the chat model asks (`ask_owner`): one message per allowed chat with the questions,
+    # the options as buttons and a Send button; free text comes as a reply to the message. The
+    # choices made before Send are kept in telegram_card_drafts and the messages in
+    # telegram_card_messages, so both survive a restart. Answering anywhere closes the card
+    # everywhere (`chat.card.answered` edits these messages).
+
+    @staticmethod
+    def _immediate(card: dict[str, Any]) -> bool:
+        """A card of one single-choice or text question is sent by the tap or the reply itself."""
+        questions = card["questions"]
+        return len(questions) == 1 and questions[0]["kind"] != "multi"
+
+    async def _drafts(self, card_id: int) -> dict[int, Answer]:
+        rows = await self.app.db.fetchall(
+            "SELECT question, answer FROM telegram_card_drafts WHERE card_id = ?", (card_id,)
+        )
+        return {int(r["question"]): Answer.model_validate(json.loads(r["answer"])) for r in rows}
+
+    async def _save_draft(self, card_id: int, number: int, answer: Answer) -> None:
+        if not answer.chosen and not answer.text:
+            await self.app.db.execute(
+                "DELETE FROM telegram_card_drafts WHERE card_id = ? AND question = ?",
+                (card_id, number),
+            )
+            return
+        await self.app.db.execute(
+            "INSERT OR REPLACE INTO telegram_card_drafts (card_id, question, answer) "
+            "VALUES (?, ?, ?)",
+            (card_id, number, json.dumps(answer.model_dump(), ensure_ascii=False)),
+        )
+
+    @staticmethod
+    def _card_text(
+        card: dict[str, Any], answers: dict[int, Answer], awaiting: int | None = None
+    ) -> str:
+        """The card message (Markdown): the questions, the answers so far, what to do next."""
+        kinds = {"single": "one option", "multi": "any options", "text": "free text"}
+        lines = ["**" + md_escape(f"Question #{card['id']}") + "**", ""]
+        for number, question in enumerate(card["questions"]):
+            lines.append(md_escape(f"{number + 1}. {question['text']}"))
+            lines.append(md_escape(f"   ({kinds[question['kind']]})"))
+            if number in answers:
+                lines.append(md_escape(f"   → {answer_line(answers[number])}"))
+        lines.append("")
+        if card["status"] == "answered":
+            where = "here in Telegram" if card["answered_via"] == "telegram" else "in the web chat"
+            lines.append("**" + md_escape(f"Answered {where}.") + "**")
+        elif awaiting is not None:
+            lines.append(
+                md_escape(f"Reply to this message with your answer to question {awaiting + 1}.")
+            )
+        else:
+            if any(
+                q["kind"] == "text" and n not in answers for n, q in enumerate(card["questions"])
+            ):
+                lines.append(md_escape("Reply to this message with the free-text answer."))
+            if not TelegramBot._immediate(card):
+                lines.append(md_escape("Tap Send when every question is answered."))
+        return "\n".join(lines)
+
+    def _card_keyboard(
+        self, card: dict[str, Any], answers: dict[int, Answer]
+    ) -> InlineKeyboardMarkup | None:
+        card_id = int(card["id"])
+        many = len(card["questions"]) > 1
+        rows: list[list[InlineKeyboardButton]] = []
+        for number, question in enumerate(card["questions"]):
+            answer = answers.get(number)
+            if question["kind"] != "text":
+                buttons = []
+                for index, option in enumerate(question["options"]):
+                    label = _one_line(option, 40)
+                    if many:
+                        label = f"{number + 1}. {label}"
+                    if answer is not None and option in answer.chosen:
+                        label = f"✅ {label}"
+                    value = f"{card_id}:{number}:{index}"
+                    buttons.append(
+                        InlineKeyboardButton(
+                            label, callback_data=f"co:{value}:{self._sign_text('co', value)}"
+                        )
+                    )
+                rows.extend(buttons[i : i + 2] for i in range(0, len(buttons), 2))
+                label = "Own answer"
+            elif answer is not None:
+                label = "Change the answer"
+            else:
+                continue  # a text question is answered by a reply
+            if answer is not None and answer.text:
+                label = f"✅ {label}"
+            if many:
+                label = f"{label} ({number + 1})"
+            value = f"{card_id}:{number}"
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        f"✏️ {label}", callback_data=f"cw:{value}:{self._sign_text('cw', value)}"
+                    )
+                ]
+            )
+        if not self._immediate(card):
+            value = str(card_id)
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        "📨 Send", callback_data=f"cs:{value}:{self._sign_text('cs', value)}"
+                    )
+                ]
+            )
+        return InlineKeyboardMarkup(rows) if rows else None
+
+    async def _announce_card(self, card: dict[str, Any]) -> None:
+        for chat_id in sorted(self.allowed):
+            try:
+                await self._send_card(chat_id, card)
+            except TelegramError as exc:
+                log.warning("telegram: could not send a card to chat %s: %s", chat_id, exc)
+
+    async def _send_card(self, chat_id: int, card: dict[str, Any]) -> None:
+        known = await self.app.db.fetchone(
+            "SELECT 1 FROM telegram_card_messages WHERE card_id = ? AND chat_id = ?",
+            (card["id"], chat_id),
+        )
+        if known is not None:
+            return
+        answers = await self._drafts(int(card["id"]))
+        sent = await self.send(
+            chat_id,
+            self._card_text(card, answers),
+            reply_markup=self._card_keyboard(card, answers),
+        )
+        await self.app.db.execute(
+            "INSERT OR REPLACE INTO telegram_card_messages (card_id, chat_id, message_id) "
+            "VALUES (?, ?, ?)",
+            (int(card["id"]), chat_id, sent[-1].message_id),
+        )
+
+    async def _refresh_card(self, card: dict[str, Any]) -> None:
+        """Edit the messages of an open card to show the choices made so far."""
+        answers = await self._drafts(int(card["id"]))
+        rows = await self.app.db.fetchall(
+            "SELECT chat_id, message_id, awaiting FROM telegram_card_messages WHERE card_id = ?",
+            (card["id"],),
+        )
+        for row in rows:
+            awaiting = None if row["awaiting"] is None else int(row["awaiting"])
+            await self._edit(
+                int(row["chat_id"]),
+                int(row["message_id"]),
+                self._card_text(card, answers, awaiting),
+                self._card_keyboard(card, answers),
+            )
+
+    async def _reflect_card(self, card: dict[str, Any]) -> None:
+        """A card was answered (here or in the web chat): its messages show the answers and
+        lose their buttons, and the card is forgotten here."""
+        card_id = int(card["id"])
+        rows = await self.app.db.fetchall(
+            "SELECT chat_id, message_id FROM telegram_card_messages WHERE card_id = ?", (card_id,)
+        )
+        if not rows:
+            return
+        answers = {n: Answer.model_validate(a) for n, a in enumerate(card.get("answers") or [])}
+        text = self._card_text(card, answers)
+        for row in rows:
+            await self._edit(int(row["chat_id"]), int(row["message_id"]), text)
+        await self.app.db.execute(
+            "DELETE FROM telegram_card_messages WHERE card_id = ?", (card_id,)
+        )
+        await self.app.db.execute("DELETE FROM telegram_card_drafts WHERE card_id = ?", (card_id,))
+
+    async def _submit_card(self, card: dict[str, Any], answers: dict[int, Answer]) -> str:
+        """Answer the card with the drafts; the note says how it went (the card closes through
+        its `chat.card.answered` event)."""
+        raw = [answers.get(n, Answer()).model_dump() for n in range(len(card["questions"]))]
+        try:
+            await self.app.chat.answer_card(int(card["id"]), raw, via="telegram")
+        except ValueError as exc:  # e.g. "question 2 is not answered"
+            return str(exc)
+        except (CardClosed, KeyError):
+            return "This question was answered already."
+        return "Sent."
+
+    def _parse_card_callback(self, data: str) -> tuple[str, int, int, int] | None:
+        """(co | cw | cs, card id, question, option) of a button, None when it is not ours."""
+        parts = data.split(":")
+        sizes = {"co": 5, "cw": 4, "cs": 3}
+        if parts[0] not in sizes or len(parts) != sizes[parts[0]]:
+            return None
+        if not all(p.isdigit() for p in parts[1:-1]):
+            return None
+        if not hmac.compare_digest(parts[-1], self._sign_text(parts[0], ":".join(parts[1:-1]))):
+            return None
+        numbers = [int(p) for p in parts[1:-1]]
+        return (
+            parts[0],
+            numbers[0],
+            (numbers[1] if len(numbers) > 1 else 0),
+            (numbers[2] if len(numbers) > 2 else 0),
+        )
+
+    async def _on_card_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if query is None or update.effective_chat is None:
+            return
+        parsed = self._parse_card_callback(query.data or "")
+        if parsed is None:
+            log.warning("telegram: rejected a card button with a bad signature")
+            await self._answer(query, "Invalid button.")
+            return
+        kind, card_id, number, option = parsed
+        card = await self.app.chat.cards.get(card_id)
+        if card is None or card["status"] != "open":
+            await self._answer(query, "This question was answered already.")
+            if card is not None:
+                await self._reflect_card(card)
+            return
+        questions = card["questions"]
+        if kind != "cs" and number >= len(questions):
+            await self._answer(query, "Invalid button.")
+            return
+        answers = await self._drafts(card_id)
+        if kind == "cs":
+            await self._answer(query, await self._submit_card(card, answers))
+            return
+        if kind == "cw":
+            await self.app.db.execute(
+                "UPDATE telegram_card_messages SET awaiting = ? WHERE card_id = ? AND chat_id = ?",
+                (number, card_id, update.effective_chat.id),
+            )
+            await self._answer(query, "Reply to this message with your answer.")
+        else:
+            question = questions[number]
+            if question["kind"] == "text" or option >= len(question["options"]):
+                await self._answer(query, "Invalid button.")
+                return
+            name = question["options"][option]
+            current = answers.get(number, Answer())
+            if question["kind"] == "single":  # a choice replaces the own answer
+                new = Answer(chosen=[] if current.chosen == [name] else [name])
+            else:
+                picked = {c for c in current.chosen if c != name} | (
+                    set() if name in current.chosen else {name}
+                )
+                new = Answer(
+                    chosen=[o for o in question["options"] if o in picked], text=current.text
+                )
+            await self._save_draft(card_id, number, new)
+            answers[number] = new
+            if self._immediate(card) and new.chosen:
+                await self._answer(query, await self._submit_card(card, answers))
+                return
+            await self._answer(query, "")
+        await self._refresh_card(card)
+
+    async def _card_reply(self, chat_id: int, message_id: int, text: str) -> bool:
+        """A reply to a card message is the free-text answer to a question: the one the
+        "Own answer" button asked for, else the first text question still unanswered. False
+        when the message is no open card's (the text is then a chat message)."""
+        row = await self.app.db.fetchone(
+            "SELECT card_id, awaiting FROM telegram_card_messages "
+            "WHERE chat_id = ? AND message_id = ?",
+            (chat_id, message_id),
+        )
+        if row is None:
+            return False
+        card_id = int(row["card_id"])
+        card = await self.app.chat.cards.get(card_id)
+        if card is None or card["status"] != "open":
+            return False
+        questions = card["questions"]
+        answers = await self._drafts(card_id)
+        number = None if row["awaiting"] is None else int(row["awaiting"])
+        if number is None:
+            number = next(
+                (n for n, q in enumerate(questions) if q["kind"] == "text" and n not in answers),
+                None,
+            )
+        if number is None:
+            await self.send(
+                chat_id,
+                "Tap “Own answer” under a question first, then reply with your answer.",
+                markdown=False,
+            )
+            return True
+        current = answers.get(number, Answer())
+        keep = current.chosen if questions[number]["kind"] == "multi" else []
+        answers[number] = Answer(chosen=keep, text=text)
+        await self._save_draft(card_id, number, answers[number])
+        await self.app.db.execute(
+            "UPDATE telegram_card_messages SET awaiting = NULL WHERE card_id = ? AND chat_id = ?",
+            (card_id, chat_id),
+        )
+        if self._immediate(card):
+            note = await self._submit_card(card, answers)
+            if note != "Sent.":
+                await self.send(chat_id, note, markdown=False)
+        else:
+            await self._refresh_card(card)
+        return True
+
+    async def _catch_up_cards(self) -> None:
+        """After a start: edit the messages of cards answered while the bot was down, and send
+        the open cards that no chat has been told about yet."""
+        try:
+            for row in await self.app.db.fetchall(
+                "SELECT DISTINCT card_id FROM telegram_card_messages"
+            ):
+                card = await self.app.chat.cards.get(int(row["card_id"]))
+                if card is not None and card["status"] != "open":
+                    await self._reflect_card(card)
+            for row in await self.app.db.fetchall(
+                "SELECT id FROM chat_cards WHERE status = 'open' "
+                "AND id NOT IN (SELECT card_id FROM telegram_card_messages)"
+            ):
+                card = await self.app.chat.cards.get(int(row["id"]))
+                if card is not None:
+                    await self._announce_card(card)
+        except Exception:
+            log.exception("telegram: could not catch up on cards")
