@@ -139,7 +139,7 @@ export function LlmCallsList({ link }: { link: CallsLink | null }) {
             head={[
               "time",
               "purpose · model",
-              { label: "prompt or answer · where it ran", minWidth: "260px" },
+              { label: "prompt or answer · where it ran", wrap: true, minWidth: "140px" },
               "status",
               { label: "tokens in → out · bar = in", wrap: true },
               {

@@ -3,7 +3,7 @@
 // the same way. A source that is no entity of its own (the scheduler, an action, a Telegram chat) stays text.
 import type { ReactNode } from "react";
 import { MODEL_WORD } from "../jobs";
-import { EntityLink } from "../kit";
+import { EntityLink, EntityTail } from "../kit";
 
 export const chatHref = (id: string) => `#/chat/${encodeURIComponent(id)}`;
 export const jobHref = (slug: string) => `#/jobs/${encodeURIComponent(slug)}`;
@@ -72,11 +72,7 @@ export function SourceRef({ source }: { source: string }) {
 export function ItemTarget({ item }: { item: { target: string | null; args: Record<string, unknown> | null } }) {
   const { server, tool } = item.args ?? {};
   if (typeof server !== "string" || typeof tool !== "string") return <>{item.target}</>;
-  return (
-    <>
-      <ServerRef name={server} /> · {tool}
-    </>
-  );
+  return <EntityTail link={<ServerRef name={server} />}> · {tool}</EntityTail>;
 }
 
 /** A tool as the model names it: an MCP tool is `server__tool` and shows as "server · tool" with the server
@@ -84,11 +80,7 @@ export function ItemTarget({ item }: { item: { target: string | null; args: Reco
 export function ToolName({ name }: { name: string }) {
   const i = name.indexOf("__");
   if (i <= 0) return <>{name}</>;
-  return (
-    <>
-      <ServerRef name={name.slice(0, i)} /> · {name.slice(i + 2)}
-    </>
-  );
+  return <EntityTail link={<ServerRef name={name.slice(0, i)} />}> · {name.slice(i + 2)}</EntityTail>;
 }
 
 /** What an LLM call belongs to (its link kind, id and step): a chat or a job opens that chat or job. The kinds of

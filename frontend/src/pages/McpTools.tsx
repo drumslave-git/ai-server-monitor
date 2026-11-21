@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { api } from "../api";
 import type { components } from "../api-types";
 import { ago } from "../fmt";
-import { ServerRef } from "../components/EntityRefs";
+import { JobRef, ServerRef } from "../components/EntityRefs";
 import { errorText } from "../jobs";
 import {
   Actions,
@@ -15,6 +15,7 @@ import {
   Counters,
   Dialog,
   Empty,
+  EntityList,
   ErrorText,
   Field,
   IconButton,
@@ -82,6 +83,11 @@ function writeClosed(names: Set<string>) {
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** The jobs that have a domain, as links to them. */
+function UsedBy({ jobs }: { jobs: Domain["used_by"] }) {
+  return <EntityList items={jobs.map((j) => <JobRef key={j.slug} slug={j.slug} name={j.name} />)} />;
+}
 
 export function McpToolsPage() {
   const [page, setPage] = useState<Page | null>(null);
@@ -360,7 +366,7 @@ function Section({
           </Meta>
           {" · "}
           {total.length - writes} read · {writes} write
-          {domain && domain.used_by.length > 0 && <span title={domain.used_by.join(", ")}> · {plural(domain.used_by.length, "job")}</span>}
+          {domain && domain.used_by.length > 0 && <> · used by <UsedBy jobs={domain.used_by} /></>}
         </>
       }
       aside={
@@ -378,7 +384,7 @@ function Section({
           </Text>
         </Pad>
       )}
-      <Table stack stickyHead head={["on", "tool", { label: "what it does", minWidth: "260px" }, "domain"]}>
+      <Table stack stickyHead head={["on", "tool", { label: "what it does", minWidth: "160px" }, "domain"]}>
         <tbody>{children}</tbody>
       </Table>
       {editing && domain && <DomainEdit domain={domain} act={act} onClose={() => setEditing(false)} />}
@@ -391,7 +397,7 @@ function EmptyDomain({ domain, act }: { domain: Domain; act: Act }) {
   return (
     <Panel
       title={domain.name}
-      meta={<>no tools{domain.used_by.length > 0 && ` · used by ${domain.used_by.join(", ")}`}</>}
+      meta={<>no tools{domain.used_by.length > 0 && <> · used by <UsedBy jobs={domain.used_by} /></>}</>}
       aside={
         <IconButton small icon="rename" label={`Rename or describe ${domain.name}`} onClick={() => setEditing(true)} />
       }
@@ -460,7 +466,7 @@ function DomainEdit({
           </Button>
           <Button onClick={onClose}>cancel</Button>
           {domain && (
-            <Button variant="danger" toEnd onClick={remove} disabled={busy || domain.used_by.length > 0} title={domain.used_by.length ? `Used by ${domain.used_by.join(", ")}` : undefined}>
+            <Button variant="danger" toEnd onClick={remove} disabled={busy || domain.used_by.length > 0} title={domain.used_by.length ? `Used by ${domain.used_by.map((j) => j.name).join(", ")}` : undefined}>
               delete domain
             </Button>
           )}
@@ -486,12 +492,12 @@ function ToolRow({
       <Td>
         <Switch checked={tool.enabled} onChange={(to) => void act(api.patch(path, { enabled: to }))} label={`${tool.name} on`} title={tool.enabled ? "Turn off" : "Turn on"} />
       </Td>
-      <Td>
+      <Td fill>
         <Stack gap={1}>
-          <Text kind="label" nowrap>
+          <Text kind="label" wrap>
             {tool.tool}
           </Text>
-          <Inline nowrap gap={2}>
+          <Inline gap={2}>
             <Tag tone={tool.kind === "write" ? "warn" : undefined}>{tool.kind}</Tag>
             <ServerRef name={tool.server} />
             {state && !state.enabled && <Status tone="off" hollow>server off</Status>}

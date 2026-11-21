@@ -105,14 +105,15 @@ class DomainStore:
         users = await self.used_by()
         return [{**dict(r), "used_by": users.get(r["id"], [])} for r in rows]
 
-    async def used_by(self) -> dict[int, list[str]]:
+    async def used_by(self) -> dict[int, list[dict[str, str]]]:
+        """Domain id → the jobs that have it, each as {"slug", "name"}."""
         rows = await self.db.fetchall(
-            "SELECT jd.domain_id, j.name FROM job_domains jd JOIN jobs j ON j.id = jd.job_id "
-            "ORDER BY j.name"
+            "SELECT jd.domain_id, j.slug, j.name FROM job_domains jd "
+            "JOIN jobs j ON j.id = jd.job_id ORDER BY j.name"
         )
-        out: dict[int, list[str]] = {}
+        out: dict[int, list[dict[str, str]]] = {}
         for r in rows:
-            out.setdefault(r["domain_id"], []).append(r["name"])
+            out.setdefault(r["domain_id"], []).append({"slug": r["slug"], "name": r["name"]})
         return out
 
     async def tools(self, servers: Iterable[str] | None = None) -> list[dict[str, Any]]:
@@ -380,6 +381,7 @@ class DomainStore:
             raise DomainError("no such domain")
         jobs = (await self.used_by()).get(domain_id)
         if jobs:
-            raise DomainError(f"used by: {', '.join(jobs)}; remove it from those jobs first")
+            names = ", ".join(j["name"] for j in jobs)
+            raise DomainError(f"used by: {names}; remove it from those jobs first")
         # Its tools lose their domain (ON DELETE SET NULL) and are sorted at the next listing.
         await self.db.write("DELETE FROM mcp_domains WHERE id = ?", (domain_id,))

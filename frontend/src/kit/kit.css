@@ -237,13 +237,21 @@
 .fd-title-link { color: inherit; text-decoration: none; font: 600 1.0714rem/1.4 var(--font-sans); }
 .fd-title-link:hover { text-decoration: underline; }
 /* A name that opens the thing it names (EntityLink): its kind's icon, then the name; sits in a line of text */
-.fd-entity-link { display: inline-flex; align-items: flex-start; gap: 4px; max-width: 100%; vertical-align: bottom; white-space: nowrap; color: var(--ok-text); text-decoration: none; font: inherit; }
+.fd-entity-link { display: inline-flex; align-items: flex-start; gap: 4px; min-width: 0; max-width: 100%; vertical-align: bottom; white-space: nowrap; color: var(--ok-text); text-decoration: none; font: inherit; }
 .fd-entity-link:hover { color: var(--text); text-decoration: underline; }
 .fd-entity-link .fd-icon { flex: none; margin-block: calc((1lh - 16px) / 2); }
 .fd-entity-link .fd-entity-text { min-width: 0; }
 /* the name of a job or summary has any length: it wraps (a one-line cell cannot shrink under its content, so a table would grow) */
 .fd-entity-link.fd-name { white-space: normal; overflow-wrap: anywhere; }
 .fd-entity-link.fd-mono { font-family: var(--font-mono); }
+/* a link of an EntityList with its comma: nothing breaks between them (the link itself still wraps inside) */
+.fd-entity-item { white-space: nowrap; }
+.fd-entity-item-more:not(:has(.fd-name))::after { content: ","; }
+/* a name that wraps takes the whole line, so its comma goes inside the text, after the last word */
+.fd-entity-item-more .fd-name .fd-entity-text::after { content: ","; color: var(--text); }
+/* a link with text after it as one unit (EntityTail): the link gives way, the text stays whole */
+.fd-entity-tail { display: inline-flex; max-width: 100%; vertical-align: bottom; white-space: nowrap; }
+.fd-entity-tail-text { flex: none; white-space: pre; }
 
 /* Page header: way back and meta line above the title */
 .fd-head-over { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-4); }

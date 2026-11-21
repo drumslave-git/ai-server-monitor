@@ -162,7 +162,7 @@ async def test_domains_in_the_api_classify_and_job_save(tmp_path: Path, fake46: 
             # a domain a job uses cannot be deleted
             page = (await http.get("/api/mcp/tools")).json()
             climate = next(d for d in page["domains"] if d["name"] == "climate")
-            assert climate["used_by"] == ["Heating"]
+            assert climate["used_by"] == [{"slug": "heating", "name": "Heating"}]
             r = await http.delete(f"/api/mcp/domains/{climate['id']}")
             assert r.status_code == 409 and "used by: Heating" in r.text
             # a builtin with domains is edited; reset empties them again

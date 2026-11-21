@@ -149,7 +149,8 @@ async def test_a_domain_a_job_uses_survives_a_resort_and_cannot_be_deleted(db: A
         sorter([{"name": "b", "description": "B", "tools": ["arr_get_queue"]}]), again=True
     )
     names = {d["name"]: d for d in await store.domains()}
-    assert names["a"]["tools"] == 0 and names["a"]["used_by"] == ["Sonarr queue"]
+    assert names["a"]["tools"] == 0
+    assert names["a"]["used_by"] == [{"slug": "q", "name": "Sonarr queue"}]
     with pytest.raises(DomainError, match="used by: Sonarr queue"):
         await store.delete_domain(a)
 

@@ -85,7 +85,7 @@ The design kit with live previews of every component: https://claude.ai/artifact
 server. It is a link with the icon of what it names (`kind`: chat, job, summary, run, approval, call, server,
 model, worker) and opens that thing where it already lives (`href`). Every place that names another entity uses
 it, so such links look and act the same; a name that is not a thing of its own (the owner, a timeout) stays
-plain text. A link is one line: a name wider than its room is cut and gets the tooltip of cut text (the name of a job or summary has any length and wraps instead, its icon staying at the first line); `mono` is for ids.
+plain text. A link is one line: a name wider than its room is cut and gets the tooltip of cut text (the name of a job or summary has any length and wraps instead, its icon staying at the first line); `mono` is for ids. `EntityList` puts several in one line of text ("a, b, c") and keeps each comma with its link, so a line never starts with one. `EntityTail` is a link with text after it ("server · tool") as one unit: the line never breaks between them, and when the unit is too wide the link is cut and the text stays whole.
 
 A chosen thing looks the same everywhere: the raised ground in a one-pixel lime frame (a selected
 `ListItem`, a `Row current`, a `Tr selected`).

@@ -1986,9 +1986,16 @@ export interface components {
             tools: number;
             /**
              * Used By
-             * @description Names of the jobs that have this domain.
+             * @description The jobs that have this domain.
              */
-            used_by: string[];
+            used_by: components["schemas"]["McpDomainJob"][];
+        };
+        /** McpDomainJob */
+        McpDomainJob: {
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
         };
         /** McpHeader */
         McpHeader: {

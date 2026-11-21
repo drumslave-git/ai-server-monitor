@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useAutomation } from "../automation";
 import { JobRef, ModelRef, ServerRef, runHref } from "../components/EntityRefs";
 import { ExplainButton } from "../components/Explain";
@@ -35,6 +35,7 @@ import {
   Column,
   Confirm,
   Empty,
+  EntityList,
   EntityLink,
   ErrorText,
   Field,
@@ -284,12 +285,7 @@ function MemberPreview({ members, bySlug }: { members: string[]; bySlug: Record<
   const rest = members.length - shown.length;
   return (
     <>
-      {shown.map((m, i) => (
-        <Fragment key={m}>
-          <JobRef slug={m} name={bySlug[m]?.name} />
-          {i < shown.length - 1 && ", "}
-        </Fragment>
-      ))}
+      <EntityList items={shown.map((m) => <JobRef key={m} slug={m} name={bySlug[m]?.name} />)} />
       {rest > 0 && ` and ${rest} more`}
     </>
   );
@@ -301,12 +297,7 @@ function Where({ job, names }: { job: Pick<Job, "kind" | "summaries" | "interval
     return (
       <>
         in{" "}
-        {job.summaries.map((slug, i) => (
-          <Fragment key={slug}>
-            <JobRef summary slug={slug} name={names[slug]} />
-            {i < job.summaries.length - 1 && ", "}
-          </Fragment>
-        ))}
+        <EntityList items={job.summaries.map((slug) => <JobRef key={slug} summary slug={slug} name={names[slug]} />)} />
       </>
     );
   return <>{whereWord(job, names)}</>;

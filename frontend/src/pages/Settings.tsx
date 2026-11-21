@@ -111,7 +111,7 @@ export function SettingsPage() {
   const [doc, setDoc] = useState<SettingsDoc | null>(null);
   const [values, setValues] = useState<JsonObject | null>(null);
   const [section, setSection] = useState<string>(() => location.hash.split("/")[2] || "llm");
-  // #/settings/mcp/<server>: a link to one entry of the section; its card opens (the address then drops to the section)
+  // #/settings/mcp/<server>: a link to one entry of the section; its card opens and scrolls into view (the address keeps it until another section is chosen)
   const [focusEntry, setFocusEntry] = useState<string | undefined>(() => {
     const name = location.hash.split("/")[3];
     return name ? decodeURIComponent(name) : undefined;
@@ -135,7 +135,9 @@ export function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    history.replaceState(null, "", `#/settings/${section}`);
+    // the address keeps the linked entry while its section is shown, so a reload or a shared link opens the same card
+    const entry = section === linkedSection.current ? focusEntry : undefined;
+    history.replaceState(null, "", `#/settings/${section}${entry ? `/${encodeURIComponent(entry)}` : ""}`);
     if (section !== linkedSection.current) setFocusEntry(undefined);
     window.scrollTo({ top: 0 });
   }, [section]);

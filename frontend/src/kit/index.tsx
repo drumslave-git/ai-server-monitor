@@ -23,6 +23,7 @@ import {
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  Fragment,
   useEffect,
   useId,
   useLayoutEffect,
@@ -1363,6 +1364,31 @@ export function EntityLink({
       <Icon name={ENTITY_ICON[kind]} />
       <span className={cx("fd-entity-text", !name && "fd-truncate")}>{children}</span>
     </a>
+  );
+}
+
+/** Several EntityLinks in one line of text, "a, b, c": each link keeps its comma, so a line never starts with one. */
+export function EntityList({ items }: { items: ReactNode[] }) {
+  return (
+    <>
+      {items.map((item, i) => (
+        <Fragment key={i}>
+          {i > 0 && " "}
+          <span className={cx("fd-entity-item", i < items.length - 1 && "fd-entity-item-more")}>{item}</span>
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
+/** An EntityLink with plain text after it ("server · tool"), as one unit: the line never breaks between them, and
+ *  when the unit is wider than its room the link is cut (with the tooltip of cut text) and the text stays whole. */
+export function EntityTail({ link, children }: { link: ReactNode; children: ReactNode }) {
+  return (
+    <span className="fd-entity-tail">
+      {link}
+      <span className="fd-entity-tail-text">{children}</span>
+    </span>
   );
 }
 

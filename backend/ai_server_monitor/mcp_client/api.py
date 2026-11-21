@@ -30,13 +30,18 @@ class McpServerState(BaseModel):
     error: str | None = Field(description="Why the last listing failed (None: it worked).")
 
 
+class McpDomainJob(BaseModel):
+    slug: str
+    name: str
+
+
 class McpDomain(BaseModel):
     id: int
     name: str
     description: str
     set_by: Literal["model", "owner"]
     tools: int
-    used_by: list[str] = Field(description="Names of the jobs that have this domain.")
+    used_by: list[McpDomainJob] = Field(description="The jobs that have this domain.")
 
 
 class McpTool(BaseModel):
