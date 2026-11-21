@@ -516,9 +516,20 @@ describe("names with a text each", () => {
     const { rig, user } = setup({ query: schema }, { query: { limit: "10" } });
     const group = within(screen.getByRole("group", { name: "query" }));
     await user.click(group.getByRole("button", { name: "add" }));
-    expect(rig.value).toEqual({ query: { limit: "10", query_2: "" } });
+    expect(rig.value).toEqual({ query: { limit: "10", query_1: "" } });
     await user.click(group.getAllByRole("button", { name: "remove" })[0]);
-    expect(rig.value).toEqual({ query: { query_2: "" } });
+    expect(rig.value).toEqual({ query: { query_1: "" } });
+  });
+
+  it("adds the first query_N that no row has: it never takes a name that is there", async () => {
+    const { rig, user } = setup({ query: schema }, { query: { query_1: "a", query_3: "c" } });
+    const group = within(screen.getByRole("group", { name: "query" }));
+    await user.click(group.getByRole("button", { name: "add" }));
+    expect(rig.value).toEqual({ query: { query_1: "a", query_3: "c", query_2: "" } });
+    await user.click(group.getByRole("button", { name: "add" }));
+    expect(rig.value).toEqual({ query: { query_1: "a", query_3: "c", query_2: "", query_4: "" } });
+    const names = group.getAllByPlaceholderText("name") as HTMLInputElement[];
+    expect(names.map((i) => i.getAttribute("aria-invalid"))).not.toContain("true");
   });
 
   it("starts at query_1 for an empty set", async () => {

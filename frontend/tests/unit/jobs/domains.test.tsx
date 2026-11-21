@@ -1,9 +1,10 @@
 // The "domains" field of the job form: the MCP domains a job's runs get. What the select offers, the chips, the count of
 // tools the job can use, and "classify", which asks the worker model to pick the domains for the prompt.
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { api } from "../../../src/api";
 import { AutomationProvider } from "../../../src/automation";
 import { JobsPage } from "../../../src/pages/Jobs";
 import { makeJob } from "../../mocks/fixtures/dashboard";
@@ -14,12 +15,15 @@ import { installFakeEventSource } from "../shell/fake-event-source";
 
 installFakeEventSource();
 let dialogs: ReturnType<typeof installDialogBehaviour>;
+let getSpy: MockInstance<typeof api.get>; // calls through: only to see when the tools request has been answered
 beforeEach(() => {
   dialogs = installDialogBehaviour();
+  getSpy = vi.spyOn(api, "get");
   server.use(http.get("/api/jobs", () => HttpResponse.json(jobsList())));
   serveTools(mcpTools());
 });
 afterEach(() => {
+  getSpy.mockRestore();
   dialogs.remove();
   location.hash = "";
 });
@@ -33,8 +37,14 @@ async function openForm(params: string[], title: string) {
     </AutomationProvider>,
   );
   await screen.findByRole("heading", { level: 1, name: title });
-  // the tools arrive after the form
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Add domain" })).toBeInTheDocument());
+  // The tools arrive after the form, and the select reads "No domains yet" until they do: the same as when there are
+  // none. So wait for the answer of the page's own request (it started the field's `then` first, ours runs after it).
+  const request = () => getSpy.mock.results.find((_, i) => String(getSpy.mock.calls[i][0]) === "/api/mcp/tools");
+  await waitFor(() => expect(request()).toBeDefined());
+  await act(async () => {
+    await Promise.allSettled([request()!.value]);
+  });
 }
 
 const select = () => screen.getByRole("combobox", { name: "Add domain" });

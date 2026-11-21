@@ -7,6 +7,16 @@ import { Prose, type Tone } from "./kit";
 /** A status level; the kit calls it a tone. */
 export type Level = Tone;
 
+/** One segment of the address, decoded. A malformed escape (`%zz`) cannot be: the segment stays as typed, and the page
+ *  says it does not know it, like any other unknown name. */
+export function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 export function useNow(intervalMs = 15_000): number {
   const [now, setNow] = useState(() => Date.now() / 1000);
   useEffect(() => {

@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { decodeSegment } from "../ui";
 import { api, ApiError, type FieldError, type Json, type JsonObject, type JsonSchema, type LlmTestResult, type ModelInfo, type SettingsDoc } from "../api";
 import { ObjectFields, resolve, type FieldGroup, type FormContext } from "../components/SchemaForm";
 import { Button, Count, ErrorText, IconButton, type IconName, List, ListItem, ListPicker, Live, Meta, Pad, PageHeader, Pane, Panes, Panel, SectionHead, setRootFontSize, Status, TestLine, Text } from "../kit";
@@ -114,7 +115,7 @@ export function SettingsPage() {
   // #/settings/mcp/<server>: a link to one entry of the section; its card opens and scrolls into view (the address keeps it until another section is chosen)
   const [focusEntry, setFocusEntry] = useState<string | undefined>(() => {
     const name = location.hash.split("/")[3];
-    return name ? decodeURIComponent(name) : undefined;
+    return name ? decodeSegment(name) : undefined;
   });
   const linkedSection = useRef(section);
   const [errors, setErrors] = useState<Record<string, string>>({});

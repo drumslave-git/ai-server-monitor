@@ -3,7 +3,7 @@ import type { LlmCallSummary } from "./types";
 export function ms(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
   if (value < 1) return "<1 ms";
-  if (value < 1000) return `${Math.round(value)} ms`;
+  if (value < 999.5) return `${Math.round(value)} ms`; // 999.6 rounds to "1000 ms": that is a second
   if (value < 60_000) {
     const seconds = (value / 1000).toFixed(value < 10_000 ? 2 : 1);
     // 59 960 ms rounds to "60.0": that is a minute, and the minutes branch below says it

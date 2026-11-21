@@ -597,7 +597,7 @@ function AssistantMessage({
           thinking…
         </Status>
       ) : null}
-      {turn.live && turn.text && (
+      {turn.live && turn.text && !turn.stopped && !turn.error && (
         <Status tone="info" blink>
           answering…
         </Status>

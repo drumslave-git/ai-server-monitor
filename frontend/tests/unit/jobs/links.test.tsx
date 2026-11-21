@@ -50,6 +50,21 @@ describe("an address with an encoded slug", () => {
     expect(asked.every((p) => p === "/api/jobs/test%3Adisk")).toBe(true);
   });
 
+  it("a malformed escape (%zz) does not break the app: the page says it does not know the job", async () => {
+    server.use(http.get("/api/jobs/:slug", () => HttpResponse.json({ detail: "Job not found" }, { status: 404 })));
+    location.hash = "#/jobs/%zz";
+    render(<App />);
+    expect(await screen.findByText(/Job not found/)).toBeInTheDocument();
+    expect(screen.getAllByRole("navigation", { name: "Main" }).length).toBeGreaterThan(0);
+  });
+
+  it("a malformed escape later in the address also leaves the app standing", async () => {
+    location.hash = "#/jobs/loose/runs/%E0%A4%A";
+    render(<App />);
+    expect(screen.getAllByRole("navigation", { name: "Main" }).length).toBeGreaterThan(0);
+    await settle();
+  });
+
   it("the link of a job in the list (JobRef) opens its detail with one encoding in the request", async () => {
     const asked: string[] = [];
     server.use(

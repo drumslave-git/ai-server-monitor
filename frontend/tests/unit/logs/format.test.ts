@@ -17,6 +17,12 @@ describe("ms", () => {
     expect(ms(1)).toBe("1 ms");
     expect(ms(250.6)).toBe("251 ms");
     expect(ms(999)).toBe("999 ms");
+    expect(ms(999.4)).toBe("999 ms");
+  });
+
+  it("never shows 1000 ms: a value that rounds up to a second reads as the second", () => {
+    expect(ms(999.5)).toBe("1.00 s");
+    expect(ms(999.6)).toBe("1.00 s");
   });
 
   it("shows seconds with two decimals below ten seconds and one decimal above", () => {

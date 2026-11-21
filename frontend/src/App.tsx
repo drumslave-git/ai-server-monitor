@@ -4,6 +4,7 @@ import { AutomationNotice, AutomationProvider, AutomationSwitch } from "./automa
 import { HardwareMeters } from "./hardware";
 import { Main, Rail, setRootFontSize, Shell, type IconName, type NavItem } from "./kit";
 import { useConnected, useStream } from "./live";
+import { decodeSegment } from "./ui";
 import { ApprovalsPage } from "./pages/Approvals";
 import { ChatPage } from "./pages/Chat";
 import { DashboardPage } from "./pages/Dashboard";
@@ -25,7 +26,7 @@ const PAGES: { key: string & IconName; title: string; label: string }[] = [
 /** The segments of the address, decoded once: the links encode each one (`#/jobs/test%3Adisk`, see EntityRefs), so a
  *  page gets the plain name ("test:disk") and encodes it itself where it puts it into a request. */
 function parseHash(): string[] {
-  return location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  return location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeSegment);
 }
 
 /** "v0.8.5 · c2448e1", once the server has said so. */

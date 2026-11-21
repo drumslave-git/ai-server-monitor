@@ -160,6 +160,21 @@ describe("ApprovalsPage: waiting approvals", () => {
     renderPage();
     expect(await screen.findByText("database is locked")).toBeInTheDocument();
   });
+
+  it("shows the message of a failed audit log in the audit log, and the waiting approvals stay", async () => {
+    server.use(http.get("/api/actions", () => HttpResponse.json({ detail: "audit store offline" }, { status: 500 })));
+    renderPage();
+    for (const b of pendingBatches) expect(await screen.findByRole("article", { name: b.title })).toBeInTheDocument();
+    expect(await screen.findByText("audit store offline")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Audit log" })).toBeInTheDocument();
+  });
+
+  it("shows the message of an approval opened by link that cannot be loaded", async () => {
+    server.use(http.get("/api/approvals/:id", () => HttpResponse.json({ detail: "approval 4040 not found" }, { status: 404 })));
+    renderPage(["4040"]);
+    expect(await screen.findByText("approval 4040 not found")).toBeInTheDocument();
+    for (const b of pendingBatches) expect(await screen.findByRole("article", { name: b.title })).toBeInTheDocument();
+  });
 });
 
 describe("ApprovalsPage: deciding", () => {

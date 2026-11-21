@@ -5,6 +5,6 @@ import { dashboardJobs, dashboardRuns } from "../fixtures/dashboard";
 
 export const dashboardHandlers: RequestHandler[] = [
   http.get("/api/jobs", () => HttpResponse.json(dashboardJobs())),
-  http.get("/api/jobs/:slug/runs", ({ params }) => HttpResponse.json(dashboardRuns(decodeURIComponent(String(params.slug))))),
+  http.get("/api/jobs/:slug/runs", ({ params }) => HttpResponse.json(dashboardRuns(String(params.slug)))),
   http.post("/api/jobs/:slug/run", () => HttpResponse.json({ run_id: 99 })),
 ];

@@ -235,6 +235,13 @@ describe("a link to one entry of a list", () => {
     expect(location.hash).toBe("#/settings/mcp/my%20server");
   });
 
+  it("a name with a malformed escape does not break the page: it names no server, no card opens", async () => {
+    mockApi();
+    await open("#/settings/mcp/%zz", "MCP servers");
+    expect(screen.getByRole("button", { name: "second-server" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "test-server" })).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("lets go of the entry when another section is chosen", async () => {
     mockApi();
     const { user } = await open("#/settings/mcp/second-server", "MCP servers");

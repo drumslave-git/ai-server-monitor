@@ -637,6 +637,14 @@ function ListInput({ id, invalid, value, numeric, onChange }: { id: string; inva
   return <Input id={id} invalid={invalid} value={text} placeholder="Comma-separated" onChange={(e) => setText(e.target.value)} onBlur={(e) => commit(e.target.value)} />;
 }
 
+/** The first `query_N` (N from 1) that no row carries yet. */
+function freeName(rows: [string, string][]): string {
+  const taken = new Set(rows.map((r) => r[0]));
+  let n = 1;
+  while (taken.has(`query_${n}`)) n += 1;
+  return `query_${n}`;
+}
+
 function KeyValueInput({ value, onChange }: { value: Record<string, string>; onChange: (v: Json) => void }) {
   // The rows are kept here, because two rows may carry the same name for a moment (a record cannot hold both): they
   // are shown as invalid and the form keeps the last value without a clash. A value that came from elsewhere replaces them.
@@ -661,7 +669,7 @@ function KeyValueInput({ value, onChange }: { value: Record<string, string>; onC
           <Button onClick={() => set(rows.filter((_, j) => j !== i))}>remove</Button>
         </Joined>
       ))}
-      <Button onClick={() => set([...rows, [`query_${rows.length + 1}`, ""]])}>add</Button>
+      <Button onClick={() => set([...rows, [freeName(rows), ""]])}>add</Button>
     </Column>
   );
 }

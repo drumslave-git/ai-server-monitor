@@ -253,6 +253,23 @@ describe("the streamed answer", () => {
     await screen.findByRole("button", { name: "send" });
     await new Promise((r) => setTimeout(r, 150));
     expect(screen.getByText("stopped")).toBeInTheDocument();
+    // a stopped answer is no longer being written
+    expect(screen.queryByText("answering…")).not.toBeInTheDocument();
+  });
+
+  it("an answer that broke off with an error does not go on saying it is answering", async () => {
+    const user = userEvent.setup();
+    const stream = liveStream();
+    chatPosts(() => stream.response());
+    renderChat("#/chat/new");
+    await user.type(box(), "hello{Enter}");
+    stream.send("session", { session_id: "s-new" });
+    stream.send("token", { text: "Partial answer" });
+    await screen.findByText("answering…");
+    stream.send("error", { message: "the model went away" });
+    expect(await screen.findByText("the model went away")).toBeInTheDocument();
+    expect(screen.queryByText("answering…")).not.toBeInTheDocument();
+    stream.close();
   });
 
   it("a second message cannot be sent while an answer is running", async () => {

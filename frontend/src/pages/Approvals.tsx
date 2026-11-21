@@ -342,9 +342,9 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
             />
           </Pad>
           <Column gap={0} flex="1 1 560px">
-            {(error ?? pending.error) && (
+            {(error ?? pending.error ?? opened.error) && (
               <Row>
-                <ErrorText>{error ?? pending.error}</ErrorText>
+                <ErrorText>{error ?? pending.error ?? opened.error}</ErrorText>
               </Row>
             )}
             {pending.data && batches.length === 0 ? (
@@ -391,6 +391,11 @@ export function ApprovalsPage({ params = [] }: { params?: string[] }) {
             </Toolbar>
           }
         >
+          {log.error && (
+            <Row>
+              <ErrorText>{log.error}</ErrorText>
+            </Row>
+          )}
           {log.data && log.data.items.length === 0 ? (
             <Empty>No actions recorded{status || action || batch ? " for this filter" : ""}.</Empty>
           ) : (
