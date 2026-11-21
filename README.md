@@ -829,7 +829,9 @@ Summaries are now queues (see [Jobs](#jobs)). On the first start the database is
 - **The chat model can ask you questions as a card.** See *Questions from the chat model* under
   *Using it*: web card and Telegram buttons, the run waits for the answer and survives a restart
   (migration `0024`). `POST /api/chat/cards/{id}/answer` takes `{"answers": [{"chosen": [...],
-  "text": "..."}]}`; `GET /api/chat/sessions/{id}` lists the cards as `cards`.
+  "text": "..."}]}`; `GET /api/chat/sessions/{id}` lists the cards as `cards`. When Telegram
+  refuses a card the web card says "Not sent to Telegram: …" with Telegram's error (migration
+  `0026`, event `chat.card.telegram`); the card can still be answered in the web chat.
 - **Settings sections have icons instead of letters.** Each section of the list (general, model,
   worker, chat, jobs, storage, logs, approvals, outputs, MCP) shows an icon before its name.
 - **Every cut text has a tooltip with the whole text.** Where the UI cuts a text with an ellipsis

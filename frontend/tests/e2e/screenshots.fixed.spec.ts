@@ -19,7 +19,7 @@ const NOW = Math.floor(Date.now() / 1000);
 
 /** What the rail of every page shows: the version, the meters of a machine that does not exist, one approval waiting. */
 const shell = (pending: number) => [
-  http.get("/api/info", () => HttpResponse.json({ version: "0.10.2", commit: "" })),
+  http.get("/api/info", () => HttpResponse.json({ version: "0.11.0", commit: "" })),
   http.get("/api/hardware", () =>
     HttpResponse.json({
       cpu_percent: 23.4,
@@ -38,7 +38,7 @@ const shell = (pending: number) => [
       now: NOW,
       pending_approvals: pending,
       uptime_s: 7200,
-      version: "0.10.2",
+      version: "0.11.0",
     }),
   ),
   http.get("/api/chat/sessions", () =>
