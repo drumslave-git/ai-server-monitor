@@ -1,6 +1,6 @@
 // The text helpers of the Logs pages: durations, counts, tokens, time stamps, message bodies.
 import { describe, expect, it } from "vitest";
-import { approxTokens, clockTime, messageText, ms, num, prettyJson, purposeLabel, stamp, tokens } from "../../../src/pages/logs/format";
+import { approxTokens, clockTime, messageText, ms, num, prettyJson, purposeLabel, stamp, stampParts, tokens } from "../../../src/pages/logs/format";
 
 describe("ms", () => {
   it("shows a dash for a missing value", () => {
@@ -89,6 +89,14 @@ describe("stamp and clockTime", () => {
   it("stamp is the day, a comma and the time with seconds", () => {
     expect(stamp(ts)).toMatch(/^[^,]*\d[^,]*, .*\d{2}.*\d{2}.*\d{2}/);
     expect(stamp(ts)).toContain(new Date(ts * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" }));
+  });
+
+  it("stampParts gives the day and the time apart, and stamp is the two joined", () => {
+    const parts = stampParts(ts);
+    expect(parts.day).toBe(new Date(ts * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" }));
+    expect(parts.time).toMatch(/\d{2}.*\d{2}.*\d{2}/);
+    expect(parts.day).not.toContain(parts.time);
+    expect(stamp(ts)).toBe(`${parts.day}, ${parts.time}`);
   });
 
   it("clockTime is the time of day with seconds in 24 hours", () => {

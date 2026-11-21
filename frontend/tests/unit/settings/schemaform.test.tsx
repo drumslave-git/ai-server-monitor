@@ -521,6 +521,15 @@ describe("names with a text each", () => {
     expect(rig.value).toEqual({ query: { query_1: "" } });
   });
 
+  it("removes a row with an icon button (it fits beside the two inputs on a phone), still named remove", () => {
+    setup({ query: schema }, { query: { limit: "10" } });
+    const group = within(screen.getByRole("group", { name: "query" }));
+    const remove = group.getByRole("button", { name: "remove" });
+    expect(remove).toHaveClass("fd-btn-icon");
+    expect(remove).toHaveTextContent("");
+    expect(remove.closest(".fd-joined")).toContainElement(group.getByPlaceholderText("name"));
+  });
+
   it("adds the first query_N that no row has: it never takes a name that is there", async () => {
     const { rig, user } = setup({ query: schema }, { query: { query_1: "a", query_3: "c" } });
     const group = within(screen.getByRole("group", { name: "query" }));

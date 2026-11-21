@@ -65,7 +65,8 @@
 .fd-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: var(--control); padding: 0 var(--space-4); border: 1px solid var(--line-strong); border-radius: var(--radius-0); background: var(--raised); color: var(--text); font: 500 0.9286rem var(--font-mono); text-decoration: none; white-space: nowrap; cursor: pointer; }
 .fd-btn:hover { border-color: var(--text); }
 .fd-btn-primary { background: var(--ok); border-color: var(--ok); color: var(--on-fill); }
-.fd-btn-link { padding: 0 4px; border-color: transparent; background: transparent; color: var(--ok-text); text-decoration: underline; }
+/* no side padding or border: its text stands exactly where a button above it starts */
+.fd-btn-link { padding: 0; border-inline-width: 0; border-color: transparent; background: transparent; color: var(--ok-text); text-decoration: underline; }
 .fd-btn-link:hover { border-color: transparent; color: var(--text); }
 .fd-btn-block { width: 100%; }
 .fd-btn[disabled], .fd-btn[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
@@ -219,7 +220,8 @@
 /* a field that needs the whole row (a text of several lines, JSON) */
 .fd-form-cols > .fd-form-wide { flex-basis: 100%; max-width: none; }
 /* a row of choices (log level, reasoning effort) shares its column by the width of its words, not into equal parts */
-.fd-form-cols .fd-seg-item { flex: 1 1 auto; min-width: 0; padding-inline: var(--space-2); }
+/* in a column too narrow for all its words an option is cut with an ellipsis (the kit's tooltip shows the whole word), it never spills out of the control */
+.fd-form-cols .fd-seg-item { flex: 1 1 auto; min-width: 0; padding-inline: var(--space-2); overflow: hidden; text-overflow: ellipsis; }
 @container (max-width: 36rem) { .fd-form-cols > * { flex-basis: 100%; max-width: none; } }
 .fd-split { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-4); }
 .fd-kv { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px var(--space-4); font: 400 0.9286rem/1.5 var(--font-mono); }

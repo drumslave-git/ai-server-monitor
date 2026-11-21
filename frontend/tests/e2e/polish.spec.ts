@@ -1,5 +1,6 @@
-// UI polish that needs a real browser's layout: the cut detail cell of the audit table, the Logs time column on
-// one line, the errors that stand next to what asked for them, and the clash of two pair names in Settings.
+// UI polish that needs a real browser's layout: the cut detail cell of the audit table, the Logs time stamp on two
+// lines, the errors that stand next to what asked for them, the pair names in Settings (a clash, the remove button on a
+// phone), the Approvals link that lines up with its buttons, and the Settings panes that never scroll sideways.
 import { http, HttpResponse } from "msw";
 import { action, singleBatch } from "../mocks/fixtures/approvals";
 import { appLog, makeRecord } from "../mocks/fixtures/logs";
@@ -19,6 +20,14 @@ async function expectNoSidewaysScroll(page: Page) {
   expect(over.root, "the page scrolls sideways").toBeLessThanOrEqual(over.window);
   for (const extra of over.inner) expect(extra, "a pane scrolls sideways").toBeLessThanOrEqual(1);
 }
+
+/** The settings document with `llm.extra_body` as a pairs field holding alpha and beta. */
+const withPairs = () =>
+  makeSettingsDoc((doc) => {
+    const llm = (doc.schema.$defs as Record<string, { properties: Record<string, unknown> }>).LLMSettings;
+    llm.properties.extra_body = { type: "object", additionalProperties: { type: "string" }, description: "Extra fields." };
+    (doc.values.llm as Record<string, unknown>).extra_body = { alpha: "1", beta: "2" };
+  });
 
 const LONG_DETAIL = `the server answered with a very long explanation that does not fit one line of the table at any width this suite uses ${"and goes on and on, ".repeat(12)}end`;
 
@@ -64,16 +73,24 @@ for (const width of [1100, 1280]) {
       await expectNoSidewaysScroll(page);
     });
 
-    test(`Logs: the time column shows its value whole on one line (${width})`, async ({ page }, testInfo) => {
+    test(`Logs: the time stamp stands on two lines (date above time), whole, and the prompt column gets the room (${width})`, async ({ page }, testInfo) => {
       test.skip(!testInfo.project.name.startsWith("desktop-1280"), "the width is set here");
       await page.goto("/#/logs");
       const table = page.getByRole("table").first();
       await expect(table).toBeVisible();
+      const first = table.locator("tbody tr").first().locator("td").first();
+      const lines = await first.locator(".fd-meta").evaluateAll((all) => all.map((el) => ({ text: el.textContent, top: el.getBoundingClientRect().top, whole: el.scrollWidth <= el.clientWidth })));
+      expect(lines.length, "the date and the time are two lines").toBe(2);
+      expect(lines[1].top, "the time is under the date").toBeGreaterThan(lines[0].top);
+      for (const l of lines) expect(l.whole, `${l.text} is whole`).toBe(true);
+      // the time cells of every row are nowrap and whole; the prompt column is wider than the time stamp column
       const cells = await table.locator("tbody tr").first().locator("td.fd-nowrap").evaluateAll((all) =>
-        all.map((el) => ({ white: getComputedStyle(el).whiteSpace, whole: el.scrollWidth <= el.clientWidth, })),
+        all.map((el) => ({ white: getComputedStyle(el).whiteSpace, whole: el.scrollWidth <= el.clientWidth })),
       );
-      expect(cells.length, "the time cell is marked nowrap").toBeGreaterThan(0);
+      expect(cells.length).toBeGreaterThan(0);
       for (const c of cells) expect(c).toEqual({ white: "nowrap", whole: true });
+      const widths = await table.locator("thead th").evaluateAll((all) => all.map((el) => Math.round(el.getBoundingClientRect().width)));
+      expect(widths[2], "the prompt column is wider than the time stamp column").toBeGreaterThan(widths[0]);
       await expectNoSidewaysScroll(page);
     });
   });
@@ -125,23 +142,13 @@ test.describe("errors next to what asked", () => {
 test.describe("Settings, pair names", () => {
   test("two rows with one name: the message stands under the row, the border is invalid, nothing overlaps", async ({ page, network }) => {
     network.use(
-      http.get("/api/settings", () =>
-        HttpResponse.json(
-          makeSettingsDoc((doc) => {
-            const llm = (doc.schema.$defs as Record<string, { properties: Record<string, unknown> }>).LLMSettings;
-            llm.properties.extra_body = { type: "object", additionalProperties: { type: "string" }, description: "Extra fields." };
-            (doc.values.llm as Record<string, unknown>).extra_body = { alpha: "1", beta: "2" };
-          }),
-        ),
-      ),
+      http.get("/api/settings", () => HttpResponse.json(withPairs())),
     );
     await page.goto("/#/settings");
     const group = page.getByRole("group", { name: "extra body" }).first();
     await group.scrollIntoViewIfNeeded();
     const names = group.getByPlaceholder("name");
     await expect(names).toHaveCount(2);
-    // the Settings pane of a 768 px window already runs 3 px wider than its room without any clash: the clash must add nothing
-    const before = await noSideways(page);
     await names.nth(1).fill("alpha");
     const messages = group.getByText("Name already used");
     await expect(messages).toHaveCount(2);
@@ -158,8 +165,55 @@ test.describe("Settings, pair names", () => {
     // the two rows do not overlap each other or the messages
     const boxes = await Promise.all([names.nth(0), messages.nth(0), names.nth(1), messages.nth(1)].map((l) => l.boundingBox()));
     for (let i = 0; i < boxes.length - 1; i++) expect(boxes[i + 1]!.y, `box ${i + 1} starts below box ${i}`).toBeGreaterThanOrEqual(boxes[i]!.y + boxes[i]!.height - 1);
-    const after = await noSideways(page);
-    expect(after.root, "the page scrolls sideways").toBeLessThanOrEqual(after.window);
-    expect(after.inner, "the clash made a pane wider").toEqual(before.inner);
+    await expectNoSidewaysScroll(page);
+  });
+
+  test("a pair row keeps its name, value and remove button on one line, the button inside the room", async ({ page, network }, testInfo) => {
+    // the Settings form pane of a tablet is 184 px wide: two inputs cannot share a line there; a phone's is wider
+    test.skip(!testInfo.project.name.startsWith("phone-390"), "the phone row is the one that must hold three controls");
+    network.use(http.get("/api/settings", () => HttpResponse.json(withPairs())));
+    await page.goto("/#/settings");
+    const group = page.getByRole("group", { name: "extra body" }).first();
+    await group.scrollIntoViewIfNeeded();
+    await expect(group.getByPlaceholder("name")).toHaveCount(2);
+    const remove = group.getByRole("button", { name: "remove" });
+    await expect(remove).toHaveCount(2);
+    for (const i of [0, 1]) {
+      const [n, v, r, row] = await Promise.all([
+        group.getByPlaceholder("name").nth(i).boundingBox(),
+        group.getByPlaceholder("value").nth(i).boundingBox(),
+        remove.nth(i).boundingBox(),
+        group.locator(".fd-joined").nth(i).boundingBox(),
+      ]);
+      expect(Math.abs(n!.y - v!.y), `row ${i}: name and value on one line`).toBeLessThanOrEqual(1);
+      expect(Math.abs(n!.y - r!.y), `row ${i}: the remove button on that line too`).toBeLessThanOrEqual(1);
+      expect(r!.x + r!.width, `row ${i}: the button inside its row`).toBeLessThanOrEqual(row!.x + row!.width + 1);
+    }
+    await expectNoSidewaysScroll(page);
+  });
+});
+
+test.describe("Settings, panes", () => {
+  test("no pane scrolls sideways (a choice of words too long for its column is cut, not spilled)", async ({ page }) => {
+    await page.goto("/#/settings");
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await expect(page.getByRole("radiogroup").first()).toBeVisible();
+    await expectNoSidewaysScroll(page);
+  });
+});
+
+test.describe("Approvals, links", () => {
+  test("'show in the audit log' starts where the buttons above it start", async ({ page }, testInfo) => {
+    await page.goto("/#/approvals");
+    const card = page.getByRole("article", { name: singleBatch.title });
+    const link = card.getByRole("button", { name: "show in the audit log" });
+    const approve = card.getByRole("button", { name: /^approve all/ });
+    await expect(link).toBeVisible();
+    const [l, a] = await Promise.all([link.boundingBox(), approve.boundingBox()]);
+    const ownRow = l!.y >= a!.y + a!.height - 1;
+    // on a phone the buttons stand one under the other, so the link starts a row; on a wide window it may follow them
+    if (testInfo.project.name.startsWith("phone-390")) expect(ownRow, "the link stands on a row of its own").toBe(true);
+    if (ownRow) expect(Math.abs(l!.x - a!.x), "the link is not inset against the button").toBeLessThanOrEqual(1);
+    await expectNoSidewaysScroll(page);
   });
 });

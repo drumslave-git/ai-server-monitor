@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LlmCallsList } from "../../../src/pages/logs/LlmCalls";
+import { stampParts } from "../../../src/pages/logs/format";
 import type { CallsLink } from "../../../src/pages/logs/parts";
 import { CHAT_ID, callList, defaultCalls, makeCall, makeStats, nowSeconds, type CallSummary } from "../../mocks/fixtures/logs";
 import { server } from "../../mocks/server";
@@ -78,6 +79,19 @@ describe("LLM calls list: rows", () => {
     renderList();
     await screen.findByRole("table");
     const cell = rowOf("The disk on host-a is 61 percent full.").getByText("total 2.50 s").closest("td");
+    expect(cell).toHaveClass("fd-nowrap");
+  });
+
+  it("shows the time stamp of a call on two lines, the date above the time", async () => {
+    const calls = defaultCalls();
+    recordList(() => HttpResponse.json(callList(calls)));
+    renderList();
+    await screen.findByRole("table");
+    const row = rowOf("The disk on host-a is 61 percent full.");
+    const cell = row.getByText("total 2.50 s").closest("tr")!.querySelector("td")!;
+    const lines = [...cell.querySelectorAll("span, p, div")].filter((el) => el.children.length === 0).map((el) => el.textContent);
+    const { day, time } = stampParts(calls.find((c) => c.id === 4)!.ts);
+    expect(lines).toEqual([day, time]);
     expect(cell).toHaveClass("fd-nowrap");
   });
 

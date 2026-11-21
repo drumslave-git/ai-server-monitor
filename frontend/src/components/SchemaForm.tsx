@@ -667,7 +667,7 @@ function KeyValueInput({ value, onChange }: { value: Record<string, string>; onC
           <Joined width="100%">
             <Input value={k} invalid={clash(k)} placeholder="name" onChange={(e) => set(rows.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} />
             <Input value={v} placeholder="value" onChange={(e) => set(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
-            <Button onClick={() => set(rows.filter((_, j) => j !== i))}>remove</Button>
+            <IconButton icon="remove" label="remove" onClick={() => set(rows.filter((_, j) => j !== i))} />
           </Joined>
           {clash(k) && <FieldError>Name already used</FieldError>}
         </Column>

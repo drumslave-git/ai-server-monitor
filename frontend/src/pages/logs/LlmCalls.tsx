@@ -3,7 +3,7 @@ import { api } from "../../api";
 import { OwnerRef } from "../../components/EntityRefs";
 import { Actions, Button, Empty, ErrorText, Field, Input, Legend, Meta, Meter, Notice, Pane, Panel, Panes, Row, Select, Stack, Status, Table, Td, Text, TitleLink, Toolbar } from "../../kit";
 import { useStream } from "../../live";
-import { ms, purposeLabel, stamp, tokens } from "./format";
+import { ms, purposeLabel, stampParts, tokens } from "./format";
 import { CallStatus, LogsHead, type CallsLink } from "./parts";
 import type { LlmCallList, LlmCallSummary, TraceStats } from "./types";
 
@@ -181,10 +181,14 @@ export function LlmCallsList({ link }: { link: CallsLink | null }) {
 
 function CallRow({ call: c, maxTokens, maxMs }: { call: LlmCallSummary; maxTokens: number; maxMs: number }) {
   const preview = c.status !== "ok" && c.error ? c.error : c.response_preview || c.request_preview || "";
+  const when = stampParts(c.ts);
   return (
     <tr>
       <Td nowrap>
-        <Meta>{stamp(c.ts)}</Meta>
+        <Stack gap={1}>
+          <Meta>{when.day}</Meta>
+          <Meta>{when.time}</Meta>
+        </Stack>
       </Td>
       <Td>
         <Stack>

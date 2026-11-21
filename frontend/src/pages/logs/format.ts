@@ -26,10 +26,17 @@ export function approxTokens(chars: number): number {
   return Math.max(1, Math.round(chars / 4));
 }
 
-export function stamp(ts: number): string {
+/** The date and the time of a time stamp as two pieces (the Logs table stacks them: date above time). */
+export function stampParts(ts: number): { day: string; time: string } {
   const d = new Date(ts * 1000);
-  const day = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return {
+    day: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+    time: d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+  };
+}
+
+export function stamp(ts: number): string {
+  const { day, time } = stampParts(ts);
   return `${day}, ${time}`;
 }
 
